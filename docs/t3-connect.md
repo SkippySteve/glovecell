@@ -78,6 +78,16 @@ go test -v -count=1 -timeout 20m ./internal/t3 \
 
 This account directory must belong to the qualification operator. The test never deploys or grants access to an existing Git repository. Cluster qualification must use disposable projects and repositories.
 
+### Recorded qualification
+
+On October 12, 2026, the complete local test suite with race detection, vet and Helm checks passed. The opt-in qualification passed against two network-disabled disposable containers and the real T3 relay.
+
+Two additional disposable Forgejo repositories and gVisor project sandboxes passed the cluster flow. Both appeared automatically in one account catalog with project names, and their managed HTTPS endpoints returned the expected project UIDs. Workers had no service-account token or owner OAuth file. A controller restart restored both connections. Pause removed the worker; resume retained the environment identity and a file written into the repository volume. Removal verified external deregistration, namespace deletion and absence of project PV claim references. Both disposable repositories were deleted afterward.
+
+The qualified images were deployed to the live controller. Its existing project retained its Git checkout and became Ready after the managed remote identity check. The previous shared registrar's access to that project was removed. Optional Tailscale ingress rendering passed; the live dashboard retains its existing HTTPS origin and OIDC callback rather than changing identity-provider configuration during this rollout.
+
+Interactive phone/desktop account selection still needs the operator to sign in on those devices. Catalog and remote endpoint checks do not assert that a human clicked through the client UI or completed an agent prompt.
+
 The initial worker provider profile still enables Codex through its access-only adapter. Grok Build and Cursor credentials, GitLab repository authorization, and optional Forgejo imports are separate additions. This transport does not enable those features implicitly.
 
 See [stock T3 remote access](https://github.com/pingdotgg/t3code/blob/v0.0.45/docs/user/remote-access.md) and [Tailscale operator ingress](https://tailscale.com/docs/kubernetes-operator/ingress).
