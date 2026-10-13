@@ -46,6 +46,7 @@ type Server struct {
 	AllowBasic                         bool
 	T3Connect                          bool
 	GitHost, GitOrigin                 string
+	GitHubOwner                        string
 	SandboxControl                     *SandboxControl
 }
 type actorKey struct{}
@@ -96,7 +97,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	})
 	mux.HandleFunc("GET /api/v1/session", func(w http.ResponseWriter, r *http.Request) {
 		actor, _ := r.Context().Value(actorKey{}).(string)
-		writeJSON(w, map[string]any{"actor": actor, "oidc": s.OIDC != nil, "sandboxControl": s.SandboxControl != nil, "t3Connect": s.T3Connect})
+		writeJSON(w, map[string]any{"actor": actor, "oidc": s.OIDC != nil, "sandboxControl": s.SandboxControl != nil, "t3Connect": s.T3Connect, "githubOwner": s.GitHubOwner})
 	})
 	mux.HandleFunc("GET /api/v1/workspaces", func(w http.ResponseWriter, r *http.Request) {
 		list := &api.ProjectWorkspaceList{}
@@ -109,6 +110,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.HandleFunc("POST /api/v1/workspaces", s.create)
 	mux.HandleFunc("PATCH /api/v1/workspaces/{name}", s.change)
 	mux.HandleFunc("PATCH /api/v1/workspaces/{name}/access", s.changeAccess)
+	mux.HandleFunc("POST /api/v1/workspaces/{name}/repositories", s.enrollRepository)
 	mux.HandleFunc("GET /api/v1/workspaces/{name}/audit", s.audit)
 	if s.SandboxControl != nil {
 		mux.Handle("/sandboxes/", s.SandboxControl.Handler(s.Origin))

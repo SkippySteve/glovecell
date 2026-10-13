@@ -1,3 +1,11 @@
+{{- if not (kindIs "bool" .Values.additionalGitHub.enabled) }}
+{{- fail "additionalGitHub.enabled must be a boolean" }}
+{{- end }}
+{{- range $key := list "ADDITIONAL_GITHUB_OWNER" "GITHUB_REPOSITORY_TOKEN_FILE" }}
+{{- if hasKey $.Values.config $key }}
+{{- fail (printf "config.%s is managed by additionalGitHub settings" $key) }}
+{{- end }}
+{{- end }}
 {{- if not (kindIs "bool" .Values.tailscaleIngress.enabled) }}
 {{- fail "tailscaleIngress.enabled must be a boolean" }}
 {{- end }}

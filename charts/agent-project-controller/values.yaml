@@ -4,6 +4,13 @@ workspaceImage: ''
 # Optional smaller proxy image; defaults to controllerImage in the chart.
 proxyImage: ''
 existingSecret: controller-secrets
+# Additional private GitHub clones in the same workbench. The token is mounted
+# only in the trusted controller and inspecting gateway, never in a worker.
+additionalGitHub:
+  enabled: false
+  owner: ''
+  existingSecret: ''
+  tokenKey: token
 automationAPI:
   enabled: false
 config:

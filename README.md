@@ -27,6 +27,9 @@ Upstream: https://github.com/kubernetes-sigs/agent-sandbox
 
 Agent Sandbox manages the sandbox workloads and supported lifecycle operations. This project coordinates repository authorization, credentials, cloning, project readiness, revocation and cleanup. The configured runtime, such as gVisor or Kata, provides workload isolation.
 
+See [repository enrollment](docs/repository-enrollment.md) for additional
+checkouts in one sandbox, the scoped Forgejo CLI and private GitHub clone access.
+
 See [the combined console](docs/console.md) for preparation diagnostics, project
 egress controls and integration of existing shared/provider sandboxes.
 

@@ -50,6 +50,12 @@ RUN curl -fsSL https://github.com/pingdotgg/t3code/releases/download/v0.0.45/t3-
     && mkdir /opt/t3 && tar xzf /tmp/t3.tar.gz -C /opt/t3 --strip-components=1 \
     && rm /tmp/t3.tar.gz
 COPY scripts/apc-codex /usr/local/bin/apc-codex
+# Stock Forgejo client. The wrapper supplies the enrolled Git identity per call.
+RUN curl -fsSL https://codeberg.org/forgejo-contrib/forgejo-cli/releases/download/v0.6.0/forgejo-cli-x86_64-linux.tar.gz -o /tmp/fj.tar.gz \
+    && echo 'ea559da5449b6dd7e0dd9f7ea51c906b575696f782edd606b52adcf773602742  /tmp/fj.tar.gz' | sha256sum -c - \
+    && mkdir /opt/fj && tar xzf /tmp/fj.tar.gz -C /opt/fj \
+    && rm /tmp/fj.tar.gz
+COPY scripts/apc-fj.py /usr/local/bin/fj
 COPY third_party/licenses/ /usr/share/agent-project-controller/licenses/
 USER 1000:1000
 CMD ["controller"]

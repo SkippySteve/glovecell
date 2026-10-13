@@ -53,6 +53,12 @@ spec:
             - configMapRef:
                 name: controller-config
           env:
+{{- if .Values.additionalGitHub.enabled }}
+            - name: ADDITIONAL_GITHUB_OWNER
+              value: {{ required "additionalGitHub.owner is required" .Values.additionalGitHub.owner | quote }}
+            - name: GITHUB_REPOSITORY_TOKEN_FILE
+              value: /github-clone/token
+{{- end }}
 {{- if .Values.t3Connect.enabled }}
             - name: TMPDIR
               value: /tmp
@@ -95,6 +101,11 @@ spec:
           resources:
 {{ toYaml .Values.controllerResources | indent 12 }}
           volumeMounts:
+{{- if .Values.additionalGitHub.enabled }}
+            - name: github-clone
+              mountPath: /github-clone
+              readOnly: true
+{{- end }}
 {{- if .Values.t3Connect.enabled }}
             - name: t3-account
               mountPath: /var/lib/apc/t3-connect
@@ -105,6 +116,15 @@ spec:
               mountPath: /control-secrets
               readOnly: true
       volumes:
+{{- if .Values.additionalGitHub.enabled }}
+        - name: github-clone
+          secret:
+            secretName: {{ required "additionalGitHub.existingSecret is required" .Values.additionalGitHub.existingSecret | quote }}
+            defaultMode: 0440
+            items:
+              - key: {{ required "additionalGitHub.tokenKey is required" .Values.additionalGitHub.tokenKey | quote }}
+                path: token
+{{- end }}
 {{- if .Values.t3Connect.enabled }}
         - name: t3-account
           persistentVolumeClaim:

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/projects"
 	"io"
 	"os"
 	"os/exec"
@@ -55,7 +56,20 @@ func credential(in io.Reader, out io.Writer, directory, host, repository string)
 		}
 		values[k] = v
 	}
-	if host == "" || repository == "" || values["protocol"] != "https" || values["host"] != host || values["path"] != repository+".git" {
+	if values["protocol"] != "https" {
+		return nil
+	}
+	if host == "" || repository == "" || values["host"] != host || (values["path"] != repository+".git" && values["path"] != repository) {
+		entries, err := projects.Read(filepath.Join(directory, "projects.json"))
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			if strings.TrimPrefix(entry.Origin, "https://") == values["host"] && (values["path"] == entry.Repository+".git" || values["path"] == entry.Repository) && entry.Token != "" {
+				_, err = fmt.Fprintf(out, "username=%s\npassword=%s\n\n", entry.Username, entry.Token)
+				return err
+			}
+		}
 		return nil
 	}
 	username, e := os.ReadFile(filepath.Join(directory, "username"))
@@ -78,7 +92,23 @@ func Run(ctx context.Context) error {
 	if err != nil {
 		return errors.New("project Git author identity unavailable")
 	}
-	return run(ctx, "/workspace", "/etc/ssl/certs/ca-certificates.crt", "/trust/ca.crt", os.Getenv("GIT_ORIGIN")+"/"+os.Getenv("GIT_REPOSITORY")+".git", os.Getenv("GIT_WORK_BRANCH"), strings.TrimSpace(string(username)))
+	entries, err := projects.Read("/identity/projects.json")
+	if err != nil {
+		return err
+	}
+	if err := run(ctx, "/workspace", "/etc/ssl/certs/ca-certificates.crt", "/trust/ca.crt", os.Getenv("GIT_ORIGIN")+"/"+os.Getenv("GIT_REPOSITORY")+".git", os.Getenv("GIT_WORK_BRANCH"), strings.TrimSpace(string(username))); err != nil {
+		return err
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+	if err := os.Remove("/workspace/.ready"); err != nil {
+		return err
+	}
+	if err := projects.Prepare(ctx, "/workspace", entries); err != nil {
+		return err
+	}
+	return os.WriteFile("/workspace/.ready", []byte("prepared\n"), 0600)
 }
 func run(ctx context.Context, workspace, rootsPath, trustPath, origin, branch, username string) error {
 	if !regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$`).MatchString(username) {

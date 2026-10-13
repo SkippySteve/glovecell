@@ -112,6 +112,11 @@ func (m *Managed) Ensure(ctx context.Context, w *api.ProjectWorkspace) error {
 				}
 			default:
 				if s.ready {
+					if len(w.Spec.Repositories) > 0 {
+						if err := m.workerExec(ctx, pod, []string{"/usr/local/bin/agent-project-controller", "register-projects"}, nil, io.Discard); err != nil {
+							return errors.New("enrolled T3 project registration pending")
+						}
+					}
 					return nil
 				}
 				if s.err != nil {

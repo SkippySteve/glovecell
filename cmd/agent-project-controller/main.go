@@ -20,6 +20,7 @@ import (
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/githubhost"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/network"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/preflight"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/projects"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/proxy"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/t3"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/telemetry"
@@ -109,6 +110,8 @@ func openGitHost() (forgejo.Host, string, string, string, error) {
 func run(ctx context.Context) error {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "register-projects":
+			return projects.Register(ctx)
 		case "version", "--version":
 			return json.NewEncoder(os.Stdout).Encode(map[string]string{"version": version, "commit": commit})
 		case "t3":
@@ -215,6 +218,18 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("proxy scheduling: %w", e)
 	}
 	reconciler := &controller.Reconciler{Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, GitHost: gitHost, ForgejoOrigin: origin, Owner: owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling}}
+	if os.Getenv("GITHUB_REPOSITORY_TOKEN_FILE") != "" {
+		reconciler.GitHubToken, e = secret("GITHUB_REPOSITORY_TOKEN_FILE")
+		if e != nil {
+			return e
+		}
+		reconciler.Config.GitHubOwner = os.Getenv("ADDITIONAL_GITHUB_OWNER")
+		if forgejo.ValidateRepository(reconciler.Config.GitHubOwner+"/repository", reconciler.Config.GitHubOwner) != nil || reconciler.Config.GitHubOwner == "" || reconciler.GitHubToken == "" {
+			return errors.New("additional GitHub access requires an owner and trusted repository token")
+		}
+	} else if os.Getenv("ADDITIONAL_GITHUB_OWNER") != "" {
+		return errors.New("additional GitHub owner requires a trusted repository token")
+	}
 	if e = reconciler.Config.Validate(); e != nil {
 		return e
 	}
@@ -243,6 +258,7 @@ func run(ctx context.Context) error {
 		return e
 	}
 	server := &web.Server{T3Connect: reconciler.Access != nil, Client: direct, Host: host, Namespace: ns, Owner: owner, Password: password, Origin: os.Getenv("PUBLIC_ORIGIN"), GitHost: gitHost, GitOrigin: origin, AllowBasic: os.Getenv("ALLOW_STATIC_LOGIN") == "true"}
+	server.GitHubOwner = reconciler.Config.GitHubOwner
 	if os.Getenv("SANDBOX_CONTROL_URL") != "" {
 		server.SandboxControl = &web.SandboxControl{URL: os.Getenv("SANDBOX_CONTROL_URL"), Origin: os.Getenv("SANDBOX_CONTROL_ORIGIN"), Operator: os.Getenv("SANDBOX_CONTROL_OPERATOR")}
 	} else if os.Getenv("SANDBOX_CONTROL_ORIGIN") != "" || os.Getenv("SANDBOX_CONTROL_OPERATOR") != "" {

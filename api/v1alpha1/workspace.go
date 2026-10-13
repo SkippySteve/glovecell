@@ -18,9 +18,19 @@ type HTTPSRule struct {
 	Paths   []string `json:"paths"` // Literal prefixes, not regular expressions.
 }
 type WorkspaceSpec struct {
-	Repository   string      `json:"repository"`
-	DesiredState string      `json:"desiredState"`
-	HTTPS        []HTTPSRule `json:"https,omitempty"`
+	Repository   string              `json:"repository"`
+	DesiredState string              `json:"desiredState"`
+	HTTPS        []HTTPSRule         `json:"https,omitempty"`
+	Repositories []RepositoryProject `json:"repositories,omitempty"`
+}
+
+// RepositoryProject enrolls another checkout in the existing workspace volume.
+// Public GitHub projects use anonymous read-only Git transport.
+type RepositoryProject struct {
+	Name       string `json:"name"`
+	Host       string `json:"host"`
+	Repository string `json:"repository"`
+	Public     bool   `json:"public,omitempty"`
 }
 type AuditEvent struct {
 	Time       metav1.Time `json:"time"`

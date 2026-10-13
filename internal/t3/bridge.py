@@ -4,6 +4,7 @@ import math
 import os
 from pathlib import Path
 import queue
+import re
 import signal
 import subprocess
 import sys
@@ -115,7 +116,26 @@ def denied_response(value, error):
     return {'id': value['id'], 'error': {'code': -32602, 'message': message}}
 
 
-def translate(message, root=ROOT):
+def registered_roots(root, registry):
+    roots = [root.resolve(strict=True)]
+    if not registry.exists():
+        return roots
+    entries = json.loads(registry.read_text())
+    if not isinstance(entries, list) or len(entries) > 16:
+        raise ValueError('invalid project registry')
+    for entry in entries:
+        name = entry.get('name', '')
+        if not re.fullmatch('[a-z][a-z0-9-]{0,39}', name):
+            raise ValueError('invalid project registry name')
+        path = root.parent / 'projects' / name
+        resolved = path.resolve(strict=True)
+        if resolved != path or not resolved.is_dir():
+            raise ValueError('enrolled project storage changed')
+        roots.append(resolved)
+    return roots
+
+
+def translate(message, root=ROOT, registry=Path('/identity/projects.json')):
     if not isinstance(message, dict):
         raise ValueError('invalid request')
     method = message.get('method', '')
@@ -134,10 +154,10 @@ def translate(message, root=ROOT):
         if cwd is not None:
             try:
                 directory = Path(cwd).resolve(strict=True)
-                base = root.resolve(strict=True)
+                bases = registered_roots(root, registry)
             except OSError:
                 raise WorkspaceDirectoryDenied('Project folder is unavailable. Open the enrolled checkout at ' + str(root) + ' and start a new thread.') from None
-            if not directory.is_dir() or not directory.is_relative_to(base):
+            if not directory.is_dir() or not any(directory.is_relative_to(base) for base in bases):
                 raise WorkspaceDirectoryDenied('This thread uses a folder outside the enrolled checkout. Open the project at ' + str(root) + ' and start a new thread.')
             params['cwd'] = str(directory)
             params['runtimeWorkspaceRoots'] = [str(directory)]

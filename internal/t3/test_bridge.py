@@ -13,6 +13,19 @@ spec=importlib.util.spec_from_file_location('bridge',Path(__file__).with_name('b
 b=importlib.util.module_from_spec(spec);spec.loader.exec_module(b)
 
 class BridgePolicy(unittest.TestCase):
+    def test_only_enrolled_additional_roots_are_accepted(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)/'repo';root.mkdir()
+            projects=Path(d)/'projects';projects.mkdir()
+            allowed=projects/'library';allowed.mkdir()
+            denied=projects/'unapproved';denied.mkdir()
+            registry=Path(d)/'projects.json';registry.write_text(json.dumps([{'name':'library'}]))
+            request={'method':'thread/start','params':{'cwd':str(allowed)}}
+            self.assertEqual(b.translate(request,root,registry)['params']['cwd'],str(allowed))
+            with self.assertRaises(b.WorkspaceDirectoryDenied):
+                b.translate({'method':'thread/start','params':{'cwd':str(denied)}},root,registry)
+            allowed.rmdir();allowed.symlink_to(denied)
+            with self.assertRaises(ValueError):b.translate(request,root,registry)
     def test_account_mutation_and_reserved_requests_denied(self):
         for method in ('account/login/start','account/logout','account/chatgptAuthTokens/refresh'):
             with self.assertRaises(ValueError):b.translate({'id':1,'method':method})

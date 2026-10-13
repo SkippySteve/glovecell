@@ -122,5 +122,9 @@ func (s *Server) accessApplied(r *http.Request, obj *api.ProjectWorkspace) bool 
 		return false
 	}
 	// Omitted and empty rules mean the same deny-by-default optional policy.
+	var repositories []api.RepositoryProject
+	if len(obj.Spec.Repositories) > 0 && (json.Unmarshal(ledger.Data[controller.RepositoriesLedgerKey], &repositories) != nil || !reflect.DeepEqual(repositories, obj.Spec.Repositories)) {
+		return false
+	}
 	return len(applied) == 0 && len(obj.Spec.HTTPS) == 0 || reflect.DeepEqual(applied, obj.Spec.HTTPS)
 }

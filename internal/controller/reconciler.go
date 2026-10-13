@@ -48,6 +48,7 @@ var sandboxGVK = schema.GroupVersionKind{Group: "agents.x-k8s.io", Version: "v1b
 
 type Config struct {
 	Namespace, GitHost, ForgejoOrigin, Owner, Image, RuntimeClass, StorageClass string
+	GitHubOwner                                                                 string
 	ProxyImage                                                                  string
 	StorageSize                                                                 string
 	WorkerResources, ProxyResources                                             ResourceProfile
@@ -102,9 +103,10 @@ type ProjectAccess interface {
 type Reconciler struct {
 	Access ProjectAccess
 	client.Client
-	Host    forgejo.Host
-	Network network.Provider
-	Config  Config
+	Host        forgejo.Host
+	Network     network.Provider
+	Config      Config
+	GitHubToken string
 }
 
 var duration, _ = otel.Meter("agent-project-controller").Float64Histogram("workspace.reconcile.duration", metric.WithUnit("s"))
@@ -265,6 +267,9 @@ func (r *Reconciler) validate(ctx context.Context, w *api.ProjectWorkspace) erro
 		return errors.New("workspace UID missing")
 	}
 	if e := forgejo.ValidateRepository(w.Spec.Repository, r.Config.Owner); e != nil {
+		return e
+	}
+	if e := r.validateRepositories(w); e != nil {
 		return e
 	}
 	if w.Spec.DesiredState != "Running" && w.Spec.DesiredState != "Paused" {
@@ -439,6 +444,9 @@ func (r *Reconciler) ensure(ctx context.Context, w *api.ProjectWorkspace) error 
 		}
 	}
 	if e = r.updateAccessPolicy(ctx, w, s); e != nil {
+		return e
+	}
+	if e = r.enrollRepositories(ctx, w, s); e != nil {
 		return e
 	}
 	if e = r.objects(ctx, w, s); e != nil {
@@ -934,6 +942,9 @@ func (r *Reconciler) remove(ctx context.Context, w *api.ProjectWorkspace) error 
 			return errors.New("workspace identity ledger mismatch")
 		}
 		if string(s.Data["revoked"]) != "true" {
+			if e = r.revokeRepositories(ctx, w); e != nil {
+				return e
+			}
 			if e = r.Host.Revoke(ctx, w.Spec.Repository, credentials(s)); e != nil {
 				return e
 			}
@@ -1073,11 +1084,10 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 	if e != nil {
 		return e
 	}
-	rules, privateHosts, e := AccessRules(r.Config.GitHost, r.Config.ForgejoOrigin, w.Spec.Repository)
+	cfg, e := r.policyConfiguration(w, w.Spec.HTTPS)
 	if e != nil {
 		return e
 	}
-	cfg := proxy.Config{Rules: append(append([]api.HTTPSRule{}, rules...), w.Spec.HTTPS...), PrivateHosts: privateHosts}
 	raw, e := json.Marshal(cfg)
 	if e != nil {
 		return e
@@ -1090,9 +1100,20 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 	for _, p := range r.Network.Objects(ns, string(w.UID), hosts) {
 		objects = append(objects, p)
 	}
+	gitData := map[string][]byte{"username": s.Data["username"], "token": s.Data["token"]}
+	if len(s.Data["projects.json"]) > 0 {
+		gitData["projects.json"] = s.Data["projects.json"]
+	}
+	proxyData := map[string][]byte{"ca.crt": s.Data["ca.crt"], "ca.key": s.Data["ca.key"]}
+	if len(cfg.PrivateGitHubRepositories) > 0 {
+		if r.GitHubToken == "" {
+			return errors.New("private GitHub authorization unavailable")
+		}
+		proxyData["github-token"] = []byte(r.GitHubToken)
+	}
 	objects = append(objects, &corev1.ServiceAccount{ObjectMeta: metadata(w, "worker"), AutomountServiceAccountToken: boolp(false)},
-		&corev1.Secret{ObjectMeta: metadata(w, "git-identity"), Data: map[string][]byte{"username": s.Data["username"], "token": s.Data["token"]}},
-		&corev1.Secret{ObjectMeta: metadata(w, "proxy-ca"), Data: map[string][]byte{"ca.crt": s.Data["ca.crt"], "ca.key": s.Data["ca.key"]}},
+		&corev1.Secret{ObjectMeta: metadata(w, "git-identity"), Data: gitData},
+		&corev1.Secret{ObjectMeta: metadata(w, "proxy-ca"), Data: proxyData},
 		&corev1.ConfigMap{ObjectMeta: metadata(w, "trust"), Data: map[string]string{"ca.crt": string(s.Data["ca.crt"])}},
 		&corev1.ConfigMap{ObjectMeta: metadata(w, "proxy-policy"), Data: map[string]string{"policy.json": string(raw)}},
 		&corev1.PersistentVolumeClaim{ObjectMeta: metadata(w, "workspace"), Spec: corev1.PersistentVolumeClaimSpec{StorageClassName: &r.Config.StorageClass, AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}, Resources: corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse(r.Config.StorageSize)}}}},

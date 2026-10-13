@@ -1,7 +1,7 @@
 'use strict';
 const message = document.querySelector('#message');
 const drafts = new Map(), openPanels = new Set();
-let refreshing = false, t3Connect = false;
+let refreshing = false, t3Connect = false, githubOwner = '';
 async function api(path, method = 'GET', body) {
   const response = await fetch('/api/v1/' + path, {method, credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: body === undefined ? undefined : JSON.stringify(body)});
   if (!response.ok) throw new Error((await response.text()).trim());
@@ -67,6 +67,31 @@ function accessPanel(p) {
   }
   details.append(form); return details;
 }
+function repositoriesPanel(p) {
+  const section = element('section');
+  section.append(element('h4', 'Repositories in this sandbox'), element('code', '/workspace/repo'));
+  for (const project of p.spec.repositories || []) section.append(element('p', project.host + ': ' + project.repository), element('code', '/workspace/projects/' + project.name));
+  if (p.spec.desiredState === 'Removed') return section;
+  const ready = p.spec.desiredState === 'Paused' && p.status?.phase === 'Paused' && p.status?.observedGeneration === p.metadata.generation;
+  if (!ready) { section.append(element('p', 'Pause this sandbox to enroll another repository on its existing volume.', 'hint')); return section; }
+  const form = element('form', null, 'access-form');
+  const name = element('input'); name.required = true; name.pattern = '[a-z][a-z0-9-]{0,39}'; name.maxLength = 40;
+  const host = element('select'); host.setAttribute('aria-label', 'Repository host');
+  for (const [value, text] of [['forgejo', 'My Forgejo repository'], ['github', 'Public GitHub repository']]) { const option = element('option', text); option.value = value; host.append(option); }
+  if (githubOwner) { const option=element('option','Private GitHub repository for '+githubOwner);option.value='github-private';host.append(option); }
+  const repository = element('input'); repository.required = true; repository.placeholder = 'owner/repository';
+  const submit = element('button', 'Enroll repository in this sandbox'); submit.type = 'submit';
+  form.append(label('Directory name', name), label('Repository host', host), label('Repository, owner/name', repository), submit);
+  form.onsubmit = async event => {
+    event.preventDefault(); submit.disabled = true;
+    try {
+      await api('workspaces/' + encodeURIComponent(p.metadata.name) + '/repositories', 'POST', {resourceVersion: p.metadata.resourceVersion, project: {name: name.value, host: host.value === 'github-private' ? 'github' : host.value, repository: repository.value.trim(), public: host.value === 'github'}});
+      message.textContent = 'Repository enrollment requested. Wait for Paused, then Resume to clone and register it in T3.';
+      document.activeElement?.blur(); await refresh();
+    } catch (error) { message.textContent = error.message; submit.disabled = false; }
+  };
+  section.append(form); return section;
+}
 async function refresh() {
   if (refreshing) return;
   refreshing = true;
@@ -85,7 +110,7 @@ async function refresh() {
           article.append(element('p', 'Choose this project environment in T3. Sign in with the account authorized for the controller.', 'hint'));
         } else article.append(element('code', 'agent-project-controller connect ' + p.metadata.name));
       }
-      article.append(accessPanel(p));
+      article.append(repositoriesPanel(p), accessPanel(p));
       const buttons = element('div', null, 'actions');
       if (p.spec.desiredState !== 'Removed') for (const [text, state] of [[p.spec.desiredState === 'Paused' ? 'Resume' : 'Pause', p.spec.desiredState === 'Paused' ? 'Running' : 'Paused'], ['Remove project', 'Removed']]) {
         const button = element('button', text, state === 'Removed' ? 'danger' : 'secondary');
@@ -121,6 +146,7 @@ document.querySelector('#create').onsubmit = async event => {
 api('repositories').then(repos => { const select = document.querySelector('#repositories'); for (const r of repos || []) { const option = element('option', r.full_name); option.value = r.full_name; select.append(option); } }).catch(error => { message.textContent = error.message; });
 api('session').then(session => {
  t3Connect = session.t3Connect === true;
+ githubOwner = session.githubOwner || '';
   document.querySelector('#existing-sandboxes').hidden = !session.sandboxControl;
   if (session.oidc) {
     const logout = document.querySelector('#logout'); logout.hidden = false;
