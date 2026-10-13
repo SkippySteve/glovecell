@@ -21,6 +21,7 @@ import (
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/network"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/preflight"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/projects"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/providerbroker"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/proxy"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/t3"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/telemetry"
@@ -110,6 +111,23 @@ func openGitHost() (forgejo.Host, string, string, string, error) {
 func run(ctx context.Context) error {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "provider-broker":
+			config, err := ctrl.GetConfig()
+			if err != nil {
+				return errors.New("trusted Kubernetes client unavailable")
+			}
+			scheme := runtime.NewScheme()
+			if err := clientgoscheme.AddToScheme(scheme); err != nil {
+				return err
+			}
+			if err := api.AddToScheme(scheme); err != nil {
+				return err
+			}
+			c, err := client.New(config, client.Options{Scheme: scheme})
+			if err != nil {
+				return errors.New("trusted broker client unavailable")
+			}
+			return providerbroker.Run(ctx, c, config)
 		case "register-projects":
 			return projects.Register(ctx)
 		case "version", "--version":

@@ -38,7 +38,7 @@ func TestProviderGatewayExpiryRevocationRotationAndRecovery(t *testing.T) {
 		t.Fatal("accepted unreviewed credential container")
 	}
 	delete(access, "refreshToken")
-	restarted := *s
+	restarted := &Server{Config: s.Config, ProviderGrants: s.ProviderGrants}
 	if err := restarted.providerAuthorization(httptest.NewRequest("GET", "https://other.example/", nil)); err != nil {
 		t.Fatal("affected another destination")
 	}

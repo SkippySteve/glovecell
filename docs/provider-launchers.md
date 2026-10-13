@@ -38,5 +38,28 @@ This does not create or substitute a separately billed Meta API key.
 
 The launchers require qualified HTTPS policy, trusted account authorization and
 a backend that publishes fresh grants. Installation and offline tests alone do
-not qualify providers. Automated backend renewal and four-provider live
-qualification remain separate acceptance requirements.
+not qualify providers. Four-provider live qualification remains a separate
+acceptance requirement.
+
+The optional Go `provider-broker` command runs on the trusted control side. It
+publishes five-minute Grok and Cursor access leases every thirty seconds from
+explicitly configured credential owners. It renews Grok through the verified
+official OAuth endpoint. Cursor reads the retained owner's current access token;
+automatic renewal of the owner's Cursor login remains unimplemented. An owner
+outage leaves that provider's lease to expire and does not block the other owner.
+Disabled grants stay disabled after broker restarts. Muse is not renewed by this
+publisher.
+
+Bind this broker to a specific ProjectWorkspace UID. Give its ServiceAccount
+only reads of that workspace, get/patch of its model-access projection and
+renewal journal, and exec on the explicitly selected owner pods. Give workers
+none of these permissions. Keep the journal in the trusted control namespace.
+Grok rotation records intent before requesting a new token and the response
+before replacing the owner's credential file. Recovery completes a saved owner
+write without replaying OAuth. An interrupted request with no recorded response
+fails closed and requires owner recovery. Concurrent revocation or replacement
+of the workspace or projection prevents publication.
+
+The existing Codex lifecycle still requires a valid Codex grant for the whole
+workspace. This publisher does not yet replace that lifecycle with independent
+Codex renewal. Do not treat these launchers as complete workbench qualification.
