@@ -161,11 +161,37 @@ func ProjectK8s(v object) object {
 		}
 		status["conditions"] = safe
 	}
+	if containers, ok := source["containerStatuses"].([]any); ok {
+		safe := []any{}
+		for _, item := range containers {
+			c := obj(item)
+			projected := object{}
+			copyFields(projected, c, []string{"name"}, id)
+			copyFields(projected, c, []string{"restartCount"}, number)
+			for _, key := range []string{"ready", "started"} {
+				if value, ok := c[key].(bool); ok {
+					projected[key] = value
+				}
+			}
+			safe = append(safe, projected)
+		}
+		status["containerStatuses"] = safe
+	}
 	if len(status) > 0 {
 		out["status"] = status
 	}
 	spec := object{}
 	copyFields(spec, obj(v["spec"]), []string{"replicas"}, number)
+	copyFields(spec, obj(v["spec"]), []string{"nodeName"}, id)
+	if containers, ok := obj(v["spec"])["containers"].([]any); ok {
+		safe := []any{}
+		for _, item := range containers {
+			c := object{}
+			copyFields(c, obj(item), []string{"name"}, id)
+			safe = append(safe, c)
+		}
+		spec["containers"] = safe
+	}
 	if len(spec) > 0 {
 		out["spec"] = spec
 	}
@@ -315,7 +341,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for key := range r.URL.Query() {
-		if key != "limit" && key != "labelSelector" && key != "fieldSelector" {
+		if key != "limit" && key != "labelSelector" && key != "fieldSelector" && key != "timeout" {
+			reply(w, 403, object{"kind": "Status", "status": "Failure", "reason": "Forbidden"})
+			return
+		}
+	}
+	if raw := r.URL.Query().Get("timeout"); raw != "" {
+		duration, err := time.ParseDuration(raw)
+		if err != nil || duration < 0 || duration > time.Minute {
 			reply(w, 403, object{"kind": "Status", "status": "Failure", "reason": "Forbidden"})
 			return
 		}

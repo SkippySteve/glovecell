@@ -59,7 +59,7 @@ func TestDeniedRequestsNeverReachUpstreamAndRecoveryWithholdsHeaders(t *testing.
 	}))
 	defer upstream.Close()
 	s := &Server{Kubernetes: upstream.URL, KubeClient: upstream.Client(), KubeToken: func() (string, error) { return "fixture", nil }}
-	for _, path := range []string{"/k8s/api/v1/secrets", "/k8s/api/v1/pods/x/log", "/k8s/api/v1/pods?watch=true", "/k8s/api/v1/pods?allowWatchBookmarks=true", "/k8s/apis/unknown/v1/things"} {
+	for _, path := range []string{"/k8s/api/v1/secrets", "/k8s/api/v1/pods/x/log", "/k8s/api/v1/pods?watch=true", "/k8s/api/v1/pods?allowWatchBookmarks=true", "/k8s/api/v1/pods?timeout=2h", "/k8s/apis/unknown/v1/things"} {
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
 		if w.Code != 403 {
@@ -70,19 +70,19 @@ func TestDeniedRequestsNeverReachUpstreamAndRecoveryWithholdsHeaders(t *testing.
 		t.Fatal("denial reached upstream")
 	}
 	w := httptest.NewRecorder()
-	s.ServeHTTP(w, httptest.NewRequest("GET", "/k8s/api/v1/pods", nil))
+	s.ServeHTTP(w, httptest.NewRequest("GET", "/k8s/api/v1/pods?timeout=10s", nil))
 	if w.Code != 502 || strings.Contains(w.Body.String(), "INLINE_PASSWORD") || w.Header().Get("X-Password") != "" {
 		t.Fatal("upstream error leaked")
 	}
 	available = true
 	w = httptest.NewRecorder()
-	s.ServeHTTP(w, httptest.NewRequest("GET", "/k8s/api/v1/pods", nil))
+	s.ServeHTTP(w, httptest.NewRequest("GET", "/k8s/api/v1/pods?timeout=10s", nil))
 	if w.Code != 200 || strings.Contains(w.Body.String(), "INLINE_PASSWORD") {
 		t.Fatal("recovery failed")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	req := httptest.NewRequest("GET", "/k8s/api/v1/pods", nil).WithContext(ctx)
+	req := httptest.NewRequest("GET", "/k8s/api/v1/pods?timeout=10s", nil).WithContext(ctx)
 	w = httptest.NewRecorder()
 	s.ServeHTTP(w, req)
 	if w.Code != 502 {
