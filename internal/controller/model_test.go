@@ -36,3 +36,22 @@ func TestRejectRefreshMaterial(t *testing.T) {
 		}
 	}
 }
+
+func TestProviderAccessOnlyValidation(t *testing.T) {
+	valid := `{"grok":{"enabled":true,"access":{"accessToken":"fixture-access","expiresAt":1,"issuer":"https://auth.x.ai"}},"cursor":{"enabled":false},"muse":{"enabled":true,"access":{"accessToken":"apc-muse-subscription-gateway","expiresAt":1}}}`
+	// Expiry is a per-provider launcher decision, not a whole-workbench pause.
+	if err := validateProviderAccess([]byte(valid)); err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range []string{
+		`{"cursor":{"enabled":true,"access":{"accessToken":"x","expiresAt":100,"refreshToken":"never-deliver"}}}`,
+		`{"cursor":{"enabled":true,"access":{"accessToken":"x","expiresAt":0}}}`,
+		`{"muse":{"enabled":true,"access":{"accessToken":"long-lived-subscription-key","expiresAt":100}}}`,
+		`{"grok":{"enabled":true,"access":{"accessToken":"x","expiresAt":100,"issuer":"https://other.example"}}}`,
+		`{"unreviewed":{"enabled":false}}`, valid + `{}`,
+	} {
+		if err := validateProviderAccess([]byte(raw)); err == nil {
+			t.Fatal("accepted unsafe provider material")
+		}
+	}
+}

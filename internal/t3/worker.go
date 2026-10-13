@@ -200,9 +200,11 @@ func serve(instance string, managed bool) error {
 		return err
 	}
 	settings := map[string]any{"providers": map[string]any{
-		"codex": map[string]any{"setupMode": "existing", "enabled": true, "binaryPath": "/usr/local/bin/apc-codex", "homePath": "/workspace/.apc/codex"},
+		"codex":  map[string]any{"setupMode": "existing", "enabled": true, "binaryPath": "/usr/local/bin/apc-codex", "homePath": "/workspace/.apc/codex"},
+		"cursor": map[string]any{"enabled": true, "binaryPath": "/usr/local/bin/cursor-agent"},
+		"grok":   map[string]any{"enabled": true, "binaryPath": "/usr/local/bin/grok"},
 	}}
-	for _, name := range []string{"claudeAgent", "cursor", "grok", "opencode", "antigravity"} {
+	for _, name := range []string{"claudeAgent", "opencode", "antigravity"} {
 		settings["providers"].(map[string]any)[name] = map[string]any{"enabled": false}
 	}
 	raw, _ := json.Marshal(settings)

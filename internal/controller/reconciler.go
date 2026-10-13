@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/netip"
 	"net/url"
+	"os"
 	"reflect"
 	"strconv"
 	"strings"
@@ -103,10 +104,11 @@ type ProjectAccess interface {
 type Reconciler struct {
 	Access ProjectAccess
 	client.Client
-	Host        forgejo.Host
-	Network     network.Provider
-	Config      Config
-	GitHubToken string
+	Host                    forgejo.Host
+	Network                 network.Provider
+	Config                  Config
+	GitHubToken             string
+	MuseSubscriptionKeyFile string
 }
 
 var duration, _ = otel.Meter("agent-project-controller").Float64Histogram("workspace.reconcile.duration", metric.WithUnit("s"))
@@ -1131,6 +1133,13 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 		gitData["projects.json"] = s.Data["projects.json"]
 	}
 	proxyData := map[string][]byte{"ca.crt": s.Data["ca.crt"], "ca.key": s.Data["ca.key"]}
+	if r.MuseSubscriptionKeyFile != "" {
+		// A missing/revoked subscription key blocks only Muse at the gateway.
+		// The next reconciliation consumes renewed trusted-backend material.
+		if key, err := os.ReadFile(r.MuseSubscriptionKeyFile); err == nil {
+			proxyData["muse-subscription-key"] = bytes.TrimSpace(key)
+		}
+	}
 	if len(cfg.PrivateGitHubRepositories) > 0 {
 		if r.GitHubToken == "" {
 			return errors.New("private GitHub authorization unavailable")

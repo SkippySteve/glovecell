@@ -35,6 +35,7 @@ type Config struct {
 	Rules                     []api.HTTPSRule `json:"rules"`
 	PrivateHosts              []string        `json:"privateHosts,omitempty"`
 	PrivateGitHubRepositories []string        `json:"privateGitHubRepositories,omitempty"`
+	MuseSubscriptionGateway   bool            `json:"museSubscriptionGateway,omitempty"`
 }
 
 var dnsHost = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$`)
@@ -125,14 +126,15 @@ func GenerateCA() ([]byte, []byte, error) {
 }
 
 type Server struct {
-	Config      Config
-	CA          *x509.Certificate
-	Key         any
-	Transport   *http.Transport
-	GitHubToken func() (string, error)
-	slots       chan struct{}
-	mu          sync.Mutex
-	certs       map[string]tls.Certificate
+	Config              Config
+	CA                  *x509.Certificate
+	Key                 any
+	Transport           *http.Transport
+	GitHubToken         func() (string, error)
+	MuseSubscriptionKey func() (string, error)
+	slots               chan struct{}
+	mu                  sync.Mutex
+	certs               map[string]tls.Certificate
 }
 
 func New(c Config, cert, key []byte) (*Server, error) {
@@ -378,6 +380,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeError(conn, 502, "GitHub repository authorization unavailable")
 			return
 		}
+		if s.museCredentials(req) != nil {
+			req.Body.Close()
+			writeError(conn, 502, "Muse subscription authorization unavailable")
+			return
+		}
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 		req = req.WithContext(ctx)
 		res, e := s.Transport.RoundTrip(req)
@@ -431,6 +438,10 @@ func (s *Server) serveHTTP2(ctx context.Context, conn net.Conn, host string) {
 			}
 			if s.githubCredentials(forward) != nil {
 				http.Error(w, "GitHub repository authorization unavailable", http.StatusBadGateway)
+				return
+			}
+			if s.museCredentials(forward) != nil {
+				http.Error(w, "Muse subscription authorization unavailable", http.StatusBadGateway)
 				return
 			}
 			callCtx, cancel := context.WithTimeout(req.Context(), 2*time.Minute)
@@ -492,6 +503,7 @@ func Run(ctx context.Context) error {
 		return e
 	}
 	s.GitHubToken = gatewayGitHubToken
+	s.MuseSubscriptionKey = gatewayMuseSubscriptionKey
 	server := &http.Server{Addr: ":3128", Handler: s, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 32 << 10}
 	go func() { <-ctx.Done(); _ = server.Close() }()
 	e = server.ListenAndServe()

@@ -230,6 +230,7 @@ func run(ctx context.Context) error {
 	} else if os.Getenv("ADDITIONAL_GITHUB_OWNER") != "" {
 		return errors.New("additional GitHub owner requires a trusted repository token")
 	}
+	reconciler.MuseSubscriptionKeyFile = os.Getenv("MUSE_SUBSCRIPTION_KEY_FILE")
 	if e = reconciler.Config.Validate(); e != nil {
 		return e
 	}

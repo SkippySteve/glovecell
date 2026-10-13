@@ -1,7 +1,10 @@
 package controller
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"io"
 	"math"
 	"regexp"
 	"strconv"
@@ -19,6 +22,10 @@ func RejectRefreshMaterial(data map[string][]byte) error {
 		}
 		switch key {
 		case "access-token", "chatgpt-account-id", "chatgpt-plan-type", "expires-at":
+		case "provider-access":
+			if err := validateProviderAccess(data[key]); err != nil {
+				return err
+			}
 		default:
 			return errors.New("model access contains an unreviewed field")
 		}
@@ -39,3 +46,48 @@ func RejectRefreshMaterial(data map[string][]byte) error {
 }
 
 var bearerToken = regexp.MustCompile(`^[A-Za-z0-9._~+/=-]+$`)
+
+func validateProviderAccess(raw []byte) error {
+	if len(raw) > 128<<10 {
+		return errors.New("provider grants too large")
+	}
+	var values map[string]struct {
+		Enabled bool `json:"enabled"`
+		Access  *struct {
+			Token   string  `json:"accessToken"`
+			Expires float64 `json:"expiresAt"`
+			Issuer  string  `json:"issuer,omitempty"`
+		} `json:"access,omitempty"`
+	}
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.DisallowUnknownFields()
+	if d.Decode(&values) != nil || values == nil {
+		return errors.New("access-only provider grants required")
+	}
+	if d.Decode(new(any)) != io.EOF {
+		return errors.New("invalid provider grant document")
+	}
+	for provider, value := range values {
+		if provider != "grok" && provider != "cursor" && provider != "muse" {
+			return errors.New("unreviewed provider grant")
+		}
+		if !value.Enabled && value.Access == nil {
+			continue
+		}
+		if value.Access == nil || value.Access.Token == "" || len(value.Access.Token) > 32768 || math.IsNaN(value.Access.Expires) || math.IsInf(value.Access.Expires, 0) || value.Access.Expires <= 0 {
+			return errors.New("invalid provider grant")
+		}
+		for _, c := range value.Access.Token {
+			if c < 33 || c > 126 {
+				return errors.New("invalid provider access token")
+			}
+		}
+		if provider == "grok" && value.Access.Issuer != "https://auth.x.ai" || provider != "grok" && value.Access.Issuer != "" {
+			return errors.New("invalid provider issuer")
+		}
+		if provider == "muse" && value.Access.Token != "apc-muse-subscription-gateway" {
+			return errors.New("Muse subscription credential must remain at its trusted gateway")
+		}
+	}
+	return nil
+}

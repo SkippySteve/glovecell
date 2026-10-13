@@ -174,7 +174,7 @@ def translate(message, root=ROOT, registry=Path('/identity/projects.json')):
 
 
 def grant(directory=Path('/run/model')):
-    allowed = {'access-token', 'chatgpt-account-id', 'expires-at', 'chatgpt-plan-type'}
+    allowed = {'access-token', 'chatgpt-account-id', 'expires-at', 'chatgpt-plan-type', 'provider-access'}
     names = {p.name for p in directory.iterdir() if not p.name.startswith('.')}
     if names - allowed: raise ValueError('unsupported model fields')
     expiry = float((directory / 'expires-at').read_text())

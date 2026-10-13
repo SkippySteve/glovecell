@@ -56,6 +56,24 @@ RUN curl -fsSL https://codeberg.org/forgejo-contrib/forgejo-cli/releases/downloa
     && mkdir /opt/fj && tar xzf /tmp/fj.tar.gz -C /opt/fj \
     && rm /tmp/fj.tar.gz
 COPY scripts/apc-fj.py /usr/local/bin/fj
+# Stock subscription clients, pinned independently of the application runtimes.
+RUN curl -fsSL https://x.ai/cli/grok-1.0.46-linux-x86_64.zst -o /tmp/grok.zst \
+    && echo '3d6fff352acd5658758f9b7b627313468e779c86fb259273df40eda5bac9d713  /tmp/grok.zst' | sha256sum -c - \
+    && apt-get update && apt-get install -y --no-install-recommends zstd \
+    && mkdir /opt/grok && unzstd -f -o /opt/grok/grok /tmp/grok.zst \
+    && chmod 0755 /opt/grok/grok && rm /tmp/grok.zst \
+    && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL https://downloads.cursor.com/lab/2026.10.01-e373342/linux/x64/agent-cli-package.tar.gz -o /tmp/cursor.tar.gz \
+    && echo 'a79726c6e644520e993970be4c45775a6889802b67abe461a677a53219ae28e8  /tmp/cursor.tar.gz' | sha256sum -c - \
+    && mkdir /opt/cursor-agent && tar xzf /tmp/cursor.tar.gz -C /opt/cursor-agent --strip-components=1 \
+    && rm /tmp/cursor.tar.gz
+RUN curl -fsSL 'https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.7-R6101.1&file=muse-x86-linux' -o /tmp/muse \
+    && echo '36e3dac91f56c15572b95be55d70ee9fd9685cd9ab49f747bab4746c8d7c2518  /tmp/muse' | sha256sum -c - \
+    && mkdir /opt/muse && mv /tmp/muse /opt/muse/muse && chmod 0755 /opt/muse/muse
+COPY scripts/apc-provider.py /usr/local/bin/apc-provider
+RUN ln -s apc-provider /usr/local/bin/grok \
+    && ln -s apc-provider /usr/local/bin/cursor-agent \
+    && ln -s apc-provider /usr/local/bin/muse
 COPY third_party/licenses/ /usr/share/agent-project-controller/licenses/
 USER 1000:1000
 CMD ["controller"]
