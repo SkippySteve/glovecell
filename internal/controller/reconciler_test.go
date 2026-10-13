@@ -679,3 +679,37 @@ func TestModelGrantExpiryAndRevocationStopAndRecover(t *testing.T) {
 		t.Fatal("expiry renewal did not recover", err)
 	}
 }
+
+func TestIndependentCodexLedgerSurvivesMissingProjectionAndControllerRestart(t *testing.T) {
+	ctx := context.Background()
+	r, w, _ := fixture(t)
+	r.IndependentCodexWorkspaceUID = string(w.UID)
+	if err := r.ensure(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	data := validModelAccess()
+	data["provider-access"] = []byte(`{"codex":{"enabled":false},"cursor":{"enabled":false}}`)
+	data["expires-at"] = []byte("1")
+	grant := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "model-access", Namespace: namespace(w), Labels: labels(w)}, Data: data}
+	if err := r.Create(ctx, grant); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ensure(ctx, w); err != nil {
+		t.Fatal("independent expiry paused workbench", err)
+	}
+	if err := r.Delete(ctx, grant); err != nil {
+		t.Fatal(err)
+	}
+	restarted := *r
+	if err := restarted.ensure(ctx, w); err != nil {
+		t.Fatal("independent projection removal paused other providers", err)
+	}
+	ledger, err := restarted.state(ctx, w)
+	if err != nil || string(ledger.Data["independent-model-access"]) != "true" {
+		t.Fatal("lost independent lifecycle marker")
+	}
+	cfg, err := restarted.policyConfiguration(w, w.Spec.HTTPS)
+	if err != nil || !cfg.IndependentCodex || !cfg.BrokeredProviders {
+		t.Fatal("missing projection disabled inspection denial")
+	}
+}

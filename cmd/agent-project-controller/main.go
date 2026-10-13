@@ -23,6 +23,7 @@ import (
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/projects"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/providerbroker"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/proxy"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/reader"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/t3"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/telemetry"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/web"
@@ -160,6 +161,8 @@ func run(ctx context.Context) error {
 			return bootstrap.Run(ctx)
 		case "credential":
 			return bootstrap.Credential()
+		case "reader":
+			return reader.Run(ctx)
 		case "proxy":
 			return proxy.Run(ctx)
 		case "preflight":
@@ -248,7 +251,19 @@ func run(ctx context.Context) error {
 	} else if os.Getenv("ADDITIONAL_GITHUB_OWNER") != "" {
 		return errors.New("additional GitHub owner requires a trusted repository token")
 	}
+	reconciler.IndependentCodexWorkspaceUID = os.Getenv("INDEPENDENT_CODEX_WORKSPACE_UID")
 	reconciler.MuseSubscriptionKeyFile = os.Getenv("MUSE_SUBSCRIPTION_KEY_FILE")
+	if host := os.Getenv("READER_HTTPS_HOST"); host != "" {
+		route := &proxy.ReaderRoute{Host: host, Upstream: os.Getenv("READER_UPSTREAM")}
+		if err := route.Validate(); err != nil {
+			return err
+		}
+		reconciler.ReaderWorkspaceUID = os.Getenv("READER_WORKSPACE_UID")
+		if reconciler.ReaderWorkspaceUID == "" {
+			return errors.New("reader workspace UID required")
+		}
+		reconciler.ReaderRoute = route
+	}
 	if e = reconciler.Config.Validate(); e != nil {
 		return e
 	}

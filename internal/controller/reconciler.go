@@ -102,7 +102,10 @@ type ProjectAccess interface {
 }
 
 type Reconciler struct {
-	Access ProjectAccess
+	IndependentCodexWorkspaceUID string
+	ReaderWorkspaceUID           string
+	ReaderRoute                  *proxy.ReaderRoute
+	Access                       ProjectAccess
 	client.Client
 	Host                    forgejo.Host
 	Network                 network.Provider
@@ -522,7 +525,7 @@ func (r *Reconciler) modelAccess(ctx context.Context, w *api.ProjectWorkspace) e
 	s := &corev1.Secret{}
 	e = r.Get(ctx, types.NamespacedName{Namespace: namespace(w), Name: "model-access"}, s)
 	if apierrors.IsNotFound(e) {
-		if string(ledger.Data["model-access-required"]) == "true" {
+		if string(ledger.Data["model-access-required"]) == "true" && string(ledger.Data["independent-model-access"]) != "true" {
 			return errors.New("model access was revoked; a valid operator grant is required")
 		}
 		return nil
@@ -533,12 +536,18 @@ func (r *Reconciler) modelAccess(ctx context.Context, w *api.ProjectWorkspace) e
 	if e = owner(w, s); e != nil {
 		return e
 	}
+	if independentCodex(s.Data) && r.IndependentCodexWorkspaceUID != string(w.UID) {
+		return errors.New("independent Codex requires its inspecting gateway binding")
+	}
 	if e = RejectRefreshMaterial(s.Data); e != nil {
 		return e
 	}
-	if string(ledger.Data["model-access-required"]) != "true" {
+	if string(ledger.Data["model-access-required"]) != "true" || independentCodex(s.Data) && string(ledger.Data["independent-model-access"]) != "true" {
 		before := ledger.DeepCopy()
 		ledger.Data["model-access-required"] = []byte("true")
+		if independentCodex(s.Data) {
+			ledger.Data["independent-model-access"] = []byte("true")
+		}
 		if e = r.Patch(ctx, ledger, client.MergeFrom(before)); e != nil {
 			return e
 		}

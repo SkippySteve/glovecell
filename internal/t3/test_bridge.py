@@ -115,3 +115,24 @@ class InterruptedRPC(unittest.TestCase):
         rpc.process.wait.assert_called_once_with(timeout=10)
 
 if __name__=='__main__':unittest.main()
+
+class IndependentCodex(unittest.TestCase):
+    def test_rotation_account_substitution_revocation_and_recovery(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)
+            def publish(token='old', account='account', enabled=True, expires=None):
+                value={'enabled':enabled}
+                if enabled: value['access']={'accessToken':token,'expiresAt':expires or time.time()+600,'chatgptAccountId':account}
+                (root/'provider-access').write_text(json.dumps({'codex':value,'cursor':{'enabled':True,'access':{'accessToken':'cursor','expiresAt':time.time()+600}}}))
+            publish()
+            self.assertEqual(b.refreshed_grant('account',root)['accessToken'],'old')
+            publish(token='rotated')
+            self.assertEqual(b.refreshed_grant('account',root)['accessToken'],'rotated')
+            publish(account='other')
+            with self.assertRaises(ValueError): b.refreshed_grant('account',root)
+            publish(enabled=False)
+            with self.assertRaises(ValueError): b.refreshed_grant('account',root)
+            publish(expires=1)
+            with self.assertRaises(ValueError): b.refreshed_grant('account',root)
+            publish(token='recovered')
+            self.assertEqual(b.refreshed_grant('account',root)['accessToken'],'recovered')

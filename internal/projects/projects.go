@@ -220,7 +220,7 @@ sys.exit(0 if len(rows)==1 else 3 if len(rows)==0 else 4)`
 				return errors.New("T3 project registration could not be inspected")
 			}
 		}
-		c := exec.CommandContext(ctx, "/opt/t3/t3", "project", "add", e.Directory("/workspace"), "--title", e.Name, "--base-dir", "/workspace/.apc/t3")
+		c := exec.CommandContext(ctx, "/opt/t3/t3", "project", "add", e.Directory("/workspace"), "--title", e.Name+": "+e.Directory("/workspace"), "--base-dir", "/workspace/.apc/t3")
 		c.Stdout, c.Stderr = io.Discard, io.Discard
 		if c.Run() != nil {
 			return errors.New("enrolled checkout could not be registered with T3")

@@ -5,9 +5,9 @@ package providerbroker
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"flag"
 	"io"
 	"log/slog"
 	"math"
@@ -28,13 +28,18 @@ import (
 
 type Owner struct{ Namespace, Pod, Container string }
 type Config struct {
+	ForceRenew                       map[string]bool
 	Control, Workspace, UID, Journal string
+	OAuthClientIDs                   map[string]string
 	Owners                           map[string]Owner
 }
 type Access struct {
 	Token   string  `json:"accessToken"`
 	Expires float64 `json:"expiresAt"`
 	Issuer  string  `json:"issuer,omitempty"`
+	Account string  `json:"chatgptAccountId,omitempty"`
+	Plan    string  `json:"chatgptPlanType,omitempty"`
+	Subject string  `json:"-"`
 }
 type Grant struct {
 	Enabled bool    `json:"enabled"`
@@ -75,7 +80,7 @@ func enrolledGrants(raw []byte) (map[string]Grant, error) {
 		return nil, errors.New("invalid provider enrollment projection")
 	}
 	for name, grant := range grants {
-		if name != "grok" && name != "cursor" && name != "muse" {
+		if name != "codex" && name != "grok" && name != "cursor" && name != "muse" {
 			return nil, errors.New("unreviewed provider enrollment")
 		}
 		if !grant.Enabled {
@@ -83,6 +88,12 @@ func enrolledGrants(raw []byte) (map[string]Grant, error) {
 				return nil, errors.New("revoked provider retained credentials")
 			}
 			continue
+		}
+		if name == "codex" && grant.Enabled && (grant.Access == nil || grant.Access.Account == "" || len(grant.Access.Account) > 256 || strings.ContainsAny(grant.Access.Account, "\r\n\t {}[]\"")) {
+			return nil, errors.New("invalid Codex account enrollment")
+		}
+		if name != "codex" && grant.Access != nil && (grant.Access.Account != "" || grant.Access.Plan != "") {
+			return nil, errors.New("unreviewed provider account fields")
 		}
 		if grant.Access == nil || !validAccess(*grant.Access) || (name == "grok" && grant.Access.Issuer != "https://auth.x.ai") || (name != "grok" && grant.Access.Issuer != "") || (name == "muse" && grant.Access.Token != "apc-muse-subscription-gateway") {
 			return nil, errors.New("invalid access-only provider enrollment")
@@ -130,6 +141,9 @@ func (b *Broker) now() time.Time {
 	return time.Now()
 }
 func (b *Broker) owner(ctx context.Context, provider string) (Access, error) {
+	if provider == "codex" || provider == "cursor" {
+		return b.oauthOwner(ctx, provider)
+	}
 	owner, ok := b.Config.Owners[provider]
 	if !ok {
 		return Access{}, errors.New("credential owner not configured")
@@ -138,32 +152,6 @@ func (b *Broker) owner(ctx context.Context, provider string) (Access, error) {
 	raw, err := b.Execute(ctx, owner, ownerRead, input)
 	if err != nil || len(raw) > 128<<10 {
 		return Access{}, errors.New("credential owner unavailable")
-	}
-	if provider == "cursor" {
-		var current struct {
-			Document struct {
-				Token string `json:"accessToken"`
-			} `json:"document"`
-		}
-		if json.Unmarshal(raw, &current) != nil {
-			return Access{}, errors.New("invalid owner projection")
-		}
-		parts := strings.Split(current.Document.Token, "::")
-		jwt := strings.Split(parts[len(parts)-1], ".")
-		if len(jwt) != 3 {
-			return Access{}, errors.New("invalid owner token")
-		}
-		payload, err := base64.RawURLEncoding.DecodeString(jwt[1])
-		if err != nil {
-			return Access{}, errors.New("invalid owner expiry")
-		}
-		var claims struct {
-			Exp float64 `json:"exp"`
-		}
-		if json.Unmarshal(payload, &claims) != nil {
-			return Access{}, errors.New("invalid owner expiry")
-		}
-		return Access{Token: current.Document.Token, Expires: claims.Exp}, nil
 	}
 	var current snapshot
 	if json.Unmarshal(raw, &current) != nil || len(current.Document) != 1 {
@@ -262,6 +250,8 @@ func (b *Broker) save(ctx context.Context, ledger *corev1.Secret, pending renewa
 
 type oauthResponse struct {
 	Token    string  `json:"access_token"`
+	IDToken  string  `json:"id_token"`
+	Logout   bool    `json:"shouldLogout"`
 	Refresh  string  `json:"refresh_token"`
 	Lifetime float64 `json:"expires_in"`
 }
@@ -308,12 +298,21 @@ func (b *Broker) Tick(ctx context.Context) error {
 		return errors.New("provider enrollment projection unavailable")
 	}
 	var failures []error
-	for _, name := range []string{"grok", "cursor"} {
+	for _, name := range []string{"codex", "grok", "cursor"} {
 		grant := grants[name]
 		if !grant.Enabled {
 			continue
 		}
 		access, err := b.owner(ctx, name)
+		if err == nil && name == "codex" && access.Account != grant.Access.Account {
+			err = errors.New("Codex enrollment account changed")
+		}
+		if err == nil && name == "cursor" {
+			prior, e := claims(grant.Access.Token)
+			if e != nil || prior.Sub == "" || access.Subject != prior.Sub {
+				err = errors.New("Cursor enrollment account changed")
+			}
+		}
 		if err != nil || !validAccess(access) || access.Expires <= float64(b.now().Add(time.Minute).Unix()) {
 			failures = append(failures, errors.New(name+" credential owner renewal unavailable"))
 			continue
@@ -334,6 +333,14 @@ func (b *Broker) Tick(ctx context.Context) error {
 	before := latest.DeepCopy()
 	raw, _ := json.Marshal(grants)
 	latest.Data["provider-access"] = raw
+	if grant, ok := grants["codex"]; ok {
+		if grant.Enabled && grant.Access != nil {
+			latest.Data["access-token"] = []byte(grant.Access.Token)
+			latest.Data["chatgpt-account-id"] = []byte(grant.Access.Account)
+			latest.Data["chatgpt-plan-type"] = []byte(grant.Access.Plan)
+			latest.Data["expires-at"] = []byte(strconv.FormatFloat(grant.Access.Expires, 'f', -1, 64))
+		}
+	}
 	if err := b.Client.Patch(ctx, &latest, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
 		return errors.New("provider access publication failed")
 	}
@@ -341,17 +348,38 @@ func (b *Broker) Tick(ctx context.Context) error {
 }
 
 func Run(ctx context.Context, c client.Client, config *rest.Config) error {
-	cfg := Config{Control: os.Getenv("PROVIDER_BROKER_CONTROL_NAMESPACE"), Workspace: os.Getenv("PROVIDER_BROKER_WORKSPACE"), UID: os.Getenv("PROVIDER_BROKER_WORKSPACE_UID"), Journal: os.Getenv("PROVIDER_BROKER_JOURNAL"), Owners: map[string]Owner{}}
+	flags := flag.NewFlagSet("provider-broker", flag.ContinueOnError)
+	once := flags.Bool("once", false, "Publish one access lease tick")
+	force := flags.String("force-renew", "", "Renew selected enrolled owners in a single supervised tick")
+	if err := flags.Parse(os.Args[2:]); err != nil {
+		return err
+	}
+	if *force != "" && !*once {
+		return errors.New("forced renewal requires --once")
+	}
+	cfg := Config{Control: os.Getenv("PROVIDER_BROKER_CONTROL_NAMESPACE"), Workspace: os.Getenv("PROVIDER_BROKER_WORKSPACE"), UID: os.Getenv("PROVIDER_BROKER_WORKSPACE_UID"), Journal: os.Getenv("PROVIDER_BROKER_JOURNAL"), Owners: map[string]Owner{}, OAuthClientIDs: map[string]string{}}
 	if cfg.Control == "" || cfg.Workspace == "" || cfg.UID == "" || cfg.Journal == "" {
 		return errors.New("trusted provider broker configuration required")
 	}
-	for _, name := range []string{"grok", "cursor"} {
+	for _, name := range []string{"codex", "grok", "cursor"} {
 		prefix := strings.ToUpper(name) + "_OWNER_"
 		owner := Owner{Namespace: os.Getenv(prefix + "NAMESPACE"), Pod: os.Getenv(prefix + "POD"), Container: os.Getenv(prefix + "CONTAINER")}
 		if owner.Namespace == "" || owner.Pod == "" || owner.Container == "" {
 			return errors.New("explicit credential owner required")
 		}
 		cfg.Owners[name] = owner
+		if name != "grok" {
+			cfg.OAuthClientIDs[name] = os.Getenv(strings.ToUpper(name) + "_OAUTH_CLIENT_ID")
+		}
+	}
+	cfg.ForceRenew = map[string]bool{}
+	if *force != "" {
+		for _, name := range strings.Split(*force, ",") {
+			if name != "codex" && name != "cursor" {
+				return errors.New("unsupported forced owner renewal")
+			}
+			cfg.ForceRenew[name] = true
+		}
 	}
 	b := &Broker{Client: c, Config: cfg, Execute: func(ctx context.Context, owner Owner, program string, input []byte) ([]byte, error) {
 		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -363,6 +391,9 @@ func Run(ctx context.Context, c client.Client, config *rest.Config) error {
 		}
 		return output.Bytes(), nil
 	}}
+	if *once {
+		return b.Tick(ctx)
+	}
 	for {
 		if err := b.Tick(ctx); err != nil {
 			slog.Warn("provider broker renewal unavailable", "status", err.Error())

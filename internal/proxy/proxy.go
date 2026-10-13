@@ -32,6 +32,8 @@ import (
 )
 
 type Config struct {
+	IndependentCodex          bool            `json:"independentCodex,omitempty"`
+	Reader                    *ReaderRoute    `json:"reader,omitempty"`
 	Rules                     []api.HTTPSRule `json:"rules"`
 	PrivateHosts              []string        `json:"privateHosts,omitempty"`
 	PrivateGitHubRepositories []string        `json:"privateGitHubRepositories,omitempty"`
@@ -42,6 +44,9 @@ type Config struct {
 var dnsHost = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$`)
 
 func Validate(c Config) error {
+	if err := c.Reader.Validate(); err != nil {
+		return err
+	}
 	if len(c.PrivateGitHubRepositories) > 16 {
 		return errors.New("too many private GitHub repositories")
 	}
@@ -130,6 +135,7 @@ type Server struct {
 	Config              Config
 	CA                  *x509.Certificate
 	Key                 any
+	ReaderTransport     *http.Transport
 	Transport           *http.Transport
 	GitHubToken         func() (string, error)
 	MuseSubscriptionKey func() (string, error)
@@ -154,7 +160,7 @@ func New(c Config, cert, key []byte) (*Server, error) {
 	if !ca.IsCA || time.Now().After(ca.NotAfter) {
 		return nil, errors.New("valid inspection CA required")
 	}
-	s := &Server{Config: c, CA: ca, Key: pair.PrivateKey, slots: make(chan struct{}, 32), certs: map[string]tls.Certificate{}}
+	s := &Server{Config: c, CA: ca, Key: pair.PrivateKey, slots: make(chan struct{}, 32), certs: map[string]tls.Certificate{}, ReaderTransport: readerTransport()}
 	s.Transport = &http.Transport{Proxy: nil, DialContext: s.dial, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 30 * time.Second, IdleConnTimeout: 30 * time.Second, MaxIdleConns: 32, ForceAttemptHTTP2: false}
 	return s, nil
 }
@@ -400,7 +406,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 		req = req.WithContext(ctx)
-		res, e := s.Transport.RoundTrip(req)
+		res, e := s.roundTrip(req)
 		if e != nil {
 			req.Body.Close()
 			cancel()
@@ -467,7 +473,7 @@ func (s *Server) serveHTTP2(ctx context.Context, conn net.Conn, host string) {
 			}
 			callCtx, cancel := context.WithTimeout(req.Context(), 2*time.Minute)
 			defer cancel()
-			res, e := s.Transport.RoundTrip(forward.WithContext(callCtx))
+			res, e := s.roundTrip(forward.WithContext(callCtx))
 			if e != nil {
 				slog.Warn("proxy upstream request failed", "failure_kind", failureKind(e))
 				http.Error(w, "upstream unavailable", http.StatusBadGateway)

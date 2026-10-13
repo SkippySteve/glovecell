@@ -45,7 +45,7 @@ def grant(provider, path=GRANTS):
     if len(raw) > 131072:
         raise ValueError('provider grants too large')
     document = json.loads(raw)
-    if not isinstance(document, dict) or set(document) - set(BINARIES):
+    if not isinstance(document, dict) or set(document) - (set(BINARIES) | {"codex"}):
         raise ValueError('unreviewed provider')
     access = validate(document.get(provider))
     if provider == 'grok' and access.get('issuer') != 'https://auth.x.ai':

@@ -55,3 +55,22 @@ func TestProviderAccessOnlyValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestIndependentCodexExpiryRevocationAndMalformedProjection(t *testing.T) {
+	data := validModelAccess()
+	data["expires-at"] = []byte("1")
+	data["provider-access"] = []byte(`{"codex":{"enabled":true,"access":{"accessToken":"expired","expiresAt":1,"chatgptAccountId":"account"}},"cursor":{"enabled":false}}`)
+	if err := RejectRefreshMaterial(data); err != nil {
+		t.Fatal("Codex expiry stopped other providers", err)
+	}
+	data["provider-access"] = []byte(`{"codex":{"enabled":false},"cursor":{"enabled":false}}`)
+	if err := RejectRefreshMaterial(data); err != nil {
+		t.Fatal("Codex revocation stopped other providers", err)
+	}
+	for _, raw := range []string{`{"codex":{"enabled":false,"access":{"accessToken":"x","expiresAt":1,"chatgptAccountId":"account"}}}`, `{"codex":{"enabled":true,"access":{"accessToken":"x","expiresAt":1}}}`, `{"cursor":{"enabled":true,"access":{"accessToken":"x","expiresAt":1,"chatgptAccountId":"account"}}}`} {
+		data["provider-access"] = []byte(raw)
+		if RejectRefreshMaterial(data) == nil {
+			t.Fatal("malformed grant accepted")
+		}
+	}
+}

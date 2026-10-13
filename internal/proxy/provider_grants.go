@@ -13,6 +13,8 @@ import (
 
 func providerForHost(host string) string {
 	switch host {
+	case "chatgpt.com":
+		return "codex"
 	case "cli-chat-proxy.grok.com":
 		return "grok"
 	case "api2.cursor.sh", "agentn.global.api5.cursor.sh":
@@ -41,6 +43,8 @@ func (s *Server) providerAuthorization(r *http.Request) error {
 			Token   string  `json:"accessToken"`
 			Expires float64 `json:"expiresAt"`
 			Issuer  string  `json:"issuer,omitempty"`
+			Account string  `json:"chatgptAccountId,omitempty"`
+			Plan    string  `json:"chatgptPlanType,omitempty"`
 		} `json:"access"`
 	}
 	d := json.NewDecoder(bytes.NewReader(raw))
@@ -52,10 +56,15 @@ func (s *Server) providerAuthorization(r *http.Request) error {
 		return errors.New("invalid provider grant document")
 	}
 	for provider := range grants {
-		if provider != "grok" && provider != "cursor" && provider != "muse" {
+		if provider != "codex" && provider != "grok" && provider != "cursor" && provider != "muse" {
 			return errors.New("unreviewed provider grant")
 		}
 	}
+	if name == "codex" {
+		if _, ok := grants[name]; !ok && !s.Config.IndependentCodex {
+			return nil
+		}
+	} // Legacy Codex grants retain controller expiry checks.
 	grant, ok := grants[name]
 	if !ok || !grant.Enabled || grant.Access.Token == "" || math.IsNaN(grant.Access.Expires) || math.IsInf(grant.Access.Expires, 0) || grant.Access.Expires <= float64(time.Now().Unix()+60) {
 		return errors.New("provider authorization expired or revoked")

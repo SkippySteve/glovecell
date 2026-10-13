@@ -56,6 +56,10 @@ func (r *Reconciler) policyConfiguration(w *api.ProjectWorkspace, https []api.HT
 		}
 	}
 	cfg := proxy.Config{Rules: append(append([]api.HTTPSRule{}, rules...), https...), PrivateHosts: private, PrivateGitHubRepositories: privateGitHub}
+	cfg.IndependentCodex = r.IndependentCodexWorkspaceUID != "" && r.IndependentCodexWorkspaceUID == string(w.UID)
+	if cfg.IndependentCodex {
+		cfg.BrokeredProviders = true
+	}
 	for _, rule := range https {
 		if rule.Host == "cli-chat-proxy.grok.com" || rule.Host == "api2.cursor.sh" || rule.Host == "agentn.global.api5.cursor.sh" || rule.Host == "api.meta.ai" {
 			cfg.BrokeredProviders = true
@@ -63,6 +67,10 @@ func (r *Reconciler) policyConfiguration(w *api.ProjectWorkspace, https []api.HT
 		if rule.Host == "api.meta.ai" {
 			cfg.MuseSubscriptionGateway = true
 		}
+	}
+	if r.ReaderRoute != nil && r.ReaderWorkspaceUID == string(w.UID) {
+		cfg.Reader = r.ReaderRoute
+		cfg.Rules = append(cfg.Rules, api.HTTPSRule{Host: r.ReaderRoute.Host, Methods: []string{"GET", "HEAD"}, Paths: []string{"/k8s"}}, api.HTTPSRule{Host: r.ReaderRoute.Host, Methods: []string{"POST"}, Paths: []string{"/mcp"}})
 	}
 	return cfg, proxy.Validate(cfg)
 }

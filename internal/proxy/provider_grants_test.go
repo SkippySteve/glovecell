@@ -50,3 +50,10 @@ func TestProviderGatewayExpiryRevocationRotationAndRecovery(t *testing.T) {
 		t.Fatal("broker outage did not fail closed")
 	}
 }
+
+func TestIndependentCodexMissingGrantCannotUseLegacyFallback(t *testing.T) {
+	s := &Server{Config: Config{BrokeredProviders: true, IndependentCodex: true}, ProviderGrants: func() ([]byte, error) { return []byte(`{"cursor":{"enabled":false}}`), nil }}
+	if s.providerAuthorization(httptest.NewRequest("POST", "https://chatgpt.com/backend-api/codex/responses", nil)) == nil {
+		t.Fatal("missing Codex grant bypassed denial")
+	}
+}
