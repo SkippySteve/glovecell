@@ -104,6 +104,17 @@ ROOT = Path('/workspace/repo')
 HOME = Path('/workspace/.apc/codex')
 
 
+class WorkspaceDirectoryDenied(ValueError):
+    pass
+
+
+def denied_response(value, error):
+    if not isinstance(value, dict) or 'id' not in value:
+        return None
+    message = str(error) if isinstance(error, WorkspaceDirectoryDenied) else 'request denied by project adapter'
+    return {'id': value['id'], 'error': {'code': -32602, 'message': message}}
+
+
 def translate(message, root=ROOT):
     if not isinstance(message, dict):
         raise ValueError('invalid request')
@@ -121,10 +132,13 @@ def translate(message, root=ROOT):
         cwd = params.get('cwd')
         if cwd is None and method == 'thread/start': raise ValueError('project directory required')
         if cwd is not None:
-            directory = Path(cwd).resolve(strict=True)
-            base = root.resolve(strict=True)
+            try:
+                directory = Path(cwd).resolve(strict=True)
+                base = root.resolve(strict=True)
+            except OSError:
+                raise WorkspaceDirectoryDenied('Project folder is unavailable. Open the enrolled checkout at ' + str(root) + ' and start a new thread.') from None
             if not directory.is_dir() or not directory.is_relative_to(base):
-                raise ValueError('project directory outside workspace')
+                raise WorkspaceDirectoryDenied('This thread uses a folder outside the enrolled checkout. Open the project at ' + str(root) + ' and start a new thread.')
             params['cwd'] = str(directory)
             params['runtimeWorkspaceRoots'] = [str(directory)]
         params.pop('permissions', None)
@@ -184,9 +198,9 @@ def main():
                     if len(line) > 4_194_304: raise ValueError('oversized request')
                     value = json.loads(line)
                     try: value = translate(value)
-                    except (ValueError, OSError, TypeError):
-                        if isinstance(value, dict) and 'id' in value:
-                            send({'id': value['id'], 'error': {'code': -32602, 'message': 'request denied by project adapter'}})
+                    except (ValueError, OSError, TypeError) as error:
+                        response = denied_response(value, error)
+                        if response is not None: send(response)
                         continue
                     # T3 may immediately reuse integer IDs from its initialize call.
                     if value.get('method') == 'initialized': continue

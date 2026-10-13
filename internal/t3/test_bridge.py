@@ -31,6 +31,32 @@ class BridgePolicy(unittest.TestCase):
             self.assertNotIn('permissions',value['params'])
             self.assertNotIn('bad',value['params']['config'])
 
+    def test_denied_home_has_actionable_message_and_does_not_echo_untrusted_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)/'repo';root.mkdir()
+            home=Path(d)/'home-secret-value';home.mkdir()
+            for method in ('thread/start','thread/resume','thread/fork'):
+                request={'id':42,'method':method,'params':{'cwd':str(home)}}
+                with self.assertRaises(b.WorkspaceDirectoryDenied) as denied:
+                    b.translate(request,root)
+                response=b.denied_response(request,denied.exception)
+                self.assertEqual(response['id'],42)
+                self.assertIn(str(root),response['error']['message'])
+                self.assertIn('start a new thread',response['error']['message'])
+                self.assertNotIn('home-secret-value',response['error']['message'])
+            allowed=b.translate({'method':'thread/start','params':{'cwd':str(root)}},root)
+            self.assertEqual(allowed['params']['cwd'],str(root))
+
+    def test_unavailable_checkout_and_generic_errors_withhold_sensitive_details(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)/'repo';root.mkdir()
+            with self.assertRaises(b.WorkspaceDirectoryDenied) as denied:
+                b.translate({'id':3,'method':'thread/start','params':{'cwd':str(root/'missing')}},root)
+            self.assertIn('unavailable',b.denied_response({'id':3},denied.exception)['error']['message'])
+        response=b.denied_response({'id':3},ValueError('private authentication detail'))
+        self.assertEqual(response['error']['message'],'request denied by project adapter')
+        self.assertIsNone(b.denied_response({'method':'notification'},denied.exception))
+
     def test_outer_sandbox_policy_cannot_be_overridden(self):
         value=b.translate({'method':'turn/start','params':{'sandboxPolicy':{'type':'dangerFullAccess'},'permissions':'unrestricted'}})
         self.assertEqual(value['params']['sandboxPolicy'],{'type':'externalSandbox','networkAccess':'enabled'})
