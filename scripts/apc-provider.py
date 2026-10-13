@@ -79,7 +79,7 @@ def enrolled_directory(directory, root=Path('/workspace/repo'), registry=Path('/
 def arguments_allowed(arguments):
     if arguments and arguments[0] in {'login', 'logout', 'auth', 'update', 'worker', 'cursor-worker'}:
         raise ValueError('account authorization and client updates belong to the trusted backend')
-    forbidden = {'--api-key', '--auth-token', '--endpoint', '-e', '--base-url', '--insecure', '-k'}
+    forbidden = {'--api-key', '--api-key-stdin', '--auth-token', '--endpoint', '-e', '--base-url', '--insecure', '-k'}
     if any(argument.split('=', 1)[0] in forbidden for argument in arguments):
         raise ValueError('provider credential or endpoint overrides are denied')
 

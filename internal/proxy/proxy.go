@@ -353,6 +353,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Reject alternate authorities, escaped paths and protocol upgrades. HTTP/2 is inspected on its own path.
+		traceRequestRoute(host, req)
 		denied := requestDenied(s.Config, host, req)
 		if denied {
 			req.Body.Close()
@@ -417,6 +418,7 @@ func (s *Server) serveHTTP2(ctx context.Context, conn net.Conn, host string) {
 		Context:    ctx,
 		BaseConfig: &http.Server{MaxHeaderBytes: 32 << 10, ReadHeaderTimeout: 10 * time.Second},
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			traceRequestRoute(host, req)
 			if requestDenied(s.Config, host, req) {
 				http.Error(w, "request denied", http.StatusForbidden)
 				return

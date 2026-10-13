@@ -9,7 +9,7 @@ import (
 func TestMuseSubscriptionScopeRenewalAndRevocation(t *testing.T) {
 	current := "subscription-only-fixture"
 	s := &Server{Config: Config{MuseSubscriptionGateway: true}, MuseSubscriptionKey: func() (string, error) { return current, nil }}
-	for _, route := range []struct{ method, path string }{{"GET", "/v1/models"}, {"POST", "/v1/responses"}, {"POST", "/v1/chat/completions"}} {
+	for _, route := range []struct{ method, path string }{{"GET", "/muse-code/models"}, {"GET", "/muse-code/config/v1"}, {"GET", "/v1/models"}, {"POST", "/v1/responses"}, {"POST", "/v1/chat/completions"}} {
 		r := httptest.NewRequest(route.method, "https://api.meta.ai"+route.path, nil)
 		r.Header.Set("Authorization", "Bearer non-secret-placeholder")
 		if err := s.museCredentials(r); err != nil || r.Header.Get("Authorization") != "Bearer "+current {

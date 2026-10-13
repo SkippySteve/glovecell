@@ -18,7 +18,7 @@ func (s *Server) museCredentials(r *http.Request) error {
 			return errors.New("Muse subscription authorization unavailable")
 		}
 	}
-	allowed := r.Method == "GET" && (r.URL.Path == "/v1/models" || strings.HasPrefix(r.URL.Path, "/v1/models/")) ||
+	allowed := r.Method == "GET" && (r.URL.Path == "/muse-code/models" || r.URL.Path == "/muse-code/config/v1" || r.URL.Path == "/v1/models" || strings.HasPrefix(r.URL.Path, "/v1/models/")) ||
 		r.Method == "POST" && (r.URL.Path == "/v1/responses" || r.URL.Path == "/v1/chat/completions")
 	if !allowed || r.URL.RawQuery != "" || s.MuseSubscriptionKey == nil {
 		return errors.New("Muse subscription authorization unavailable")
