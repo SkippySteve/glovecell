@@ -81,3 +81,22 @@ func TestUnownedDirectoriesAndSymlinkEscapesDenied(t *testing.T) {
 		}
 	}
 }
+
+func TestUnownedStagingFilesSurviveEnrollment(t *testing.T) {
+	root := t.TempDir()
+	entry := Entry{RepositoryProject: api.RepositoryProject{Name: "library", Host: "github", Repository: "fixture/library", Public: true}, Origin: "https://github.com"}
+	stage := filepath.Join(root, "projects", ".enrolling-library")
+	if err := os.MkdirAll(stage, 0700); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(stage, "existing-data")
+	if err := os.WriteFile(file, []byte("retain"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Prepare(context.Background(), root, []Entry{entry}); err == nil {
+		t.Fatal("unowned staging directory adopted")
+	}
+	if raw, err := os.ReadFile(file); err != nil || string(raw) != "retain" {
+		t.Fatal("existing staging data removed")
+	}
+}

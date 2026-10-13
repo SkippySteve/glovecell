@@ -121,6 +121,7 @@ func prepare(ctx context.Context, workspace string, e Entry) error {
 		return err
 	}
 	target := e.Directory(workspace)
+	stage := filepath.Join(workspace, "projects", ".enrolling-"+e.Name)
 	marker := filepath.Join(workspace, ".apc", "enrolled", e.Name+".json")
 	// The receipt contains only immutable ownership metadata, never credentials.
 	receipt, _ := json.Marshal(e.RepositoryProject)
@@ -134,6 +135,9 @@ func prepare(ctx context.Context, workspace string, e Entry) error {
 	if len(saved) == 0 {
 		if _, err := os.Lstat(target); !os.IsNotExist(err) {
 			return errors.New("refusing to adopt an existing project directory")
+		}
+		if _, err := os.Lstat(stage); !os.IsNotExist(err) {
+			return errors.New("refusing to remove an unowned enrollment staging directory")
 		}
 		tmp, err := os.CreateTemp(filepath.Dir(marker), ".enroll-")
 		if err != nil {
@@ -156,7 +160,6 @@ func prepare(ctx context.Context, workspace string, e Entry) error {
 		}
 	}
 	if _, err := os.Lstat(target); os.IsNotExist(err) {
-		stage := filepath.Join(workspace, "projects", ".enrolling-"+e.Name)
 		if st, err := os.Lstat(stage); err == nil && st.Mode()&os.ModeSymlink != 0 {
 			return errors.New("enrollment staging directory must not be a symlink")
 		}
