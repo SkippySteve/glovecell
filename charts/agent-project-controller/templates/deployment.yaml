@@ -12,7 +12,7 @@ spec:
   template:
     metadata:
       annotations:
-        checksum/config: {{ toJson (dict "config" .Values.config "workspaceImage" .Values.workspaceImage "proxyImage" (default .Values.controllerImage .Values.proxyImage) "workspaceScheduling" .Values.workspaceScheduling "proxyScheduling" .Values.proxyScheduling "proxyGateway" .Values.proxyGateway) | sha256sum }}
+        checksum/config: {{ toJson (dict "config" .Values.config "workspaceImage" .Values.workspaceImage "proxyImage" (default .Values.controllerImage .Values.proxyImage) "workspaceScheduling" .Values.workspaceScheduling "proxyScheduling" .Values.proxyScheduling "proxyGateway" .Values.proxyGateway "t3Connect" .Values.t3Connect) | sha256sum }}
       labels:
         app.kubernetes.io/name: agent-project-controller
     spec:
@@ -53,6 +53,10 @@ spec:
             - configMapRef:
                 name: controller-config
           env:
+{{- if .Values.t3Connect.enabled }}
+            - name: TMPDIR
+              value: /tmp
+{{- end }}
 {{- $gitHost := default "forgejo" (index .Values.config "GIT_HOST" | toString) }}
 {{- if not (or (eq $gitHost "forgejo") (eq $gitHost "github")) }}
 {{- fail "GIT_HOST must be forgejo or github" }}
@@ -91,10 +95,24 @@ spec:
           resources:
 {{ toYaml .Values.controllerResources | indent 12 }}
           volumeMounts:
+{{- if .Values.t3Connect.enabled }}
+            - name: t3-account
+              mountPath: /var/lib/apc/t3-connect
+            - name: t3-tmp
+              mountPath: /tmp
+{{- end }}
             - name: control-secrets
               mountPath: /control-secrets
               readOnly: true
       volumes:
+{{- if .Values.t3Connect.enabled }}
+        - name: t3-account
+          persistentVolumeClaim:
+            claimName: {{ required "t3Connect.existingClaim is required when T3 Connect is enabled" .Values.t3Connect.existingClaim | quote }}
+        - name: t3-tmp
+          emptyDir:
+            sizeLimit: 256Mi
+{{- end }}
         - name: control-secrets
           secret:
             secretName: {{ .Values.existingSecret | quote }}

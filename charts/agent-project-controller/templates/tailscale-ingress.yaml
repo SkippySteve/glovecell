@@ -1,0 +1,24 @@
+{{- if .Values.tailscaleIngress.enabled }}
+{{- if not (regexMatch "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" .Values.tailscaleIngress.hostname) }}
+{{- fail "tailscaleIngress.hostname must be a DNS hostname label" }}
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: controller-tailnet
+spec:
+  ingressClassName: tailscale
+  tls:
+    - hosts:
+        - {{ .Values.tailscaleIngress.hostname | quote }}
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: controller
+                port:
+                  name: http
+{{- end }}

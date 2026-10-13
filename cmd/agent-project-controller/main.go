@@ -121,6 +121,11 @@ func run(ctx context.Context) error {
 				return errors.New("T3 launch instance required")
 			}
 			return t3.Serve(os.Args[2])
+		case "t3-managed":
+			if len(os.Args) != 3 {
+				return errors.New("managed T3 launch instance required")
+			}
+			return t3.ManagedServe(os.Args[2])
 		case "t3-stop":
 			if len(os.Args) != 3 {
 				return errors.New("T3 launch instance required")
@@ -213,6 +218,21 @@ func run(ctx context.Context) error {
 	if e = reconciler.Config.Validate(); e != nil {
 		return e
 	}
+	if v := os.Getenv("T3_CONNECT_ENABLED"); v != "" && v != "true" && v != "false" {
+		return errors.New("T3_CONNECT_ENABLED must be true or false")
+	}
+	if os.Getenv("T3_CONNECT_ENABLED") == "true" {
+		account := &t3.Account{Binary: env("T3_CONNECT_BINARY", t3.Binary), Directory: env("T3_CONNECT_DATA", "/var/lib/apc/t3-connect")}
+		cloud := &t3.Cloud{URL: env("T3_CONNECT_RELAY_URL", t3.DefaultRelayURL), Tokens: account}
+		if e = cloud.Validate(); e != nil {
+			return e
+		}
+		access := &t3.Managed{Registry: &t3.Registry{Client: direct, Namespace: ns, Cloud: cloud}, Config: config, Connector: env("T3_CONNECT_CONNECTOR", "/opt/t3/cloudflared")}
+		reconciler.Access = access
+		if e = manager.Add(access); e != nil {
+			return e
+		}
+	}
 	if e = reconciler.Setup(manager); e != nil {
 		return e
 	}
@@ -222,7 +242,7 @@ func run(ctx context.Context) error {
 	if e = manager.AddReadyzCheck("readyz", healthz.Ping); e != nil {
 		return e
 	}
-	server := &web.Server{Client: direct, Host: host, Namespace: ns, Owner: owner, Password: password, Origin: os.Getenv("PUBLIC_ORIGIN"), GitHost: gitHost, GitOrigin: origin, AllowBasic: os.Getenv("ALLOW_STATIC_LOGIN") == "true"}
+	server := &web.Server{T3Connect: reconciler.Access != nil, Client: direct, Host: host, Namespace: ns, Owner: owner, Password: password, Origin: os.Getenv("PUBLIC_ORIGIN"), GitHost: gitHost, GitOrigin: origin, AllowBasic: os.Getenv("ALLOW_STATIC_LOGIN") == "true"}
 	if os.Getenv("SANDBOX_CONTROL_URL") != "" {
 		server.SandboxControl = &web.SandboxControl{URL: os.Getenv("SANDBOX_CONTROL_URL"), Origin: os.Getenv("SANDBOX_CONTROL_ORIGIN"), Operator: os.Getenv("SANDBOX_CONTROL_OPERATOR")}
 	} else if os.Getenv("SANDBOX_CONTROL_ORIGIN") != "" || os.Getenv("SANDBOX_CONTROL_OPERATOR") != "" {

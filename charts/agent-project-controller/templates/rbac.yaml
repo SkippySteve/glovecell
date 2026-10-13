@@ -17,6 +17,11 @@ rules:
   - apiGroups: ['']
     resources: [pods]
     verbs: [get, list, watch, delete]
+{{- if .Values.t3Connect.enabled }}
+  - apiGroups: ['']
+    resources: [pods/exec]
+    verbs: [create]
+{{- end }}
   - apiGroups: ['']
     resources: [persistentvolumes]
     verbs: [get, list, watch]

@@ -1,4 +1,15 @@
-{{- range $key := list "CONTROL_NAMESPACE" "WORKSPACE_IMAGE" "PROXY_IMAGE" "LISTEN_ADDR" "FORGEJO_TOKEN_FILE" "GITHUB_APP_PRIVATE_KEY_FILE" "OIDC_CLIENT_SECRET_FILE" "API_SECRET_FILE" "WORKSPACE_SCHEDULING_JSON" "PROXY_SCHEDULING_JSON" }}
+{{- if not (kindIs "bool" .Values.tailscaleIngress.enabled) }}
+{{- fail "tailscaleIngress.enabled must be a boolean" }}
+{{- end }}
+{{- if not (kindIs "bool" .Values.t3Connect.enabled) }}
+{{- fail "t3Connect.enabled must be a boolean" }}
+{{- end }}
+{{- if .Values.t3Connect.enabled }}
+{{- if not (regexMatch "^https://[a-zA-Z0-9.-]+(:[0-9]+)?$" .Values.t3Connect.relayURL) }}
+{{- fail "t3Connect.relayURL must be an HTTPS origin" }}
+{{- end }}
+{{- end }}
+{{- range $key := list "CONTROL_NAMESPACE" "WORKSPACE_IMAGE" "PROXY_IMAGE" "LISTEN_ADDR" "FORGEJO_TOKEN_FILE" "GITHUB_APP_PRIVATE_KEY_FILE" "OIDC_CLIENT_SECRET_FILE" "API_SECRET_FILE" "WORKSPACE_SCHEDULING_JSON" "PROXY_SCHEDULING_JSON" "T3_CONNECT_ENABLED" "T3_CONNECT_DATA" "T3_CONNECT_RELAY_URL" "T3_CONNECT_BINARY" "T3_CONNECT_CONNECTOR" }}
 {{- if hasKey $.Values.config $key }}
 {{- fail (printf "config.%s is managed by the chart; use the corresponding chart setting" $key) }}
 {{- end }}
@@ -85,3 +96,7 @@ data:
   {{ $key }}: {{ $value | toString | quote }}
 {{- end }}
 {{- end }}
+
+  T3_CONNECT_ENABLED: {{ .Values.t3Connect.enabled | toString | quote }}
+  T3_CONNECT_DATA: "/var/lib/apc/t3-connect"
+  T3_CONNECT_RELAY_URL: {{ .Values.t3Connect.relayURL | quote }}

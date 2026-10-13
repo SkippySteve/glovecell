@@ -53,3 +53,18 @@ COPY scripts/apc-codex /usr/local/bin/apc-codex
 COPY third_party/licenses/ /usr/share/agent-project-controller/licenses/
 USER 1000:1000
 CMD ["controller"]
+
+# Trusted T3 Connect registrar. Project T3 servers and agent CLIs stay in workers.
+FROM ${WORKSPACE_IMAGE} AS t3-controller
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -g 1000 agent && useradd -m -u 1000 -g 1000 agent
+COPY --from=build /agent-project-controller /usr/local/bin/agent-project-controller
+COPY --from=workspace /opt/t3 /opt/t3
+COPY third_party/licenses/ /usr/share/agent-project-controller/licenses/
+RUN curl -fsSL https://github.com/cloudflare/cloudflared/releases/download/2026.5.2/cloudflared-linux-amd64 -o /opt/t3/cloudflared \
+    && echo '5286698547f03df745adb2355f04c12dde52ef425491e81f433642d695521886  /opt/t3/cloudflared' | sha256sum -c - \
+    && chmod 0755 /opt/t3/cloudflared
+USER 1000:1000
+ENTRYPOINT ["/usr/local/bin/agent-project-controller"]
+CMD ["controller"]

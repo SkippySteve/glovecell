@@ -44,6 +44,7 @@ type Server struct {
 	Namespace, Owner, Password, Origin string
 	OIDC                               *OIDC
 	AllowBasic                         bool
+	T3Connect                          bool
 	GitHost, GitOrigin                 string
 	SandboxControl                     *SandboxControl
 }
@@ -95,7 +96,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	})
 	mux.HandleFunc("GET /api/v1/session", func(w http.ResponseWriter, r *http.Request) {
 		actor, _ := r.Context().Value(actorKey{}).(string)
-		writeJSON(w, map[string]any{"actor": actor, "oidc": s.OIDC != nil, "sandboxControl": s.SandboxControl != nil})
+		writeJSON(w, map[string]any{"actor": actor, "oidc": s.OIDC != nil, "sandboxControl": s.SandboxControl != nil, "t3Connect": s.T3Connect})
 	})
 	mux.HandleFunc("GET /api/v1/workspaces", func(w http.ResponseWriter, r *http.Request) {
 		list := &api.ProjectWorkspaceList{}

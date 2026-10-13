@@ -92,3 +92,15 @@ namespace:
   labels:
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: latest
+
+# Use the t3-controller image target when enabled. This existing PVC holds the
+# stock CLI account state, outside every project namespace and storage volume.
+t3Connect:
+  enabled: false
+  existingClaim: ''
+  relayURL: https://relay.t3.codes
+# Optional private access to the controller through an installed Tailscale
+# Kubernetes operator. This does not replace T3 account authorization.
+tailscaleIngress:
+  enabled: false
+  hostname: ''

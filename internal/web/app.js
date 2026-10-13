@@ -1,7 +1,7 @@
 'use strict';
 const message = document.querySelector('#message');
 const drafts = new Map(), openPanels = new Set();
-let refreshing = false;
+let refreshing = false, t3Connect = false;
 async function api(path, method = 'GET', body) {
   const response = await fetch('/api/v1/' + path, {method, credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: body === undefined ? undefined : JSON.stringify(body)});
   if (!response.ok) throw new Error((await response.text()).trim());
@@ -27,7 +27,7 @@ function statusPanel(p) {
     panel.append(element('p', 'Update requested. Waiting for the controller to apply it.')); return panel;
   }
   if (!condition) { panel.append(element('p', 'Request saved. Waiting for preparation to begin.')); return panel; }
-  const blocked = condition.status !== 'True' && ['PreparationPending', 'PolicyRejected', 'CleanupPending'].includes(condition.reason) && !condition.message.startsWith('Waiting for');
+  const blocked = condition.status !== 'True' && ['PreparationPending', 'PolicyRejected', 'CleanupPending', 'T3ConnectPending'].includes(condition.reason) && !condition.message.startsWith('Waiting for');
   if (blocked) {
     panel.classList.add('needs-attention');
     panel.append(element('strong', p.status?.phase === 'Removing' ? 'Removal needs attention' : 'Preparation needs attention'));
@@ -79,7 +79,12 @@ async function refresh() {
       const article = element('article'); article.dataset.project = p.metadata.name;
       const head = element('div', null, 'project-head');
       head.append(element('h3', p.metadata.name), element('span', p.status?.phase || 'Requested', 'phase')); article.append(head, element('p', p.spec.repository), statusPanel(p));
-      if (p.status?.phase === 'Ready') article.append(element('code', 'agent-project-controller connect ' + p.metadata.name));
+      if (p.status?.phase === 'Ready') {
+        if (t3Connect) {
+          const open = element('a', 'Open T3 Connect', 'button'); open.href = 'https://app.t3.codes'; open.target = '_blank'; open.rel = 'noopener noreferrer'; article.append(open);
+          article.append(element('p', 'Choose this project environment in T3. Sign in with the account authorized for the controller.', 'hint'));
+        } else article.append(element('code', 'agent-project-controller connect ' + p.metadata.name));
+      }
       article.append(accessPanel(p));
       const buttons = element('div', null, 'actions');
       if (p.spec.desiredState !== 'Removed') for (const [text, state] of [[p.spec.desiredState === 'Paused' ? 'Resume' : 'Pause', p.spec.desiredState === 'Paused' ? 'Running' : 'Paused'], ['Remove project', 'Removed']]) {
@@ -115,6 +120,7 @@ document.querySelector('#create').onsubmit = async event => {
 };
 api('repositories').then(repos => { const select = document.querySelector('#repositories'); for (const r of repos || []) { const option = element('option', r.full_name); option.value = r.full_name; select.append(option); } }).catch(error => { message.textContent = error.message; });
 api('session').then(session => {
+ t3Connect = session.t3Connect === true;
   document.querySelector('#existing-sandboxes').hidden = !session.sandboxControl;
   if (session.oidc) {
     const logout = document.querySelector('#logout'); logout.hidden = false;
