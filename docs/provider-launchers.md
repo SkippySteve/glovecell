@@ -22,6 +22,12 @@ command. Session directories remain on the workspace volume. Grant expiry,
 revocation or a missing projection stops the affected launcher with a status
 message. No worker connection to OpenBao or credential owners is added.
 
+The inspecting gateway also checks the current grant and bearer credential on
+every provider request. Raw HTTPS cannot bypass expiry, revocation or credential
+replacement. Projected replacements are consumed without restarting other
+providers or the workspace. Provider connections remain bounded; the gateway
+admits up to 32 simultaneous TLS tunnels for the CLI's concurrent tool messages.
+
 Muse's accessToken must be the non-secret placeholder
 `apc-muse-subscription-gateway`. Its subscription credential comes from official
 device-code sign-in and remains outside worker storage. The trusted controller

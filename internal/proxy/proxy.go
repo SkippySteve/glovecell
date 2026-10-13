@@ -36,6 +36,7 @@ type Config struct {
 	PrivateHosts              []string        `json:"privateHosts,omitempty"`
 	PrivateGitHubRepositories []string        `json:"privateGitHubRepositories,omitempty"`
 	MuseSubscriptionGateway   bool            `json:"museSubscriptionGateway,omitempty"`
+	BrokeredProviders         bool            `json:"brokeredProviders,omitempty"`
 }
 
 var dnsHost = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$`)
@@ -132,6 +133,7 @@ type Server struct {
 	Transport           *http.Transport
 	GitHubToken         func() (string, error)
 	MuseSubscriptionKey func() (string, error)
+	ProviderGrants      func() ([]byte, error)
 	slots               chan struct{}
 	mu                  sync.Mutex
 	certs               map[string]tls.Certificate
@@ -152,7 +154,7 @@ func New(c Config, cert, key []byte) (*Server, error) {
 	if !ca.IsCA || time.Now().After(ca.NotAfter) {
 		return nil, errors.New("valid inspection CA required")
 	}
-	s := &Server{Config: c, CA: ca, Key: pair.PrivateKey, slots: make(chan struct{}, 8), certs: map[string]tls.Certificate{}}
+	s := &Server{Config: c, CA: ca, Key: pair.PrivateKey, slots: make(chan struct{}, 32), certs: map[string]tls.Certificate{}}
 	s.Transport = &http.Transport{Proxy: nil, DialContext: s.dial, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 30 * time.Second, IdleConnTimeout: 30 * time.Second, MaxIdleConns: 32, ForceAttemptHTTP2: false}
 	return s, nil
 }
@@ -312,6 +314,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case s.slots <- struct{}{}:
 		defer func() { <-s.slots }()
 	default:
+		if os.Getenv("APC_TRACE_PROXY_ROUTES") == "1" {
+			slog.Info("operator proxy capacity diagnostic", "active_tunnels", len(s.slots))
+		}
 		http.Error(w, "proxy busy", 503)
 		return
 	}
@@ -356,6 +361,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		traceRequestRoute(host, req)
 		denied := requestDenied(s.Config, host, req)
 		if denied {
+			traceRequestStatus(host, req, 403)
 			req.Body.Close()
 			writeError(conn, 403, "request denied")
 			return
@@ -371,6 +377,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		req.URL.Host = host
 		req.Host = host
 		dropHopHeaders(req.Header)
+		if s.providerAuthorization(req) != nil {
+			traceRequestStatus(host, req, 403)
+			req.Body.Close()
+			writeError(conn, 403, "provider grant expired, revoked or unavailable")
+			return
+		}
 		if !githubGitReadAllowed(s.Config, req) {
 			req.Body.Close()
 			writeError(conn, 403, "request denied")
@@ -396,6 +408,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeError(conn, 502, "upstream unavailable")
 			return
 		}
+		traceRequestStatus(host, req, res.StatusCode)
 		dropHopHeaders(res.Header)
 		res.Close = true
 		e = res.Write(conn)
@@ -420,6 +433,7 @@ func (s *Server) serveHTTP2(ctx context.Context, conn net.Conn, host string) {
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			traceRequestRoute(host, req)
 			if requestDenied(s.Config, host, req) {
+				traceRequestStatus(host, req, 403)
 				http.Error(w, "request denied", http.StatusForbidden)
 				return
 			}
@@ -434,6 +448,11 @@ func (s *Server) serveHTTP2(ctx context.Context, conn net.Conn, host string) {
 			forward.URL.Host = host
 			forward.Host = host
 			dropHopHeaders(forward.Header)
+			if s.providerAuthorization(forward) != nil {
+				traceRequestStatus(host, req, 403)
+				http.Error(w, "provider grant expired, revoked or unavailable", http.StatusForbidden)
+				return
+			}
 			if !githubGitReadAllowed(s.Config, forward) {
 				http.Error(w, "request denied", http.StatusForbidden)
 				return
@@ -454,6 +473,7 @@ func (s *Server) serveHTTP2(ctx context.Context, conn net.Conn, host string) {
 				http.Error(w, "upstream unavailable", http.StatusBadGateway)
 				return
 			}
+			traceRequestStatus(host, req, res.StatusCode)
 			defer res.Body.Close()
 			dropHopHeaders(res.Header)
 			for key, values := range res.Header {
@@ -506,6 +526,7 @@ func Run(ctx context.Context) error {
 	}
 	s.GitHubToken = gatewayGitHubToken
 	s.MuseSubscriptionKey = gatewayMuseSubscriptionKey
+	s.ProviderGrants = gatewayProviderGrants
 	server := &http.Server{Addr: ":3128", Handler: s, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 32 << 10}
 	go func() { <-ctx.Done(); _ = server.Close() }()
 	e = server.ListenAndServe()

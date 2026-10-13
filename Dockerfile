@@ -26,8 +26,6 @@ FROM ${WORKSPACE_IMAGE} AS workspace
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git openssh-client build-essential python3 nodejs npm curl jq ripgrep bash \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -g 1000 agent && useradd -m -u 1000 -g 1000 agent
-COPY --from=build /agent-project-controller /usr/local/bin/agent-project-controller
-ENTRYPOINT ["/usr/local/bin/agent-project-controller"]
 COPY --from=toolchain /usr/local/go /usr/local/go
 ENV PATH="/usr/local/go/bin:${PATH}" CGO_ENABLED=0
 # Official musl package, verified against the release asset's SHA-256.
@@ -74,6 +72,8 @@ COPY scripts/apc-provider.py /usr/local/bin/apc-provider
 RUN ln -s apc-provider /usr/local/bin/grok \
     && ln -s apc-provider /usr/local/bin/cursor-agent \
     && ln -s apc-provider /usr/local/bin/muse
+COPY --from=build /agent-project-controller /usr/local/bin/agent-project-controller
+ENTRYPOINT ["/usr/local/bin/agent-project-controller"]
 COPY third_party/licenses/ /usr/share/agent-project-controller/licenses/
 USER 1000:1000
 CMD ["controller"]

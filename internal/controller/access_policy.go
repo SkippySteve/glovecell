@@ -57,6 +57,9 @@ func (r *Reconciler) policyConfiguration(w *api.ProjectWorkspace, https []api.HT
 	}
 	cfg := proxy.Config{Rules: append(append([]api.HTTPSRule{}, rules...), https...), PrivateHosts: private, PrivateGitHubRepositories: privateGitHub}
 	for _, rule := range https {
+		if rule.Host == "cli-chat-proxy.grok.com" || rule.Host == "api2.cursor.sh" || rule.Host == "agentn.global.api5.cursor.sh" || rule.Host == "api.meta.ai" {
+			cfg.BrokeredProviders = true
+		}
 		if rule.Host == "api.meta.ai" {
 			cfg.MuseSubscriptionGateway = true
 		}

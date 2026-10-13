@@ -1133,6 +1133,22 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 		gitData["projects.json"] = s.Data["projects.json"]
 	}
 	proxyData := map[string][]byte{"ca.crt": s.Data["ca.crt"], "ca.key": s.Data["ca.key"]}
+	if cfg.BrokeredProviders {
+		var access corev1.Secret
+		if err := r.Get(ctx, types.NamespacedName{Namespace: ns, Name: "model-access"}, &access); err == nil {
+			if err := owner(w, &access); err != nil {
+				return err
+			}
+			if raw := access.Data["provider-access"]; len(raw) > 0 {
+				if err := validateProviderAccess(raw); err != nil {
+					return err
+				}
+				proxyData["provider-access"] = raw
+			}
+		} else if !apierrors.IsNotFound(err) {
+			return err
+		}
+	}
 	if r.MuseSubscriptionKeyFile != "" {
 		// A missing/revoked subscription key blocks only Muse at the gateway.
 		// The next reconciliation consumes renewed trusted-backend material.
