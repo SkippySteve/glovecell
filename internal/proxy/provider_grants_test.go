@@ -57,3 +57,21 @@ func TestIndependentCodexMissingGrantCannotUseLegacyFallback(t *testing.T) {
 		t.Fatal("missing Codex grant bypassed denial")
 	}
 }
+
+func TestCursorWorkerCannotRefreshItsAccessJWTWithBroadHTTPSGrant(t *testing.T) {
+	s := &Server{Config: Config{BrokeredProviders: true}, ProviderGrants: func() ([]byte, error) {
+		return []byte(`{"cursor":{"enabled":true,"access":{"accessToken":"access","expiresAt":9999999999}}}`), nil
+	}}
+	for _, path := range []string{"/oauth/token", "/oauth/token/", "/auth/poll", "/auth/exchange_user_api_key"} {
+		req := httptest.NewRequest("POST", "https://api2.cursor.sh"+path, nil)
+		req.Header.Set("Authorization", "Bearer access")
+		if s.providerAuthorization(req) == nil {
+			t.Fatal("worker acquired owner renewal authority", path)
+		}
+	}
+	req := httptest.NewRequest("POST", "https://api2.cursor.sh/aiserver.v1.DashboardService/GetMe", nil)
+	req.Header.Set("Authorization", "Bearer access")
+	if s.providerAuthorization(req) != nil {
+		t.Fatal("denied inference-side access")
+	}
+}

@@ -47,7 +47,10 @@ configured Codex, Grok and Cursor credential owners. It renews each enabled
 owner ten minutes before the owner's access expires. Configure
 `CODEX_OAUTH_CLIENT_ID` and `CURSOR_OAUTH_CLIENT_ID` with the reviewed official
 public client IDs. Token destinations are fixed, and redirects are denied.
-Cursor uses the official desktop client's `/oauth/token` contract. If its
+Cursor uses the official desktop client's `/oauth/token` contract. The
+project proxy always denies Cursor `/auth` and `/oauth` routes, including under
+broad HTTPS path grants: Cursor can use an access JWT for renewal, so network
+denial is required alongside omission of refresh fields. If its
 response omits a distinct refresh token, the owner stores the replacement
 access token as its refresh token, as the official client does.
 

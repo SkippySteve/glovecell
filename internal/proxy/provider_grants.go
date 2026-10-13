@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -29,6 +30,11 @@ func (s *Server) providerAuthorization(r *http.Request) error {
 	name := providerForHost(r.URL.Hostname())
 	if !s.Config.BrokeredProviders || name == "" {
 		return nil
+	}
+	// Cursor's official desktop contract can renew using an access JWT. Never
+	// allow worker account/renewal routes, even under a broad operator path rule.
+	if name == "cursor" && (r.URL.Path == "/auth" || strings.HasPrefix(r.URL.Path, "/auth/") || r.URL.Path == "/oauth" || strings.HasPrefix(r.URL.Path, "/oauth/")) {
+		return errors.New("provider account management belongs to the trusted owner")
 	}
 	if s.ProviderGrants == nil {
 		return errors.New("provider authorization unavailable")
