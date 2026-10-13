@@ -738,10 +738,8 @@ func normalizeSandboxNameservers(spec map[string]any) {
 	_ = unstructured.SetNestedStringSlice(spec, []string{"normalized"}, "podTemplate", "spec", "dnsConfig", "nameservers")
 }
 
-// replaceWorkspaceImage recreates a Sandbox only when the pinned workspace
-// image is the sole template difference and no worker pod is left. The
-// observed image is never written back. The project volume is independent of
-// the Sandbox, so the next ensure keeps that claim and installs the pin.
+// replaceWorkspaceImage updates only reviewed image fields after workers stop.
+// Upstream permits podTemplate updates; keep the Sandbox UID and volume intact.
 func (r *Reconciler) replaceWorkspaceImage(ctx context.Context, w *api.ProjectWorkspace, current *unstructured.Unstructured, got, want map[string]any) error {
 	gotCopy, _ := cloneValue(got).(map[string]any)
 	wantCopy, _ := cloneValue(want).(map[string]any)
@@ -771,10 +769,38 @@ func (r *Reconciler) replaceWorkspaceImage(ctx context.Context, w *api.ProjectWo
 	if !gone {
 		return errors.New("Sandbox configuration drift detected")
 	}
-	if err = r.Delete(ctx, current); err != nil && !apierrors.IsNotFound(err) {
+	before := current.DeepCopy()
+	for _, kind := range []string{"initContainers", "containers"} {
+		items, _, err := unstructured.NestedSlice(current.Object, "spec", "podTemplate", "spec", kind)
+		if err != nil {
+			return err
+		}
+		for i, raw := range items {
+			container, ok := raw.(map[string]any)
+			if !ok {
+				return errors.New("invalid Sandbox container")
+			}
+			if container["name"] == "clone" || container["name"] == "workspace" {
+				container["image"] = r.Config.Image
+				items[i] = container
+			}
+		}
+		if err := unstructured.SetNestedSlice(current.Object, items, "spec", "podTemplate", "spec", kind); err != nil {
+			return err
+		}
+	}
+	if r.Access != nil {
+		if err := unstructured.SetNestedField(current.Object, w.Name, "spec", "podTemplate", "spec", "hostname"); err != nil {
+			return err
+		}
+	}
+	if err := r.current(ctx, w); err != nil {
 		return err
 	}
-	return errors.New("Sandbox workspace image is being replaced")
+	if err := r.Patch(ctx, current, client.MergeFrom(before)); err != nil {
+		return err
+	}
+	return errors.New("Sandbox workspace image is being updated with its identity retained")
 }
 func normalizeSandboxWorkloadImages(spec map[string]any) {
 	pod, _ := spec["podTemplate"].(map[string]any)

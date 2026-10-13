@@ -7,7 +7,6 @@ import (
 
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
@@ -53,6 +52,11 @@ func TestWorkspaceImageRollKeepsVolumeAndRejectsMutation(t *testing.T) {
 	if err := r.ensure(ctx, w); err != nil {
 		t.Fatal(err)
 	}
+	initialSandbox := mustSandbox(t, r, namespace(w))
+	initialSandbox.SetUID(types.UID("retained-sandbox-identity"))
+	if err := r.Update(ctx, initialSandbox); err != nil {
+		t.Fatal(err)
+	}
 	var pvc corev1.PersistentVolumeClaim
 	if err := r.Get(ctx, types.NamespacedName{Namespace: namespace(w), Name: "workspace"}, &pvc); err != nil {
 		t.Fatal(err)
@@ -82,13 +86,13 @@ func TestWorkspaceImageRollKeepsVolumeAndRejectsMutation(t *testing.T) {
 	if err := r.Delete(ctx, pod); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.ensure(ctx, w); err == nil || !strings.Contains(err.Error(), "being replaced") {
+	if err := r.ensure(ctx, w); err == nil || !strings.Contains(err.Error(), "being updated") {
 		t.Fatal(err)
 	}
 	u := &unstructured.Unstructured{}
 	u.SetGroupVersionKind(sandboxGVK)
-	if err := r.Get(ctx, types.NamespacedName{Namespace: namespace(w), Name: "project"}, u); !apierrors.IsNotFound(err) {
-		t.Fatal("mutated sandbox was left in place", err)
+	if err := r.Get(ctx, types.NamespacedName{Namespace: namespace(w), Name: "project"}, u); err != nil || u.GetUID() != initialSandbox.GetUID() {
+		t.Fatal("image update replaced sandbox identity", err)
 	}
 	if err := r.ensure(ctx, w); err != nil {
 		t.Fatal(err)
@@ -99,7 +103,7 @@ func TestWorkspaceImageRollKeepsVolumeAndRejectsMutation(t *testing.T) {
 
 	next := "example.com/worker@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	r.Config.Image = next
-	if err := r.ensure(ctx, w); err == nil || !strings.Contains(err.Error(), "being replaced") {
+	if err := r.ensure(ctx, w); err == nil || !strings.Contains(err.Error(), "being updated") {
 		t.Fatal(err)
 	}
 	if err := r.ensure(ctx, w); err != nil {
@@ -107,6 +111,9 @@ func TestWorkspaceImageRollKeepsVolumeAndRejectsMutation(t *testing.T) {
 	}
 	if clone, workspace := sandboxImages(t, r, namespace(w)); clone != next || workspace != next {
 		t.Fatalf("rolled images %s %s", clone, workspace)
+	}
+	if sandbox := mustSandbox(t, r, namespace(w)); sandbox.GetUID() != initialSandbox.GetUID() {
+		t.Fatal("image roll replaced Sandbox UID")
 	}
 	if err := r.Get(ctx, types.NamespacedName{Namespace: namespace(w), Name: "workspace"}, &pvc); err != nil || pvc.UID != claim {
 		t.Fatal("image roll replaced the volume", err)
