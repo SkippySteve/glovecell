@@ -127,16 +127,34 @@ function repositoriesPanel(p) {
   };
   section.append(form); return section;
 }
+async function existingSandboxes() {
+  try {
+    const response = await fetch('/sandboxes/workspaces', {credentials: 'same-origin'});
+    return response.ok ? await response.json() : [];
+  } catch { return []; }
+}
+function existingSandboxArticle(s) {
+  const article = element('article'); article.dataset.sandbox = s.id;
+  const head = element('div', null, 'project-head');
+  head.append(element('h3', s.id), element('span', s.mode || s.status, 'phase'));
+  const panel = element('div', null, 'project-status');
+  panel.append(element('p', 'Policy revision ' + s.revision + ': ' + s.status + (s.pending ? ' · ' + s.pending + ' pending requests' : '')));
+  if (s.learning) panel.append(element('p', s.learning === 'Learning' && s.learningExpires ? 'Web access: learning until ' + new Date(s.learningExpires * 1000).toLocaleTimeString() : 'Web access: ' + s.learning));
+  const open = element('a', 'Open sandbox controls', 'button'); open.href = '/sandboxes/?workspace=' + encodeURIComponent(s.id);
+  article.append(head, element('p', 'Existing sandbox · ' + s.namespace + ' / ' + s.sandbox), panel, open,
+    element('p', 'Managed by sandbox control. Start, stop, previews and outbound access are on its page.', 'hint'));
+  return article;
+}
 async function refresh() {
   if (refreshing) return;
   refreshing = true;
   try {
-    const projects = await api('workspaces');
+    const [projects, existing] = await Promise.all([api('workspaces'), existingSandboxes()]);
     // Polling must not destroy keyboard focus or an in-progress access edit.
     if (document.activeElement?.closest('.access-form')) return;
     const root = document.querySelector('#projects'); root.replaceChildren();
     const count = document.querySelector('#project-count');
-    if (count) count.textContent = (projects || []).filter(p => p.status?.phase !== 'Removed').length + ' active';
+    if (count) count.textContent = (projects || []).filter(p => p.status?.phase !== 'Removed').length + existing.length + ' active';
     const removed = element('details', null, 'removed-projects');
     removed.open = removedOpen;
     removed.ontoggle = () => { removedOpen = removed.open; };
@@ -171,8 +189,9 @@ async function refresh() {
       }; buttons.append(audit); article.append(buttons);
       (p.status?.phase === 'Removed' ? removed : root).append(article);
     }
+    for (const s of existing) root.append(existingSandboxArticle(s));
     if (removedCount) root.append(removed);
-    if (!projects?.length) root.append(element('p', 'No project environments have been requested yet.', 'hint'));
+    if (!projects?.length && !existing.length) root.append(element('p', 'No project environments have been requested yet.', 'hint'));
   } catch (error) { message.textContent = error.message; }
   finally { refreshing = false; }
 }

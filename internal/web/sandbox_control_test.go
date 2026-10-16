@@ -30,6 +30,11 @@ func TestExistingSandboxesShareAuthenticationAndKeepCSRFFence(t *testing.T) {
 			http.Redirect(w, r, "/?workspace=shared-pilot&tab=access", 303)
 			return
 		}
+		if r.URL.Path == "/workspaces" {
+			w.Header().Set("Content-Type", "application/json")
+			io.WriteString(w, `[{"id":"shared-pilot","namespace":"agent-workspace-shared-pilot","sandbox":"worktree","mode":"Running","revision":3,"status":"Active","pending":0}]`)
+			return
+		}
 		http.SetCookie(w, &http.Cookie{Name: "__Host-sandbox-csrf", Value: "fixture-csrf", Secure: true, HttpOnly: true, Path: "/"})
 		http.SetCookie(w, &http.Cookie{Name: "backend-session", Value: "must-not-forward", Path: "/"})
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -80,6 +85,15 @@ func TestExistingSandboxesShareAuthenticationAndKeepCSRFFence(t *testing.T) {
 		t.Fatal("backend cookie leak", cookies)
 	}
 	before := calls
+	rec = request("GET", "/sandboxes/workspaces", "", "", false)
+	if rec.Code != 401 || calls != before {
+		t.Fatal("unauthenticated workspace list forwarded", rec.Code)
+	}
+	rec = request("GET", "/sandboxes/workspaces", "", "", true)
+	if rec.Code != 200 || !strings.HasPrefix(rec.Body.String(), `[{"id":"shared-pilot"`) || !strings.HasPrefix(rec.Header().Get("Content-Type"), "application/json") {
+		t.Fatal("workspace list not passed through", rec.Code, rec.Body.String())
+	}
+	before = calls
 	for _, origin := range []string{"", "https://evil.example"} {
 		rec = request("POST", "/sandboxes/access", origin, "csrf=fixture-csrf", true)
 		if rec.Code != 403 || calls != before {

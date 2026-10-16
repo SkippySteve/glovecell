@@ -34,7 +34,7 @@ func (c SandboxControl) Validate() error {
 func sandboxRoute(path string, method string) bool {
 	if method == "GET" || method == "HEAD" {
 		switch path {
-		case "/", "/status", "/history", "/export":
+		case "/", "/status", "/workspaces", "/history", "/export":
 			return true
 		}
 		return strings.HasPrefix(path, "/static/") && !strings.Contains(path, "..") && !strings.Contains(path, "//")
