@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -30,7 +31,21 @@ func TestBrowserDashboard(t *testing.T) {
 	paused := &api.ProjectWorkspace{ObjectMeta: metav1.ObjectMeta{Name: "paused-project", Namespace: "control", UID: types.UID("paused"), Generation: 1}, Spec: api.WorkspaceSpec{Repository: "steve/repo", DesiredState: "Paused"}, Status: api.WorkspaceStatus{Phase: "Paused", Namespace: "apc-paused", ObservedGeneration: 1}}
 	ledger := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "apc-paused", Namespace: "control", Labels: map[string]string{api.OwnerLabel: "paused"}}, Data: map[string][]byte{"https-policy": []byte("null")}}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(blocked, paused, ledger).Build()
-	var legacyChanges atomic.Int32
+	var legacyChanges, egressChanges atomic.Int32
+	// Instant egress state for the fake sandbox-control workspaces.
+	var mu sync.Mutex
+	egress := map[string]string{"shared-pilot": "Locked", "orca": "Open"}
+	minutes := map[string]string{}
+	summary := func(id string) map[string]any {
+		out := map[string]any{"id": id, "namespace": "agent-workspace-" + id, "sandbox": "worktree", "mode": "Running", "revision": 3, "status": "Active", "learning": egress[id], "egress": egress[id], "egressControl": true, "pending": 0, "approvals": 0}
+		if id == "shared-pilot" {
+			out["approvals"] = 2
+		}
+		if egress[id] != "Locked" {
+			out["egressExpires"] = 1900000000
+		}
+		return out
+	}
 	legacy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-authentik-username") != "operator" {
 			http.Error(w, "unauthenticated", 401)
@@ -43,13 +58,33 @@ func TestBrowserDashboard(t *testing.T) {
 				http.Error(w, "CSRF denied", 403)
 				return
 			}
+			if r.URL.Path == "/egress" && r.Header.Get("Accept") == "application/json" {
+				mu.Lock()
+				defer mu.Unlock()
+				id, action := r.Form.Get("workspace"), r.Form.Get("action")
+				if _, ok := egress[id]; !ok || (action != "learning-open" && action != "learning-lock") {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(400)
+					w.Write([]byte(`{"error":"unknown learning action"}`))
+					return
+				}
+				egress[id] = map[string]string{"learning-open": "Open", "learning-lock": "Locked"}[action]
+				minutes[id] = r.Form.Get("minutes")
+				egressChanges.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(summary(id))
+				return
+			}
 			legacyChanges.Add(1)
 			http.Redirect(w, r, "/?workspace=shared-pilot&tab=access", 303)
 			return
 		}
 		if r.URL.Path == "/workspaces" {
+			mu.Lock()
+			defer mu.Unlock()
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`[{"id":"shared-pilot","namespace":"agent-workspace-shared","sandbox":"worktree","mode":"Running","revision":3,"status":"Active","learning":"Locked","pending":0,"approvals":2}]`))
+			w.Header().Set("X-Sandbox-CSRF", "fixture-csrf")
+			json.NewEncoder(w).Encode([]map[string]any{summary("orca"), summary("shared-pilot")})
 			return
 		}
 		w.Header().Set("Content-Type", "text/html")
@@ -84,6 +119,11 @@ func TestBrowserDashboard(t *testing.T) {
 	if legacyChanges.Load() != 1 {
 		t.Fatal("legacy sandbox mutation did not use the combined app")
 	}
+	mu.Lock()
+	if egressChanges.Load() != 5 || egress["shared-pilot"] != "Open" || egress["orca"] != "Open" || minutes["orca"] != "240" {
+		t.Fatalf("instant egress changes did not reach sandbox control: %d %v %v", egressChanges.Load(), egress, minutes)
+	}
+	mu.Unlock()
 	if e = c.Get(context.Background(), types.NamespacedName{Namespace: "control", Name: "paused-project"}, w); e != nil {
 		t.Fatal(e)
 	}

@@ -2,6 +2,16 @@
 ARG WORKSPACE_IMAGE=debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
 ARG GO_IMAGE=golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d
 ARG RUNTIME_IMAGE=alpine:3.23@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
+ARG NODE_IMAGE=node:24.11.1-alpine3.23@sha256:682368d8253e0c3364b803956085c456a612d738bd635926d73fa24db3ce53d7
+
+# Console UI. Rebuilt from the lockfile so the image never trusts the committed bundle.
+FROM ${NODE_IMAGE} AS console
+WORKDIR /src/web
+COPY web/package.json web/package-lock.json web/.npmrc ./
+RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
+COPY web/ ./
+RUN npm run build
+
 FROM ${GO_IMAGE} AS build
 ARG VERSION=dev
 ARG SOURCE_REVISION=unknown
@@ -11,6 +21,7 @@ RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY api/ api/
 COPY cmd/ cmd/
 COPY internal/ internal/
+COPY --from=console /src/internal/web/dist/ internal/web/dist/
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${SOURCE_REVISION}" -o /agent-project-controller ./cmd/agent-project-controller
 
 FROM ${RUNTIME_IMAGE} AS runtime

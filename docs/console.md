@@ -6,6 +6,35 @@ controls into the same origin at `/sandboxes/`, with the same operator login and
 navigation. This keeps existing policies, package approvals, previews and history
 with the service that owns them; no worker or credential migration is required.
 
+## Instant web access
+
+When sandbox-control is mounted, the Sandboxes page starts with a **Web access**
+panel. **Open all** lets every enrolled sandbox-control workspace reach any
+public HTTP or HTTPS destination for the chosen window (15 minutes to 24
+hours). **Lock all** returns them to their approved requests. Each row also has
+its own **Open** or **Lock** button. Both take effect on the worker's next
+request without a pause or restart: sandbox-control authorizes every request
+against the live state. Open records requests for review but never approves
+them, so locking really removes the access. Private networks, cluster services
+and cloud metadata stay blocked in every state, and windows expire to Locked
+on their own.
+
+The console calls sandbox-control's JSON API through the `/sandboxes/` mount:
+`GET /sandboxes/workspaces` returns the summaries and an `X-Sandbox-CSRF`
+token, and `POST /sandboxes/egress` with `Accept: application/json` applies
+`learning-open` or `learning-lock`. Console projects (ProjectWorkspaces) keep
+fixed HTTPS rules enforced by their own proxy; those still change only while
+paused, as described below.
+
+## Console UI
+
+The UI is a React app built with OpenUI components (`@openuidev/react-ui`) in
+`web/`. `npm ci && npm run build` there writes `internal/web/dist`, which the
+Go binary embeds; the container build regenerates it from the lockfile.
+Dependencies are pinned exactly. The OpenUI theme tokens are generated into
+static CSS because the console's CSP forbids injected styles, and dark mode
+follows the operating system.
+
 ## Preparation errors
 
 Each project shows the current Ready condition next to its phase. A preparation,

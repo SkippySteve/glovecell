@@ -4,10 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
-	_ "embed"
+	"embed"
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -23,11 +24,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-//go:embed index.html
-var index []byte
-
-//go:embed app.js
-var app []byte
+// dist is the OpenUI console built from web/ (npm run build).
+//
+//go:embed dist
+var dist embed.FS
 
 //go:embed style.css
 var style []byte
@@ -67,14 +67,16 @@ func (s *Server) Handler() (http.Handler, error) {
 		}
 	}
 	mux := http.NewServeMux()
+	index, e := dist.ReadFile("dist/index.html")
+	if e != nil {
+		return nil, errors.New("console build is missing; run npm run build in web/")
+	}
+	assets, _ := fs.Sub(dist, "dist")
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write(index)
 	})
-	mux.HandleFunc("GET /app.js", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
-		w.Write(app)
-	})
+	mux.Handle("GET /assets/", http.FileServerFS(assets))
 	mux.HandleFunc("GET /style.css", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
 		w.Write(style)
