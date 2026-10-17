@@ -1,4 +1,5 @@
 'use strict';
+// Console bar behavior for mounted sandbox-control pages.
 fetch('/api/v1/session', {credentials: 'same-origin'}).then(async response => {
   if (!response.ok) throw new Error('Your console session has ended. Sign in again.');
   const session = await response.json();

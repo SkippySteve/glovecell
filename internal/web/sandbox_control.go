@@ -176,12 +176,12 @@ func (c SandboxControl) rewriteResponse(response *http.Response) error {
 			node.AppendChild(&html.Node{Type: html.ElementNode, Data: "script", Attr: []html.Attribute{{Key: "src", Val: "/shell.js"}, {Key: "defer", Val: ""}}})
 		}
 		if node.Type == html.ElementNode && node.Data == "body" {
-			shell, _ := html.ParseFragment(strings.NewReader(`<nav class="console-nav" aria-label="Console"><a href="/">Projects</a><a href="/sandboxes/" aria-current="page">Existing sandboxes</a><button id="console-logout" type="button" hidden>Sign out</button><span id="console-message" role="status"></span></nav>`), nil)
+			shell, _ := html.ParseFragment(strings.NewReader(`<header class="console-bar"><a class="console-brand" href="/"><span class="console-logo" aria-hidden="true"></span>Sandboxes</a><span id="console-message" role="status"></span><button id="console-logout" type="button" hidden>Sign out</button></header>`), nil)
 			// ParseFragment with nil returns a document wrapper. Move only its body content.
 			for _, fragment := range shell {
 				var find func(*html.Node)
 				find = func(n *html.Node) {
-					if n.Type == html.ElementNode && n.Data == "nav" {
+					if n.Type == html.ElementNode && n.Data == "header" {
 						n.Parent.RemoveChild(n)
 						node.InsertBefore(n, node.FirstChild)
 						return

@@ -21,7 +21,7 @@ existing branch protection to make preparation pass.
 
 ## Project access
 
-Select **Access and egress** on a project to inspect its HTTPS grants. Add initial
+Open a sandbox and select its **Access** tab to inspect its HTTPS grants. Add initial
 destinations when opening a project, or pause an existing project and wait for
 **Paused** before changing them. Each destination specifies an exact lowercase
 hostname, supported methods and literal path prefixes. Path `/` allows the whole
@@ -75,8 +75,10 @@ must originate from the console; both backend CSRF checks remain in effect. HTML
 links, form actions, polling and redirects are mounted under `/sandboxes/`.
 Redirects to other origins and unrecognized control routes are rejected.
 
-The **Existing sandboxes** section exposes the backend's registered shared and
-provider sandboxes, including their access, activity, previews and settings.
+The **Sandboxes** list shows the backend's registered shared and provider
+sandboxes beside project environments, with their state and how many requests
+await review. Opening one shows its access, activity, previews and settings
+under the same console bar.
 Project environments continue to use their own controller and inspecting proxy.
 The combined UI does not imply those environments share a network policy or a
 trust boundary.

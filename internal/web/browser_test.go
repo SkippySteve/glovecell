@@ -47,6 +47,11 @@ func TestBrowserDashboard(t *testing.T) {
 			http.Redirect(w, r, "/?workspace=shared-pilot&tab=access", 303)
 			return
 		}
+		if r.URL.Path == "/workspaces" {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`[{"id":"shared-pilot","namespace":"agent-workspace-shared","sandbox":"worktree","mode":"Running","revision":3,"status":"Active","learning":"Locked","pending":0,"approvals":2}]`))
+			return
+		}
 		w.Header().Set("Content-Type", "text/html")
 		w.Write([]byte(`<!doctype html><html><head><title>Existing controls</title></head><body><header><h1>Existing controls</h1></header><main><nav><a href="/?workspace=shared-pilot&amp;tab=access">shared-pilot</a><a href="/?workspace=codex-a&amp;tab=access">codex-a</a><a href="/?workspace=grok-a&amp;tab=access">grok-a</a><a href="/?workspace=cursor-a&amp;tab=access">cursor-a</a></nav><h2>Existing sandbox access</h2><form method="post" action="/access"><input name="csrf" type="hidden" value="fixture-csrf"><button>Save existing access</button></form></main></body></html>`))
 	}))
