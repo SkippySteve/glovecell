@@ -298,6 +298,19 @@ func run(ctx context.Context) error {
 	} else if os.Getenv("SANDBOX_CONTROL_ORIGIN") != "" || os.Getenv("SANDBOX_CONTROL_OPERATOR") != "" {
 		return errors.New("sandbox control integration requires URL, origin and delegated operator together")
 	}
+	if dir := os.Getenv("RUN_RECORDS_DIR"); dir != "" {
+		server.RunRecords = &web.RunRecords{Dir: dir}
+		// Optional read-only publishers, such as an Orca runtime, to copy run records from.
+		if sources := web.CSV(os.Getenv("RUN_RECORDS_SOURCES")); len(sources) > 0 {
+			puller := web.RunRecordPuller{Dir: dir, Sources: sources}
+			if err := puller.Validate(); err != nil {
+				return err
+			}
+			go puller.Run(ctx, time.Minute)
+		}
+	} else if os.Getenv("RUN_RECORDS_SOURCES") != "" {
+		return errors.New("RUN_RECORDS_SOURCES requires RUN_RECORDS_DIR")
+	}
 	if os.Getenv("OIDC_ISSUER") != "" {
 		clientSecret, err := secret("OIDC_CLIENT_SECRET_FILE")
 		if err != nil {

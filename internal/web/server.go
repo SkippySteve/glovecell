@@ -48,7 +48,14 @@ type Server struct {
 	GitHost, GitOrigin                 string
 	GitHubOwner                        string
 	SandboxControl                     *SandboxControl
+	RunRecords                         *RunRecords
 }
+
+// openUISpinnerStyle allows the one stylesheet OpenUI's Renderer injects on mount
+// (its query-loader keyframes). web/src/factory/csp.test.ts checks the hash still
+// matches the installed @openuidev/react-lang.
+const openUISpinnerStyle = "'sha256-vai9tBS1dbqDlLt2vYYQwJl16j1hMfOCO5KhCK8LRBg='"
+
 type actorKey struct{}
 
 func equal(a, b string) bool {
@@ -63,6 +70,11 @@ func (s *Server) Handler() (http.Handler, error) {
 	}
 	if s.SandboxControl != nil {
 		if e := s.SandboxControl.Validate(); e != nil {
+			return nil, e
+		}
+	}
+	if s.RunRecords != nil {
+		if e := s.RunRecords.Validate(); e != nil {
 			return nil, e
 		}
 	}
@@ -99,8 +111,12 @@ func (s *Server) Handler() (http.Handler, error) {
 	})
 	mux.HandleFunc("GET /api/v1/session", func(w http.ResponseWriter, r *http.Request) {
 		actor, _ := r.Context().Value(actorKey{}).(string)
-		writeJSON(w, map[string]any{"actor": actor, "oidc": s.OIDC != nil, "sandboxControl": s.SandboxControl != nil, "t3Connect": s.T3Connect, "githubOwner": s.GitHubOwner})
+		writeJSON(w, map[string]any{"actor": actor, "oidc": s.OIDC != nil, "sandboxControl": s.SandboxControl != nil, "t3Connect": s.T3Connect, "githubOwner": s.GitHubOwner, "runRecords": s.RunRecords != nil})
 	})
+	if s.RunRecords != nil {
+		mux.HandleFunc("GET /api/v1/runs", s.RunRecords.list)
+		mux.HandleFunc("GET /api/v1/runs/{id}", s.RunRecords.get)
+	}
 	mux.HandleFunc("GET /api/v1/workspaces", func(w http.ResponseWriter, r *http.Request) {
 		list := &api.ProjectWorkspaceList{}
 		if e := s.Client.List(r.Context(), list, client.InNamespace(s.Namespace)); e != nil {
@@ -125,7 +141,7 @@ func (s *Server) Handler() (http.Handler, error) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' "+openUISpinnerStyle+"; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 		if s.OIDC != nil && r.Method == "GET" {
 			if r.URL.Path == "/auth/signed-out" {
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")

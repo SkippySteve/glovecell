@@ -8,6 +8,7 @@ import {AccessTab} from './Access';
 import {ActivityTab} from './Activity';
 import {PreviewsTab} from './Previews';
 import {SettingsTab} from './Settings';
+import {SandboxRuns} from '../factory/SandboxRuns';
 
 export const DURATIONS: [string, string][] = [['15', '15 min'], ['60', '1 hour'], ['240', '4 hours'], ['1440', '24 hours']];
 const POLL_MS = 10000;
@@ -152,6 +153,7 @@ function Overview(ctx: SandboxContext) {
 
 export function Sandbox({id, tab}: {id: string; tab: SandboxTab}) {
   const {detail, error, reload, act} = useSandbox(id);
+  const {session} = useData();
   const [working, setWorking] = useState(false);
   useEffect(() => { document.title = id + ' · Sandboxes'; }, [id]);
   const crumbs = <nav className="crumbs" aria-label="Breadcrumb"><a href="#/">Sandboxes</a><span aria-hidden="true">/</span><span>{id}</span></nav>;
@@ -188,12 +190,13 @@ export function Sandbox({id, tab}: {id: string; tab: SandboxTab}) {
       {!detail.tailnetReady ? <Callout variant="warning" description="Tailscale routing is not ready; previews and services are reachable on the LAN only." /> : null}
       <Tabs value={tab} onValueChange={value => navigate(sandboxHref(id, value as SandboxTab))} className="detail-tabs">
         <TabsList aria-label="Sandbox sections">
-          {SANDBOX_TABS.filter(([key]) => key !== 'access' || detail.learningEgress).map(([key, label]) => <TabsTrigger key={key} value={key} text={counts[key] ? `${label} ${counts[key]}` : label} />)}
+          {SANDBOX_TABS.filter(([key]) => (key !== 'access' || detail.learningEgress) && (key !== 'runs' || session.runRecords)).map(([key, label]) => <TabsTrigger key={key} value={key} text={counts[key] ? `${label} ${counts[key]}` : label} />)}
         </TabsList>
         <TabsContent value="overview"><Overview {...ctx} /></TabsContent>
         {detail.learningEgress ? <TabsContent value="access"><AccessTab {...ctx} /></TabsContent> : null}
         <TabsContent value="previews"><PreviewsTab {...ctx} /></TabsContent>
         <TabsContent value="activity">{tab === 'activity' ? <ActivityTab {...ctx} /> : null}</TabsContent>
+        {session.runRecords ? <TabsContent value="runs">{tab === 'runs' ? <SandboxRuns namespace={detail.namespace} /> : null}</TabsContent> : null}
         <TabsContent value="settings"><SettingsTab {...ctx} /></TabsContent>
       </Tabs>
     </>
