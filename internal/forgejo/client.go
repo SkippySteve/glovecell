@@ -220,7 +220,8 @@ func (c *Client) Grant(ctx context.Context, repo string, cred Credentials) (stri
 		return "", e
 	}
 	if cred.Token != "" { // A stored token is reusable only if the server still accepts it.
-		req, _ := http.NewRequestWithContext(ctx, "GET", c.Origin+"/api/v1/repos/"+repo, nil)
+		// Native CLI PR search uses the issues API. Validate its required scope too.
+		req, _ := http.NewRequestWithContext(ctx, "GET", c.Origin+"/api/v1/repos/"+repo+"/issues?type=pulls&limit=1", nil)
 		req.Header.Set("Authorization", "token "+cred.Token)
 		res, e := c.HTTP.Do(req)
 		if e == nil {
@@ -242,7 +243,7 @@ func (c *Client) Grant(ctx context.Context, repo string, cred Credentials) (stri
 	}
 	var t token
 	parts := strings.Split(repo, "/")
-	if e := c.call(ctx, "POST", "/users/"+cred.Username+"/tokens", map[string]any{"name": "project-workspace", "scopes": []string{"write:repository"}, "repositories": []map[string]string{{"owner": parts[0], "name": parts[1]}}}, &t, &cred); e != nil {
+	if e := c.call(ctx, "POST", "/users/"+cred.Username+"/tokens", map[string]any{"name": "project-workspace", "scopes": []string{"write:repository", "write:issue"}, "repositories": []map[string]string{{"owner": parts[0], "name": parts[1]}}}, &t, &cred); e != nil {
 		return "", e
 	}
 	if t.SHA == "" {

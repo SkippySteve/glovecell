@@ -1,4 +1,10 @@
-# Control-host client registration
+# Optional control-host client registration
+
+This source is reconciled with the current OpenUI console. Registration is
+optional; it does not replace the native Orca sandbox or managed T3 Connect.
+The optional Helm control client is disabled by default. Rebuilding this source
+does not authorize starting a registrar or deploying its privileged control pod.
+
 
 Ready project sandboxes appear in a **central control client** (T3 Code, Orca, or another Adapter) that you open from phone, browser, or desktop. A long-running registrar runs **on the same host as that control client**, mounts each Ready checkout over FUSE, registers the local mount path with every configured Adapter, and revokes those registrations when the project leaves Ready (including controller removal).
 
@@ -112,9 +118,14 @@ While qualifying, run `register --watch` in the foreground or under `nohup` so m
 
 ## Dashboard
 
-`GET /api/v1/workspaces/{name}/clients` returns the ledger. Ready projects show registration state next to the connect command.
+`GET /api/v1/workspaces/{name}/clients` returns the ledger. The OpenUI project overview shows registered clients when a ledger exists. It
+refreshes their state every ten seconds. Ledger errors remain visible.
 
-## Live qualification
+## Historical qualification
+
+The earlier implementation recorded the following qualification before the
+current console reconciliation. It is historical evidence, not a current
+deployment assertion.
 
 Against four Ready projects (`agent-project-controller`, `factory`,
 `opnsense-kubernetes-bgp`, `workspace-pilot`), `register --watch` mounted each

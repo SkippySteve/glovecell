@@ -44,20 +44,21 @@ func DefaultMountRoot() string {
 	return filepath.Join(home, ".local", "share", "agent-project-controller", "mounts")
 }
 
-// ResolveOrcaBinary prefers orca-ide outside an Orca terminal.
+// ResolveOrcaBinary uses the session CLI when configured. Outside a managed
+// terminal, never resolve the bare orca command, which can be a screen reader.
 func ResolveOrcaBinary() string {
-	if os.Getenv("ORCA_WORKTREE_ID") != "" {
-		if p, err := exec.LookPath("orca"); err == nil {
-			return p
-		}
-	}
-	if p, err := exec.LookPath("orca-ide"); err == nil {
+	if configured := os.Getenv("ORCA_CLI_COMMAND"); configured != "" {
+		p, _ := exec.LookPath(configured)
 		return p
 	}
-	if p, err := exec.LookPath("orca"); err == nil {
-		return p
+	command := "orca-ide"
+	if os.Getenv("ORCA_DEV_REPO_ROOT") != "" {
+		command = "orca-dev"
+	} else if os.Getenv("ORCA_WORKTREE_ID") != "" {
+		command = "orca"
 	}
-	return ""
+	p, _ := exec.LookPath(command)
+	return p
 }
 
 type heldMount struct {

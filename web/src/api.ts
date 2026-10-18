@@ -1,0 +1,121 @@
+// Typed clients for the console API (/api/v1) and the mounted sandbox-control service (/sandboxes).
+
+export type Method = 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS';
+export interface HTTPSRule { host: string; methods: Method[]; paths: string[] }
+export interface ProjectRepository { name: string; host: string; repository: string; public?: boolean }
+export interface Condition { type: string; status: string; reason: string; message: string; observedGeneration?: number }
+export interface Project {
+  metadata: { name: string; uid?: string; generation?: number; resourceVersion?: string };
+  spec: { repository: string; desiredState: 'Running' | 'Paused' | 'Removed'; https?: HTTPSRule[]; repositories?: ProjectRepository[] };
+  status?: { phase?: string; namespace?: string; observedGeneration?: number; conditions?: Condition[] };
+}
+export interface AuditRecord { time: string; action: string; message?: string }
+export interface Session { actor?: string; oidc?: boolean; sandboxControl?: boolean; t3Connect?: boolean; githubOwner?: string; runRecords?: boolean }
+export interface Repository { full_name: string }
+
+export type EgressState = 'Open' | 'Learning' | 'Locked';
+// Summary of a sandbox-control workspace. `egress` fields come from sandbox-control
+// releases with instant egress; older releases only report `learning`.
+export interface ExistingSandbox {
+  id: string; namespace: string; sandbox: string; mode: string; revision: number; status: string;
+  learning?: string; learningExpires?: number; pending: number; approvals: number;
+  egress?: EgressState | ''; egressExpires?: number; egressControl?: boolean;
+}
+
+async function failure(response: Response): Promise<Error> {
+  const text = (await response.text()).trim();
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed.error === 'string') return new Error(parsed.error);
+  } catch { /* plain-text error */ }
+  return new Error(text || `${response.status} ${response.statusText}`);
+}
+
+export async function api<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
+  const response = await fetch('/api/v1/' + path, {method, credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: body === undefined ? undefined : JSON.stringify(body)});
+  if (!response.ok) throw await failure(response);
+  return response.json() as Promise<T>;
+}
+
+// sandbox-control uses double-submit CSRF: the HttpOnly cookie travels with the
+// request and the same token, read from the list response header, goes in the form.
+let csrf = '';
+
+export async function existingSandboxes(): Promise<ExistingSandbox[]> {
+  const response = await fetch('/sandboxes/workspaces', {credentials: 'same-origin'});
+  if (!response.ok) throw await failure(response);
+  csrf = response.headers.get('X-Sandbox-CSRF') || csrf;
+  return response.json() as Promise<ExistingSandbox[]>;
+}
+
+export const egressState = (s: ExistingSandbox): EgressState | undefined => {
+  const state = s.egress || s.learning;
+  return state === 'Open' || state === 'Learning' || state === 'Locked' ? state : undefined;
+};
+export const egressExpires = (s: ExistingSandbox) => s.egressExpires || s.learningExpires || 0;
+export const egressControllable = (s: ExistingSandbox) => s.egressControl ?? Boolean(s.learning);
+
+export type EgressAction = 'open' | 'lock';
+
+export async function setEgress(id: string, action: EgressAction, minutes: number): Promise<ExistingSandbox> {
+  if (!csrf) await existingSandboxes();
+  const form = new URLSearchParams({workspace: id, tab: 'access', action: 'learning-' + action, minutes: String(minutes), csrf});
+  const response = await fetch('/sandboxes/egress', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json'}, body: form, redirect: 'manual'});
+  // A redirect means the backend predates the JSON API and handled the form; refresh to confirm.
+  if (response.type === 'opaqueredirect') {
+    const list = await existingSandboxes();
+    const found = list.find(item => item.id === id);
+    if (!found) throw new Error(id + ': sandbox is no longer listed');
+    return found;
+  }
+  if (!response.ok) throw await failure(response);
+  if (!response.headers.get('Content-Type')?.startsWith('application/json')) throw new Error(id + ': this sandbox-control release does not support instant egress; open its Access page');
+  return response.json() as Promise<ExistingSandbox>;
+}
+
+// Native sandbox pages: JSON views of a sandbox-control workspace.
+export interface Revision { id: number; status: string; error?: string; actor?: string; at: number }
+export interface LearningWindow { phase: EgressState; minutes: number; started: number; expires: number }
+export interface ServiceAccess { name: string; host: string; editable: boolean; lanAvailable: boolean; tailscaleAvailable: boolean; grant: {lan: boolean; tailscale: boolean; rulesText: string} }
+export interface SandboxDetail {
+  id: string; namespace: string; sandbox: string; mode: 'Running' | 'Suspended' | string;
+  revision: Revision; learningEgress: boolean; tailnetReady: boolean; serviceOwner: boolean;
+  learning?: LearningWindow; providerHosts: string[]; previewPending: number;
+  egressCounts?: {pending: number; approved: number};
+  links: {grafana?: string; openlit?: string};
+  services: ServiceAccess[]; revisions: Revision[];
+}
+export interface Observation { host: string; method: string; path: string; scheme: string; port: number; queryHash?: string; package?: {ecosystem: string; name: string; version?: string}; last?: number; observation: string }
+export interface ObservationPage { filter: string; pending: {total: number; items: Observation[]}; approved: {total: number; items: Observation[]} }
+export interface Preview {
+  id: string; state: string; proposedName: string; proposedRulesText: string; rulesText: string;
+  lan: boolean; tailscale: boolean; gapAcknowledged: boolean; seen: number; first: number; count: number;
+  listener: {project: string; worktree: string; port: number; pid: number; address: string; loopback: boolean};
+  urls: {lan: string; tailnet: string};
+}
+export interface ActivityItem { title: string; target: string; time: string; outcome?: string; details?: {label: string; value: string}[]; count?: number; blocked?: {host: string; method: string; path: string; timestamp: string; reason?: string; token?: string} }
+export interface ActivitySource { source: string; scope: string; at: number; error?: string; items: ActivityItem[] }
+export interface Activity { window: {start: string; end: string; minutes: number}; links: {grafana?: string; openlit?: string}; sources: ActivitySource[]; health: {error?: string; cards: {title: string; target: string}[]} }
+
+async function sandboxGet<T>(path: string, params: Record<string, string>): Promise<T> {
+  const response = await fetch('/sandboxes' + path + '?' + new URLSearchParams(params), {credentials: 'same-origin', headers: {Accept: 'application/json'}});
+  if (!response.ok) throw await failure(response);
+  csrf = response.headers.get('X-Sandbox-CSRF') || csrf;
+  if (!response.headers.get('Content-Type')?.startsWith('application/json')) throw new Error('This sandbox-control release has no JSON view; open the classic page');
+  return response.json() as Promise<T>;
+}
+export const sandboxDetail = (id: string) => sandboxGet<SandboxDetail>('/api/workspace', {workspace: id});
+export const sandboxObservations = (id: string, q: string) => sandboxGet<ObservationPage>('/api/egress', {workspace: id, q});
+export const sandboxPreviews = (id: string, expired: boolean) => sandboxGet<{expiredCount: number; requests: Preview[]}>('/api/previews', expired ? {workspace: id, expired: '1'} : {workspace: id});
+export const sandboxActivity = (id: string, minutes: number) => sandboxGet<Activity>('/api/activity', {workspace: id, minutes: String(minutes)});
+
+// Posts a sandbox-control form action and returns the refreshed summary.
+export async function sandboxAction(path: string, id: string, fields: Record<string, string | string[]>): Promise<ExistingSandbox> {
+  if (!csrf) await existingSandboxes();
+  const form = new URLSearchParams({workspace: id, csrf});
+  for (const [key, value] of Object.entries(fields)) for (const v of [value].flat()) form.append(key, v);
+  const response = await fetch('/sandboxes' + path, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json'}, body: form, redirect: 'manual'});
+  if (response.type === 'opaqueredirect') throw new Error('This sandbox-control release does not answer in JSON; refresh to confirm the change');
+  if (!response.ok) throw await failure(response);
+  return response.json() as Promise<ExistingSandbox>;
+}

@@ -13,6 +13,19 @@ spec=importlib.util.spec_from_file_location('bridge',Path(__file__).with_name('b
 b=importlib.util.module_from_spec(spec);spec.loader.exec_module(b)
 
 class BridgePolicy(unittest.TestCase):
+    def test_only_enrolled_additional_roots_are_accepted(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)/'repo';root.mkdir()
+            projects=Path(d)/'projects';projects.mkdir()
+            allowed=projects/'library';allowed.mkdir()
+            denied=projects/'unapproved';denied.mkdir()
+            registry=Path(d)/'projects.json';registry.write_text(json.dumps([{'name':'library'}]))
+            request={'method':'thread/start','params':{'cwd':str(allowed)}}
+            self.assertEqual(b.translate(request,root,registry)['params']['cwd'],str(allowed))
+            with self.assertRaises(b.WorkspaceDirectoryDenied):
+                b.translate({'method':'thread/start','params':{'cwd':str(denied)}},root,registry)
+            allowed.rmdir();allowed.symlink_to(denied)
+            with self.assertRaises(ValueError):b.translate(request,root,registry)
     def test_account_mutation_and_reserved_requests_denied(self):
         for method in ('account/login/start','account/logout','account/chatgptAuthTokens/refresh'):
             with self.assertRaises(ValueError):b.translate({'id':1,'method':method})
@@ -30,6 +43,32 @@ class BridgePolicy(unittest.TestCase):
             self.assertEqual(value['params']['sandbox'],'read-only')
             self.assertNotIn('permissions',value['params'])
             self.assertNotIn('bad',value['params']['config'])
+
+    def test_denied_home_has_actionable_message_and_does_not_echo_untrusted_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)/'repo';root.mkdir()
+            home=Path(d)/'home-secret-value';home.mkdir()
+            for method in ('thread/start','thread/resume','thread/fork'):
+                request={'id':42,'method':method,'params':{'cwd':str(home)}}
+                with self.assertRaises(b.WorkspaceDirectoryDenied) as denied:
+                    b.translate(request,root)
+                response=b.denied_response(request,denied.exception)
+                self.assertEqual(response['id'],42)
+                self.assertIn(str(root),response['error']['message'])
+                self.assertIn('start a new thread',response['error']['message'])
+                self.assertNotIn('home-secret-value',response['error']['message'])
+            allowed=b.translate({'method':'thread/start','params':{'cwd':str(root)}},root)
+            self.assertEqual(allowed['params']['cwd'],str(root))
+
+    def test_unavailable_checkout_and_generic_errors_withhold_sensitive_details(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)/'repo';root.mkdir()
+            with self.assertRaises(b.WorkspaceDirectoryDenied) as denied:
+                b.translate({'id':3,'method':'thread/start','params':{'cwd':str(root/'missing')}},root)
+            self.assertIn('unavailable',b.denied_response({'id':3},denied.exception)['error']['message'])
+        response=b.denied_response({'id':3},ValueError('private authentication detail'))
+        self.assertEqual(response['error']['message'],'request denied by project adapter')
+        self.assertIsNone(b.denied_response({'method':'notification'},denied.exception))
 
     def test_outer_sandbox_policy_cannot_be_overridden(self):
         value=b.translate({'method':'turn/start','params':{'sandboxPolicy':{'type':'dangerFullAccess'},'permissions':'unrestricted'}})
@@ -76,3 +115,24 @@ class InterruptedRPC(unittest.TestCase):
         rpc.process.wait.assert_called_once_with(timeout=10)
 
 if __name__=='__main__':unittest.main()
+
+class IndependentCodex(unittest.TestCase):
+    def test_rotation_account_substitution_revocation_and_recovery(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)
+            def publish(token='old', account='account', enabled=True, expires=None):
+                value={'enabled':enabled}
+                if enabled: value['access']={'accessToken':token,'expiresAt':expires or time.time()+600,'chatgptAccountId':account}
+                (root/'provider-access').write_text(json.dumps({'codex':value,'cursor':{'enabled':True,'access':{'accessToken':'cursor','expiresAt':time.time()+600}}}))
+            publish()
+            self.assertEqual(b.refreshed_grant('account',root)['accessToken'],'old')
+            publish(token='rotated')
+            self.assertEqual(b.refreshed_grant('account',root)['accessToken'],'rotated')
+            publish(account='other')
+            with self.assertRaises(ValueError): b.refreshed_grant('account',root)
+            publish(enabled=False)
+            with self.assertRaises(ValueError): b.refreshed_grant('account',root)
+            publish(expires=1)
+            with self.assertRaises(ValueError): b.refreshed_grant('account',root)
+            publish(token='recovered')
+            self.assertEqual(b.refreshed_grant('account',root)['accessToken'],'recovered')

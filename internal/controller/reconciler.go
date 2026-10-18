@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/netip"
 	"net/url"
+	"os"
 	"reflect"
 	"strconv"
 	"strings"
@@ -48,7 +49,8 @@ var sandboxGVK = schema.GroupVersionKind{Group: "agents.x-k8s.io", Version: "v1b
 
 type Config struct {
 	Namespace, GitHost, ForgejoOrigin, Owner, Image, RuntimeClass, StorageClass string
-	RegistrarNamespace                                                         string
+	RegistrarNamespace                                                          string
+	GitHubOwner                                                                 string
 	ProxyImage                                                                  string
 	StorageSize                                                                 string
 	WorkerResources, ProxyResources                                             ResourceProfile
@@ -96,11 +98,24 @@ func (c Config) proxyImage() string {
 	return c.Image
 }
 
+// ProjectAccess owns externally registered application access for a sandbox.
+type ProjectAccess interface {
+	Ensure(context.Context, *api.ProjectWorkspace) error
+	Suspend(context.Context, *api.ProjectWorkspace) error
+	Remove(context.Context, *api.ProjectWorkspace) error
+}
+
 type Reconciler struct {
+	IndependentCodexWorkspaceUID string
+	ReaderWorkspaceUID           string
+	ReaderRoute                  *proxy.ReaderRoute
+	Access                       ProjectAccess
 	client.Client
-	Host    forgejo.Host
-	Network network.Provider
-	Config  Config
+	Host                    forgejo.Host
+	Network                 network.Provider
+	Config                  Config
+	GitHubToken             string
+	MuseSubscriptionKeyFile string
 }
 
 var duration, _ = otel.Meter("agent-project-controller").Float64Histogram("workspace.reconcile.duration", metric.WithUnit("s"))
@@ -225,6 +240,17 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ct
 			}
 		}
 	}
+	if r.Access != nil {
+		if ready {
+			if e := r.Access.Ensure(ctx, w); e != nil {
+				phase, ready, reason, message = "Preparing", false, "T3ConnectPending", e.Error()
+			} else {
+				message = "Project sandbox and T3 Connect environment are ready"
+			}
+		} else if e := r.Access.Suspend(ctx, w); e != nil {
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, e
+		}
+	}
 	return ctrl.Result{RequeueAfter: 10 * time.Second}, r.status(ctx, w, phase, ready, reason, message)
 }
 func namespace(w *api.ProjectWorkspace) string {
@@ -250,6 +276,9 @@ func (r *Reconciler) validate(ctx context.Context, w *api.ProjectWorkspace) erro
 		return errors.New("workspace UID missing")
 	}
 	if e := forgejo.ValidateRepository(w.Spec.Repository, r.Config.Owner); e != nil {
+		return e
+	}
+	if e := r.validateRepositories(w); e != nil {
 		return e
 	}
 	if w.Spec.DesiredState != "Running" && w.Spec.DesiredState != "Paused" {
@@ -429,6 +458,9 @@ func (r *Reconciler) ensure(ctx context.Context, w *api.ProjectWorkspace) error 
 	if e = r.updateAccessPolicy(ctx, w, s); e != nil {
 		return e
 	}
+	if e = r.enrollRepositories(ctx, w, s); e != nil {
+		return e
+	}
 	if e = r.objects(ctx, w, s); e != nil {
 		return e
 	}
@@ -500,7 +532,7 @@ func (r *Reconciler) modelAccess(ctx context.Context, w *api.ProjectWorkspace) e
 	s := &corev1.Secret{}
 	e = r.Get(ctx, types.NamespacedName{Namespace: namespace(w), Name: "model-access"}, s)
 	if apierrors.IsNotFound(e) {
-		if string(ledger.Data["model-access-required"]) == "true" {
+		if string(ledger.Data["model-access-required"]) == "true" && string(ledger.Data["independent-model-access"]) != "true" {
 			return errors.New("model access was revoked; a valid operator grant is required")
 		}
 		return nil
@@ -511,12 +543,18 @@ func (r *Reconciler) modelAccess(ctx context.Context, w *api.ProjectWorkspace) e
 	if e = owner(w, s); e != nil {
 		return e
 	}
+	if independentCodex(s.Data) && r.IndependentCodexWorkspaceUID != string(w.UID) {
+		return errors.New("independent Codex requires its inspecting gateway binding")
+	}
 	if e = RejectRefreshMaterial(s.Data); e != nil {
 		return e
 	}
-	if string(ledger.Data["model-access-required"]) != "true" {
+	if string(ledger.Data["model-access-required"]) != "true" || independentCodex(s.Data) && string(ledger.Data["independent-model-access"]) != "true" {
 		before := ledger.DeepCopy()
 		ledger.Data["model-access-required"] = []byte("true")
+		if independentCodex(s.Data) {
+			ledger.Data["independent-model-access"] = []byte("true")
+		}
 		if e = r.Patch(ctx, ledger, client.MergeFrom(before)); e != nil {
 			return e
 		}
@@ -718,10 +756,8 @@ func normalizeSandboxNameservers(spec map[string]any) {
 	_ = unstructured.SetNestedStringSlice(spec, []string{"normalized"}, "podTemplate", "spec", "dnsConfig", "nameservers")
 }
 
-// replaceWorkspaceImage recreates a Sandbox only when the pinned workspace
-// image is the sole template difference and no worker pod is left. The
-// observed image is never written back. The project volume is independent of
-// the Sandbox, so the next ensure keeps that claim and installs the pin.
+// replaceWorkspaceImage updates only reviewed image fields after workers stop.
+// Upstream permits podTemplate updates; keep the Sandbox UID and volume intact.
 func (r *Reconciler) replaceWorkspaceImage(ctx context.Context, w *api.ProjectWorkspace, current *unstructured.Unstructured, got, want map[string]any) error {
 	gotCopy, _ := cloneValue(got).(map[string]any)
 	wantCopy, _ := cloneValue(want).(map[string]any)
@@ -732,6 +768,14 @@ func (r *Reconciler) replaceWorkspaceImage(ctx context.Context, w *api.ProjectWo
 	normalizeSandboxNameservers(wantCopy)
 	normalizeSandboxWorkloadImages(gotCopy)
 	normalizeSandboxWorkloadImages(wantCopy)
+	if r.Access != nil {
+		existing, _, e := unstructured.NestedString(gotCopy, "podTemplate", "spec", "hostname")
+		if e != nil || existing != "" && existing != w.Name {
+			return errors.New("managed T3 hostname drift detected")
+		}
+		unstructured.RemoveNestedField(gotCopy, "podTemplate", "spec", "hostname")
+		unstructured.RemoveNestedField(wantCopy, "podTemplate", "spec", "hostname")
+	}
 	gotCopy["operatingMode"] = want["operatingMode"]
 	if !contains(gotCopy, wantCopy) {
 		return errors.New("Sandbox configuration drift detected")
@@ -743,10 +787,38 @@ func (r *Reconciler) replaceWorkspaceImage(ctx context.Context, w *api.ProjectWo
 	if !gone {
 		return errors.New("Sandbox configuration drift detected")
 	}
-	if err = r.Delete(ctx, current); err != nil && !apierrors.IsNotFound(err) {
+	before := current.DeepCopy()
+	for _, kind := range []string{"initContainers", "containers"} {
+		items, _, err := unstructured.NestedSlice(current.Object, "spec", "podTemplate", "spec", kind)
+		if err != nil {
+			return err
+		}
+		for i, raw := range items {
+			container, ok := raw.(map[string]any)
+			if !ok {
+				return errors.New("invalid Sandbox container")
+			}
+			if container["name"] == "clone" || container["name"] == "workspace" {
+				container["image"] = r.Config.Image
+				items[i] = container
+			}
+		}
+		if err := unstructured.SetNestedSlice(current.Object, items, "spec", "podTemplate", "spec", kind); err != nil {
+			return err
+		}
+	}
+	if r.Access != nil {
+		if err := unstructured.SetNestedField(current.Object, w.Name, "spec", "podTemplate", "spec", "hostname"); err != nil {
+			return err
+		}
+	}
+	if err := r.current(ctx, w); err != nil {
 		return err
 	}
-	return errors.New("Sandbox workspace image is being replaced")
+	if err := r.Patch(ctx, current, client.MergeFrom(before)); err != nil {
+		return err
+	}
+	return errors.New("Sandbox workspace image is being updated with its identity retained")
 }
 func normalizeSandboxWorkloadImages(spec map[string]any) {
 	pod, _ := spec["podTemplate"].(map[string]any)
@@ -830,6 +902,11 @@ func (r *Reconciler) current(ctx context.Context, w *api.ProjectWorkspace) error
 	return nil
 }
 func (r *Reconciler) suspend(ctx context.Context, w *api.ProjectWorkspace) error {
+	if r.Access != nil {
+		if e := r.Access.Suspend(ctx, w); e != nil {
+			return e
+		}
+	}
 	u := &unstructured.Unstructured{}
 	u.SetGroupVersionKind(sandboxGVK)
 	e := r.Get(ctx, types.NamespacedName{Namespace: namespace(w), Name: "project"}, u)
@@ -880,6 +957,25 @@ func (r *Reconciler) remove(ctx context.Context, w *api.ProjectWorkspace) error 
 		return e
 	}
 	stopErr := r.stop(ctx, w)
+	var accessErr error
+	if r.Access != nil {
+		accessErr = r.Access.Remove(ctx, w)
+	} else {
+		ledger := &corev1.Secret{}
+		ledgerKey := types.NamespacedName{Namespace: r.Config.Namespace, Name: "t3-connect-" + strings.ReplaceAll(string(w.UID), "-", "")}
+		if e := r.Get(ctx, ledgerKey, ledger); e == nil {
+			accessErr = errors.New("T3 Connect ledger exists but registration manager is disabled; external revocation required")
+		} else if !apierrors.IsNotFound(e) {
+			accessErr = e
+		} else {
+			marker := &corev1.ConfigMap{}
+			if e := r.Get(ctx, types.NamespacedName{Namespace: ledgerKey.Namespace, Name: ledgerKey.Name + "-intent"}, marker); e == nil {
+				accessErr = errors.New("T3 registration history exists but revocation manager is disabled")
+			} else if !apierrors.IsNotFound(e) {
+				accessErr = e
+			}
+		}
+	}
 	s := &corev1.Secret{}
 	e := r.Get(ctx, types.NamespacedName{Namespace: r.Config.Namespace, Name: identity(w)}, s)
 	if e == nil {
@@ -890,6 +986,9 @@ func (r *Reconciler) remove(ctx context.Context, w *api.ProjectWorkspace) error 
 			return errors.New("workspace identity ledger mismatch")
 		}
 		if string(s.Data["revoked"]) != "true" {
+			if e = r.revokeRepositories(ctx, w); e != nil {
+				return e
+			}
 			if e = r.Host.Revoke(ctx, w.Spec.Repository, credentials(s)); e != nil {
 				return e
 			}
@@ -913,11 +1012,11 @@ func (r *Reconciler) remove(ctx context.Context, w *api.ProjectWorkspace) error 
 			}
 		}
 	}
-	if e = r.audit(ctx, w, "access-revoked"); e != nil {
+	if e := errors.Join(stopErr, accessErr); e != nil {
 		return e
 	}
-	if stopErr != nil {
-		return stopErr
+	if e = r.audit(ctx, w, "access-revoked"); e != nil {
+		return e
 	}
 	// Desktop T3/Orca revoke by stored id; do not delete the project namespace
 	// while a registrar ledger still shows pending or registered clients.
@@ -1034,11 +1133,10 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 	if e != nil {
 		return e
 	}
-	rules, privateHosts, e := AccessRules(r.Config.GitHost, r.Config.ForgejoOrigin, w.Spec.Repository)
+	cfg, e := r.policyConfiguration(w, w.Spec.HTTPS)
 	if e != nil {
 		return e
 	}
-	cfg := proxy.Config{Rules: append(append([]api.HTTPSRule{}, rules...), w.Spec.HTTPS...), PrivateHosts: privateHosts}
 	raw, e := json.Marshal(cfg)
 	if e != nil {
 		return e
@@ -1051,9 +1149,43 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 	for _, p := range r.Network.Objects(ns, string(w.UID), hosts) {
 		objects = append(objects, p)
 	}
+	gitData := map[string][]byte{"username": s.Data["username"], "token": s.Data["token"]}
+	if len(s.Data["projects.json"]) > 0 {
+		gitData["projects.json"] = s.Data["projects.json"]
+	}
+	proxyData := map[string][]byte{"ca.crt": s.Data["ca.crt"], "ca.key": s.Data["ca.key"]}
+	if cfg.BrokeredProviders {
+		var access corev1.Secret
+		if err := r.Get(ctx, types.NamespacedName{Namespace: ns, Name: "model-access"}, &access); err == nil {
+			if err := owner(w, &access); err != nil {
+				return err
+			}
+			if raw := access.Data["provider-access"]; len(raw) > 0 {
+				if err := validateProviderAccess(raw); err != nil {
+					return err
+				}
+				proxyData["provider-access"] = raw
+			}
+		} else if !apierrors.IsNotFound(err) {
+			return err
+		}
+	}
+	if r.MuseSubscriptionKeyFile != "" {
+		// A missing/revoked subscription key blocks only Muse at the gateway.
+		// The next reconciliation consumes renewed trusted-backend material.
+		if key, err := os.ReadFile(r.MuseSubscriptionKeyFile); err == nil {
+			proxyData["muse-subscription-key"] = bytes.TrimSpace(key)
+		}
+	}
+	if len(cfg.PrivateGitHubRepositories) > 0 {
+		if r.GitHubToken == "" {
+			return errors.New("private GitHub authorization unavailable")
+		}
+		proxyData["github-token"] = []byte(r.GitHubToken)
+	}
 	objects = append(objects, &corev1.ServiceAccount{ObjectMeta: metadata(w, "worker"), AutomountServiceAccountToken: boolp(false)},
-		&corev1.Secret{ObjectMeta: metadata(w, "git-identity"), Data: map[string][]byte{"username": s.Data["username"], "token": s.Data["token"]}},
-		&corev1.Secret{ObjectMeta: metadata(w, "proxy-ca"), Data: map[string][]byte{"ca.crt": s.Data["ca.crt"], "ca.key": s.Data["ca.key"]}},
+		&corev1.Secret{ObjectMeta: metadata(w, "git-identity"), Data: gitData},
+		&corev1.Secret{ObjectMeta: metadata(w, "proxy-ca"), Data: proxyData},
 		&corev1.ConfigMap{ObjectMeta: metadata(w, "trust"), Data: map[string]string{"ca.crt": string(s.Data["ca.crt"])}},
 		&corev1.ConfigMap{ObjectMeta: metadata(w, "proxy-policy"), Data: map[string]string{"policy.json": string(raw)}},
 		&corev1.PersistentVolumeClaim{ObjectMeta: metadata(w, "workspace"), Spec: corev1.PersistentVolumeClaimSpec{StorageClassName: &r.Config.StorageClass, AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}, Resources: corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse(r.Config.StorageSize)}}}},
@@ -1099,6 +1231,9 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 	spec := corev1.PodSpec{DNSPolicy: corev1.DNSNone, DNSConfig: dns, RuntimeClassName: &r.Config.RuntimeClass, AutomountServiceAccountToken: boolp(false), ServiceAccountName: "worker", TerminationGracePeriodSeconds: int64p(5), SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: boolp(true), RunAsUser: int64p(1000), RunAsGroup: int64p(1000), FSGroup: int64p(1000)}, InitContainers: []corev1.Container{{Name: "clone", Image: r.Config.Image, Args: []string{"bootstrap"}, Env: env, SecurityContext: security, Resources: workerResources, VolumeMounts: mounts}}, Containers: []corev1.Container{{Name: "workspace", Image: r.Config.Image, Command: []string{"/bin/sh", "-c", "trap 'exit 0' TERM INT; while :; do sleep 3600 & wait $!; done"}, Env: env, WorkingDir: "/workspace/repo", SecurityContext: security, Resources: workerResources, VolumeMounts: mounts, ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{"test", "-f", "/workspace/.ready"}}}}}}, Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "workspace"}}}, {Name: "identity", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "git-identity", DefaultMode: int32p(0440)}}}, {Name: "trust", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: "trust"}}}}, {Name: "model", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "model-access", Optional: boolp(true), DefaultMode: int32p(0440)}}}, {Name: "scratch", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}}
 	if serviceProxy {
 		spec.HostAliases = []corev1.HostAlias{{IP: proxyAddress, Hostnames: []string{"proxy"}}}
+	}
+	if r.Access != nil {
+		spec.Hostname = w.Name
 	}
 	r.Config.WorkerScheduling.Apply(&spec)
 	b, e := json.Marshal(spec)

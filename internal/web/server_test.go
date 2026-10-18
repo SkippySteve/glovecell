@@ -3,8 +3,10 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -182,7 +184,13 @@ func TestSignedOutPageDoesNotRestartSSOOrExposeAPI(t *testing.T) {
 	if out.Code != 401 {
 		t.Fatal("signed-out client can access projects")
 	}
-	if !strings.Contains(string(app), "location.assign('/auth/signed-out')") {
+	scripts, _ := fs.Glob(dist, "dist/assets/*.js")
+	bundle := ""
+	for _, name := range scripts {
+		raw, _ := dist.ReadFile(name)
+		bundle += string(raw)
+	}
+	if !regexp.MustCompile("location\\.assign\\([\"'`]/auth/signed-out[\"'`]\\)").MatchString(bundle) {
 		t.Fatal("logout reloads the protected dashboard")
 	}
 }

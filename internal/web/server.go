@@ -4,10 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
-	_ "embed"
+	"embed"
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -24,11 +25,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-//go:embed index.html
-var index []byte
-
-//go:embed app.js
-var app []byte
+// dist is the OpenUI console built from web/ (npm run build).
+//
+//go:embed dist
+var dist embed.FS
 
 //go:embed style.css
 var style []byte
@@ -45,9 +45,18 @@ type Server struct {
 	Namespace, Owner, Password, Origin string
 	OIDC                               *OIDC
 	AllowBasic                         bool
+	T3Connect                          bool
 	GitHost, GitOrigin                 string
+	GitHubOwner                        string
 	SandboxControl                     *SandboxControl
+	RunRecords                         *RunRecords
 }
+
+// openUISpinnerStyle allows the one stylesheet OpenUI's Renderer injects on mount
+// (its query-loader keyframes). web/src/factory/csp.test.ts checks the hash still
+// matches the installed @openuidev/react-lang.
+const openUISpinnerStyle = "'sha256-vai9tBS1dbqDlLt2vYYQwJl16j1hMfOCO5KhCK8LRBg='"
+
 type actorKey struct{}
 
 func equal(a, b string) bool {
@@ -65,15 +74,22 @@ func (s *Server) Handler() (http.Handler, error) {
 			return nil, e
 		}
 	}
+	if s.RunRecords != nil {
+		if e := s.RunRecords.Validate(); e != nil {
+			return nil, e
+		}
+	}
 	mux := http.NewServeMux()
+	index, e := dist.ReadFile("dist/index.html")
+	if e != nil {
+		return nil, errors.New("console build is missing; run npm run build in web/")
+	}
+	assets, _ := fs.Sub(dist, "dist")
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write(index)
 	})
-	mux.HandleFunc("GET /app.js", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
-		w.Write(app)
-	})
+	mux.Handle("GET /assets/", http.FileServerFS(assets))
 	mux.HandleFunc("GET /style.css", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
 		w.Write(style)
@@ -96,8 +112,12 @@ func (s *Server) Handler() (http.Handler, error) {
 	})
 	mux.HandleFunc("GET /api/v1/session", func(w http.ResponseWriter, r *http.Request) {
 		actor, _ := r.Context().Value(actorKey{}).(string)
-		writeJSON(w, map[string]any{"actor": actor, "oidc": s.OIDC != nil, "sandboxControl": s.SandboxControl != nil})
+		writeJSON(w, map[string]any{"actor": actor, "oidc": s.OIDC != nil, "sandboxControl": s.SandboxControl != nil, "t3Connect": s.T3Connect, "githubOwner": s.GitHubOwner, "runRecords": s.RunRecords != nil})
 	})
+	if s.RunRecords != nil {
+		mux.HandleFunc("GET /api/v1/runs", s.RunRecords.list)
+		mux.HandleFunc("GET /api/v1/runs/{id}", s.RunRecords.get)
+	}
 	mux.HandleFunc("GET /api/v1/workspaces", func(w http.ResponseWriter, r *http.Request) {
 		list := &api.ProjectWorkspaceList{}
 		if e := s.Client.List(r.Context(), list, client.InNamespace(s.Namespace)); e != nil {
@@ -109,6 +129,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.HandleFunc("POST /api/v1/workspaces", s.create)
 	mux.HandleFunc("PATCH /api/v1/workspaces/{name}", s.change)
 	mux.HandleFunc("PATCH /api/v1/workspaces/{name}/access", s.changeAccess)
+	mux.HandleFunc("POST /api/v1/workspaces/{name}/repositories", s.enrollRepository)
 	mux.HandleFunc("GET /api/v1/workspaces/{name}/audit", s.audit)
 	mux.HandleFunc("GET /api/v1/workspaces/{name}/clients", s.clients)
 	if s.SandboxControl != nil {
@@ -122,11 +143,11 @@ func (s *Server) Handler() (http.Handler, error) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' "+openUISpinnerStyle+"; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 		if s.OIDC != nil && r.Method == "GET" {
 			if r.URL.Path == "/auth/signed-out" {
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
-				io.WriteString(w, `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Signed out</title><link rel="stylesheet" href="/style.css"><main><h1>You are signed out</h1><p>Your dashboard session has ended. Your identity provider may still have a login session.</p><a href="/auth/login">Sign in</a></main></html>`)
+				io.WriteString(w, `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Signed out</title><link rel="stylesheet" href="/style.css"><main class="plain"><h1>You are signed out</h1><p>Your dashboard session has ended. Your identity provider may still have a login session.</p><p><a class="button primary" href="/auth/login">Sign in again</a></p></main></html>`)
 				return
 			}
 			if r.URL.Path == "/style.css" {

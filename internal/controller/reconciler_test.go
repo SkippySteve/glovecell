@@ -248,87 +248,6 @@ func TestMissingLedgerAfterPriorGenerationGrantBlocksRemoval(t *testing.T) {
 	}
 }
 
-func TestClientLedgerBlocksRemovalUntilRevoked(t *testing.T) {
-	ctx := context.Background()
-	r, w, _ := fixture(t)
-	if e := r.ensure(ctx, w); e != nil {
-		t.Fatal(e)
-	}
-	ledger := registration.NewLedger()
-	_ = ledger.SetClient("t3", registration.StateRegistered, "7dc24d95-2241-4e16-92f4-b8eb0f6004ce", "/mnt/demo")
-	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      registration.ConfigMapName(string(w.UID)),
-			Namespace: "control",
-			Labels:    map[string]string{api.OwnerLabel: string(w.UID)},
-		},
-		Data: registration.EncodeConfigMapData(ledger),
-	}
-	if e := r.Create(ctx, cm); e != nil {
-		t.Fatal(e)
-	}
-	w.Spec.DesiredState = "Removed"
-	w.Generation = 2
-	if e := r.remove(ctx, w); e == nil {
-		t.Fatal("registered client allowed cleanup")
-	}
-	var ns corev1.Namespace
-	if e := r.Get(ctx, types.NamespacedName{Name: namespace(w)}, &ns); e != nil {
-		t.Fatal("namespace deleted while clients registered")
-	}
-	_ = ledger.SetClient("t3", registration.StateRevoked, "7dc24d95-2241-4e16-92f4-b8eb0f6004ce", "/mnt/demo")
-	cm.Data = registration.EncodeConfigMapData(ledger)
-	if e := r.Update(ctx, cm); e != nil {
-		t.Fatal(e)
-	}
-	if e := r.remove(ctx, w); e == nil {
-		t.Fatal("namespace deletion should require observation")
-	}
-	if e := r.remove(ctx, w); e != nil {
-		t.Fatal(e)
-	}
-}
-
-func TestMissingClientLedgerDoesNotBlockRemoval(t *testing.T) {
-	ctx := context.Background()
-	r, w, _ := fixture(t)
-	if e := r.ensure(ctx, w); e != nil {
-		t.Fatal(e)
-	}
-	w.Spec.DesiredState = "Removed"
-	w.Generation = 2
-	if e := r.remove(ctx, w); e == nil {
-		t.Fatal("namespace deletion should require observation")
-	}
-	if e := r.remove(ctx, w); e != nil {
-		t.Fatal(e)
-	}
-}
-
-func TestUnknownClientStateFailsClosed(t *testing.T) {
-	ctx := context.Background()
-	r, w, _ := fixture(t)
-	if e := r.ensure(ctx, w); e != nil {
-		t.Fatal(e)
-	}
-	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      registration.ConfigMapName(string(w.UID)),
-			Namespace: "control",
-			Labels:    map[string]string{api.OwnerLabel: string(w.UID)},
-		},
-		Data: map[string]string{"purpose": "client-registration", "t3.state": "weird"},
-	}
-	if e := r.Create(ctx, cm); e != nil {
-		t.Fatal(e)
-	}
-	w.Spec.DesiredState = "Removed"
-	w.Generation = 2
-	if e := r.remove(ctx, w); e == nil {
-		t.Fatal("unknown client state allowed cleanup")
-	}
-}
-
 func TestAddedNetworkPermissionRejected(t *testing.T) {
 	ctx := context.Background()
 	r, w, _ := fixture(t)
@@ -764,6 +683,40 @@ func TestModelGrantExpiryAndRevocationStopAndRecover(t *testing.T) {
 	}
 }
 
+func TestIndependentCodexLedgerSurvivesMissingProjectionAndControllerRestart(t *testing.T) {
+	ctx := context.Background()
+	r, w, _ := fixture(t)
+	r.IndependentCodexWorkspaceUID = string(w.UID)
+	if err := r.ensure(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	data := validModelAccess()
+	data["provider-access"] = []byte(`{"codex":{"enabled":false},"cursor":{"enabled":false}}`)
+	data["expires-at"] = []byte("1")
+	grant := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "model-access", Namespace: namespace(w), Labels: labels(w)}, Data: data}
+	if err := r.Create(ctx, grant); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ensure(ctx, w); err != nil {
+		t.Fatal("independent expiry paused workbench", err)
+	}
+	if err := r.Delete(ctx, grant); err != nil {
+		t.Fatal(err)
+	}
+	restarted := *r
+	if err := restarted.ensure(ctx, w); err != nil {
+		t.Fatal("independent projection removal paused other providers", err)
+	}
+	ledger, err := restarted.state(ctx, w)
+	if err != nil || string(ledger.Data["independent-model-access"]) != "true" {
+		t.Fatal("lost independent lifecycle marker")
+	}
+	cfg, err := restarted.policyConfiguration(w, w.Spec.HTTPS)
+	if err != nil || !cfg.IndependentCodex || !cfg.BrokeredProviders {
+		t.Fatal("missing projection disabled inspection denial")
+	}
+}
+
 func TestRegistrarAccessIsNamespaceScopedAndResetsExtraRules(t *testing.T) {
 	ctx := context.Background()
 	r, w, _ := fixture(t)
@@ -828,5 +781,86 @@ func TestRegistrarNamespaceMustStayOutOfControlNamespace(t *testing.T) {
 	cfg := Config{Namespace: "control", Owner: "steve", Image: "example.com/worker@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", RuntimeClass: "gvisor", StorageClass: "delete", StorageSize: "1Gi", RegistrarNamespace: "control"}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("registrar namespace matched the control namespace")
+	}
+}
+
+func TestClientLedgerBlocksRemovalUntilRevoked(t *testing.T) {
+	ctx := context.Background()
+	r, w, _ := fixture(t)
+	if e := r.ensure(ctx, w); e != nil {
+		t.Fatal(e)
+	}
+	ledger := registration.NewLedger()
+	_ = ledger.SetClient("t3", registration.StateRegistered, "7dc24d95-2241-4e16-92f4-b8eb0f6004ce", "/mnt/demo")
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      registration.ConfigMapName(string(w.UID)),
+			Namespace: "control",
+			Labels:    map[string]string{api.OwnerLabel: string(w.UID)},
+		},
+		Data: registration.EncodeConfigMapData(ledger),
+	}
+	if e := r.Create(ctx, cm); e != nil {
+		t.Fatal(e)
+	}
+	w.Spec.DesiredState = "Removed"
+	w.Generation = 2
+	if e := r.remove(ctx, w); e == nil {
+		t.Fatal("registered client allowed cleanup")
+	}
+	var ns corev1.Namespace
+	if e := r.Get(ctx, types.NamespacedName{Name: namespace(w)}, &ns); e != nil {
+		t.Fatal("namespace deleted while clients registered")
+	}
+	_ = ledger.SetClient("t3", registration.StateRevoked, "7dc24d95-2241-4e16-92f4-b8eb0f6004ce", "/mnt/demo")
+	cm.Data = registration.EncodeConfigMapData(ledger)
+	if e := r.Update(ctx, cm); e != nil {
+		t.Fatal(e)
+	}
+	if e := r.remove(ctx, w); e == nil {
+		t.Fatal("namespace deletion should require observation")
+	}
+	if e := r.remove(ctx, w); e != nil {
+		t.Fatal(e)
+	}
+}
+
+func TestMissingClientLedgerDoesNotBlockRemoval(t *testing.T) {
+	ctx := context.Background()
+	r, w, _ := fixture(t)
+	if e := r.ensure(ctx, w); e != nil {
+		t.Fatal(e)
+	}
+	w.Spec.DesiredState = "Removed"
+	w.Generation = 2
+	if e := r.remove(ctx, w); e == nil {
+		t.Fatal("namespace deletion should require observation")
+	}
+	if e := r.remove(ctx, w); e != nil {
+		t.Fatal(e)
+	}
+}
+
+func TestUnknownClientStateFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	r, w, _ := fixture(t)
+	if e := r.ensure(ctx, w); e != nil {
+		t.Fatal(e)
+	}
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      registration.ConfigMapName(string(w.UID)),
+			Namespace: "control",
+			Labels:    map[string]string{api.OwnerLabel: string(w.UID)},
+		},
+		Data: map[string]string{"purpose": "client-registration", "t3.state": "weird"},
+	}
+	if e := r.Create(ctx, cm); e != nil {
+		t.Fatal(e)
+	}
+	w.Spec.DesiredState = "Removed"
+	w.Generation = 2
+	if e := r.remove(ctx, w); e == nil {
+		t.Fatal("unknown client state allowed cleanup")
 	}
 }

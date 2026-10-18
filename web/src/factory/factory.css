@@ -1,0 +1,33 @@
+/* Factory reports, on OpenUI tokens like ../console.css. */
+.factory-report { display: flex; flex-direction: column; gap: var(--openui-space-l); }
+.factory-report > header { display: none; }
+.factory-task-head { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--openui-space-m); }
+.factory-task { gap: var(--openui-space-m); }
+.factory-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--openui-space-s); margin: 0; }
+.factory-facts div { padding: var(--openui-space-s) var(--openui-space-m); border: 1px solid var(--openui-border-default); border-radius: var(--openui-radius-m, 8px); min-width: 0; }
+.factory-facts dt { color: var(--openui-text-neutral-tertiary); font: var(--openui-text-body-sm); }
+.factory-facts dd { margin: 0; overflow-wrap: anywhere; }
+.factory-checks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--openui-space-s); }
+.factory-checks li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--openui-space-s); }
+.factory-checks li .factory-code { flex-basis: 100%; }
+.factory-check-name { font-weight: 600; }
+.factory-code { margin: 0; padding: var(--openui-space-s) var(--openui-space-m); border-radius: var(--openui-radius-m, 8px); background: var(--openui-sunk); overflow-x: auto; font: var(--openui-text-body-sm); font-family: var(--openui-font-code); white-space: pre-wrap; overflow-wrap: anywhere; }
+.factory-changes { display: flex; flex-direction: column; gap: var(--openui-space-s); }
+.factory-commits { margin: 0; padding-left: var(--openui-space-l); }
+.factory-quote { margin: 0; padding: var(--openui-space-s) var(--openui-space-m); border-left: 3px solid var(--openui-border-default); }
+.factory-quote blockquote { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.factory-quote figcaption { color: var(--openui-text-neutral-tertiary); font: var(--openui-text-body-sm); margin-top: var(--openui-space-xs); }
+/* Agent-authored content is framed and labelled so it never reads as console UI. */
+.factory-agent-section { border: 1px dashed var(--openui-border-default); border-radius: var(--openui-radius-m, 8px); padding: var(--openui-space-m); display: flex; flex-direction: column; gap: var(--openui-space-s); }
+.factory-agent-label { color: var(--openui-text-neutral-tertiary); font: var(--openui-text-body-sm); }
+.factory-agent-report { display: flex; flex-direction: column; gap: var(--openui-space-s); }
+.factory-heading { margin: 0; font: var(--openui-text-body-lg-heavy, var(--openui-text-body-default)); }
+.factory-paragraph { white-space: pre-wrap; overflow-wrap: anywhere; }
+.factory-bullets { margin: 0; padding-left: var(--openui-space-l); }
+.factory-gate { border-color: var(--openui-border-alert-emphasis); }
+.factory-gate p { margin: 0; }
+.factory-gate-actions { display: flex; flex-wrap: wrap; gap: var(--openui-space-s); }
+.factory-confirm { gap: var(--openui-space-s); border-color: var(--openui-border-accent-emphasis); }
+.factory-confirm .copy-field code { white-space: pre-wrap; overflow-wrap: anywhere; }
+.console-nav-link { color: var(--openui-text-neutral-secondary); text-decoration: none; font: var(--openui-text-body-sm); }
+.console-nav-link:hover { color: var(--openui-text-neutral-primary); }

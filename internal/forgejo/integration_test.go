@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -138,6 +139,31 @@ func TestRealForgejo(t *testing.T) {
 	}
 	if e = agentCall("POST", "/repos/"+repo+"/pulls", map[string]any{"head": "agent/qualification", "base": "main", "title": "Fixture pull request"}, &pr); e != nil {
 		t.Fatal("agent PR creation failed", e)
+	}
+	if fj := os.Getenv("APC_TEST_FJ_BINARY"); fj != "" {
+		identity := filepath.Join(dir, "cli-identity")
+		if err := os.Mkdir(identity, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(identity, "token"), []byte(token), 0600); err != nil {
+			t.Fatal(err)
+		}
+		launcher, err := filepath.Abs("../../scripts/apc-fj.py")
+		if err != nil {
+			t.Fatal(err)
+		}
+		program := `import importlib.util,os,sys
+from pathlib import Path
+s=importlib.util.spec_from_file_location('apc_fj',sys.argv[1]);m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
+os.chdir(sys.argv[4])
+for args in (['repo','view'],['pr','search']):
+ if m.run(args,os.environ,Path(sys.argv[2]),sys.argv[3]):sys.exit(1)`
+		cli := exec.Command("python3", "-c", program, launcher, identity, fj, work)
+		cli.Env = append(os.Environ(), "GIT_ORIGIN="+virtualOrigin, "GIT_HOST=git.fixture.example", "GIT_REPOSITORY="+repo, "HTTPS_PROXY="+proxyServer.URL, "HTTP_PROXY="+proxyServer.URL, "NO_PROXY=", "SSL_CERT_FILE="+caFile)
+		if output, err := cli.CombinedOutput(); err != nil {
+			safe := strings.NewReplacer(token, "[fixture-token]", cred.Password, "[fixture-password]", string(b), "[fixture-admin-token]").Replace(string(output))
+			t.Fatal("stock Forgejo CLI failed through the inspecting proxy:", safe)
+		}
 	}
 	if e = agentCall("POST", "/repos/"+repo+"/pulls/"+fmtInt(pr.Number)+"/merge", map[string]any{"Do": "merge"}, nil); e == nil {
 		t.Fatal("agent merged main")

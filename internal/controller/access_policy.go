@@ -25,6 +25,28 @@ func (r *Reconciler) policyConfiguration(w *api.ProjectWorkspace, https []api.HT
 		return proxy.Config{}, err
 	}
 	reserved := map[string]bool{}
+	var privateGitHub []string
+	for _, p := range w.Spec.Repositories {
+		var extra []api.HTTPSRule
+		if p.Host == "forgejo" {
+			extra, _, err = AccessRules("forgejo", r.Config.ForgejoOrigin, p.Repository)
+			if err == nil {
+				extra[0].Paths = append(extra[0].Paths, "/"+p.Repository+"/info/refs", "/"+p.Repository+"/git-upload-pack", "/"+p.Repository+"/git-receive-pack")
+			}
+		} else {
+			extra = []api.HTTPSRule{
+				{Host: "github.com", Methods: []string{"GET"}, Paths: []string{"/" + p.Repository + ".git/info/refs"}},
+				{Host: "github.com", Methods: []string{"POST"}, Paths: []string{"/" + p.Repository + ".git/git-upload-pack"}},
+			}
+			if !p.Public {
+				privateGitHub = append(privateGitHub, p.Repository)
+			}
+		}
+		if err != nil {
+			return proxy.Config{}, err
+		}
+		rules = append(rules, extra...)
+	}
 	for _, rule := range rules {
 		reserved[rule.Host] = true
 	}
@@ -33,7 +55,23 @@ func (r *Reconciler) policyConfiguration(w *api.ProjectWorkspace, https []api.HT
 			return proxy.Config{}, errors.New("repository access is controller-managed; HTTPS rules cannot override Git-host permissions")
 		}
 	}
-	cfg := proxy.Config{Rules: append(append([]api.HTTPSRule{}, rules...), https...), PrivateHosts: private}
+	cfg := proxy.Config{Rules: append(append([]api.HTTPSRule{}, rules...), https...), PrivateHosts: private, PrivateGitHubRepositories: privateGitHub}
+	cfg.IndependentCodex = r.IndependentCodexWorkspaceUID != "" && r.IndependentCodexWorkspaceUID == string(w.UID)
+	if cfg.IndependentCodex {
+		cfg.BrokeredProviders = true
+	}
+	for _, rule := range https {
+		if rule.Host == "cli-chat-proxy.grok.com" || rule.Host == "api2.cursor.sh" || rule.Host == "agentn.global.api5.cursor.sh" || rule.Host == "api.meta.ai" {
+			cfg.BrokeredProviders = true
+		}
+		if rule.Host == "api.meta.ai" {
+			cfg.MuseSubscriptionGateway = true
+		}
+	}
+	if r.ReaderRoute != nil && r.ReaderWorkspaceUID == string(w.UID) {
+		cfg.Reader = r.ReaderRoute
+		cfg.Rules = append(cfg.Rules, api.HTTPSRule{Host: r.ReaderRoute.Host, Methods: []string{"GET", "HEAD"}, Paths: []string{"/k8s"}}, api.HTTPSRule{Host: r.ReaderRoute.Host, Methods: []string{"POST"}, Paths: []string{"/mcp"}})
+	}
 	return cfg, proxy.Validate(cfg)
 }
 
@@ -78,7 +116,13 @@ func (r *Reconciler) updateAccessPolicy(ctx context.Context, w *api.ProjectWorks
 	if err = json.Unmarshal(ledger.Data[HTTPSLedgerKey], &previous); err != nil {
 		return errors.New("access policy ledger is invalid")
 	}
-	old, err := r.policyConfiguration(w, previous)
+	var previousRepositories []api.RepositoryProject
+	if raw := ledger.Data[RepositoriesLedgerKey]; len(raw) > 0 && json.Unmarshal(raw, &previousRepositories) != nil {
+		return errors.New("saved repository policy is invalid")
+	}
+	oldWorkspace := *w
+	oldWorkspace.Spec.Repositories = previousRepositories
+	old, err := r.policyConfiguration(&oldWorkspace, previous)
 	if err != nil {
 		return errors.New("saved access policy is invalid")
 	}
@@ -186,7 +230,8 @@ func (r *Reconciler) saveAccessPolicy(ctx context.Context, w *api.ProjectWorkspa
 	if err != nil {
 		return err
 	}
-	if string(ledger.Data[HTTPSLedgerKey]) == string(raw) {
+	repositories, _ := json.Marshal(w.Spec.Repositories)
+	if string(ledger.Data[HTTPSLedgerKey]) == string(raw) && (len(w.Spec.Repositories) == 0 || string(ledger.Data[RepositoriesLedgerKey]) == string(repositories)) {
 		return r.audit(ctx, w, "access-policy-applied")
 	}
 	if err = r.current(ctx, w); err != nil {
@@ -194,6 +239,9 @@ func (r *Reconciler) saveAccessPolicy(ctx context.Context, w *api.ProjectWorkspa
 	}
 	before := ledger.DeepCopy()
 	ledger.Data[HTTPSLedgerKey] = raw
+	if len(w.Spec.Repositories) > 0 {
+		ledger.Data[RepositoriesLedgerKey] = repositories
+	}
 	if err = r.Patch(ctx, ledger, client.MergeFrom(before)); err != nil {
 		return err
 	}

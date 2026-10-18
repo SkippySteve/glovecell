@@ -66,6 +66,24 @@ func TestHelmPackage(t *testing.T) {
 	if output, err = render(); err != nil || !bytes.Contains(output, []byte(`SANDBOX_CONTROL_OPERATOR: "operator"`)) {
 		t.Fatal("sandbox integration not rendered", err, string(output))
 	}
+	values["t3Connect"] = map[string]any{"enabled": true}
+	write()
+	if _, err := render(); err == nil {
+		t.Fatal("T3 Connect accepted without trusted account storage")
+	}
+	values["t3Connect"] = map[string]any{"enabled": true, "existingClaim": "t3-account", "relayURL": "https://relay.t3.codes"}
+	values["tailscaleIngress"] = map[string]any{"enabled": true, "hostname": "projects-private"}
+	write()
+	if output, err = render(); err != nil {
+		t.Fatal("T3/Tailscale render", err, string(output))
+	}
+	for _, want := range []string{"resources: [pods/exec]", "claimName: \"t3-account\"", "ingressClassName: tailscale", "projects-private", "T3_CONNECT_ENABLED: \"true\""} {
+		if !bytes.Contains(output, []byte(want)) {
+			t.Fatal("T3/Tailscale setting missing", want)
+		}
+	}
+	delete(values, "t3Connect")
+	delete(values, "tailscaleIngress")
 	values["controllerScheduling"] = map[string]any{"nodeSelector": map[string]string{"pool": "control"}}
 	values["workspaceScheduling"] = map[string]any{"nodeSelector": map[string]string{"pool": "agents"}}
 	values["proxyScheduling"] = map[string]any{"nodeSelector": map[string]string{"pool": "proxies"}}
