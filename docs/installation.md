@@ -106,7 +106,7 @@ Inspection is an HTTP CONNECT to port 443. The proxy then inspects the negotiate
 
 ## Using a project
 
-Sign in, select a repository and enter a project name. The dashboard can also select the reviewed package registries `go`, `npm`, `python` and `rust`. Each selection allows GET and HEAD for the whole host, including the redirect hosts below. It does not approve package versions, and lockfiles are not read. The resulting HTTPS rules can be changed through Access and egress while the project is paused.
+Sign in, select a repository and enter a project name. The dashboard can also select the reviewed package registries `go`, `npm`, `python` and `rust`. Each selection allows GET and HEAD for the whole host, including the redirect hosts below. It does not approve package versions, and lockfiles are not read. The resulting HTTPS rules can be changed from the sandbox's Access tab while the project is paused.
 
 | Selection | Hosts |
 | --- | --- |
