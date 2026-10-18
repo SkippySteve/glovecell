@@ -28,7 +28,9 @@ The earlier static dashboard and UI design branches are historical experiments.
 The current console source is `web/src`, compiled into `internal/web/dist`.
 The separate `checkpoint/project-access-20261018` branch preserves unfinished
 local client-registration and mount work. `checkpoint/access-concepts-20261018`
-preserves design mockups. Neither checkpoint is part of this consolidation.
+preserves retired design mockups; its preservation PR is closed. Client
+registration remains draft PR 28 because its older dashboard changes conflict
+with the current console. Neither checkpoint is part of this consolidation.
 
 ## Working in Orca
 
