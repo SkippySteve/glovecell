@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/providerbroker"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/proxy"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/reader"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/registration"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/t3"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/telemetry"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/web"
@@ -182,6 +184,8 @@ func run(ctx context.Context) error {
 				return errors.New("usage: agent-project-controller exec <workspace> -- <command>")
 			}
 			return connectCLI(ctx, os.Args[2], os.Args[4:])
+		case "register":
+			return registerCLI(ctx, os.Args[2:])
 		case "controller":
 		default:
 			return errors.New("unknown command")
@@ -238,7 +242,7 @@ func run(ctx context.Context) error {
 	if e != nil {
 		return fmt.Errorf("proxy scheduling: %w", e)
 	}
-	reconciler := &controller.Reconciler{Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, GitHost: gitHost, ForgejoOrigin: origin, Owner: owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling}}
+	reconciler := &controller.Reconciler{Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, GitHost: gitHost, ForgejoOrigin: origin, Owner: owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling, RegistrarNamespace: os.Getenv("REGISTRAR_NAMESPACE")}}
 	if os.Getenv("GITHUB_REPOSITORY_TOKEN_FILE") != "" {
 		reconciler.GitHubToken, e = secret("GITHUB_REPOSITORY_TOKEN_FILE")
 		if e != nil {
@@ -358,6 +362,47 @@ func t3CLI(ctx context.Context, workspace string) error {
 		return err
 	}
 	return t3.Launch(ctx, c, config, env("CONTROL_NAMESPACE", "agent-project-controller"), workspace)
+}
+
+func registerCLI(ctx context.Context, args []string) error {
+	watch := false
+	for _, a := range args {
+		switch a {
+		case "--watch":
+			watch = true
+		case "-h", "--help":
+			return errors.New("usage: agent-project-controller register --watch")
+		default:
+			return fmt.Errorf("unknown register flag %q", a)
+		}
+	}
+	if !watch {
+		return errors.New("usage: agent-project-controller register --watch")
+	}
+	config := ctrl.GetConfigOrDie()
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		return err
+	}
+	if err := api.AddToScheme(scheme); err != nil {
+		return err
+	}
+	c, err := client.New(config, client.Options{Scheme: scheme})
+	if err != nil {
+		return err
+	}
+	t3Bin, _ := exec.LookPath("t3")
+	opts := registration.Options{
+		ControlNamespace: env("CONTROL_NAMESPACE", "agent-project-controller"),
+		MountRoot:        env("APC_MOUNT_ROOT", registration.DefaultMountRoot()),
+		T3Binary:         env("APC_T3_BINARY", t3Bin),
+		OrcaBinary:       env("APC_ORCA_BINARY", registration.ResolveOrcaBinary()),
+		Integrations:     registration.ParseIntegrations(os.Getenv("CLIENT_INTEGRATIONS")),
+		Watch:            watch,
+	}
+	return registration.RunRegister(ctx, c, opts, func(namespace, pod string) (*registration.Remote, func() error, error) {
+		return registration.StartKubectlHelper(ctx, config, namespace, pod)
+	})
 }
 
 func connectCLI(ctx context.Context, workspace string, command []string) error {

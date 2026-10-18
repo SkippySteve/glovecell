@@ -48,6 +48,7 @@ function Overview({p}: {p: ProjectWorkspace}) {
           : session.t3Connect ? <div className="stack"><p className="muted">Choose this project environment in T3. Sign in with the account authorized for the controller.</p><div><a className="link-button" href="https://app.t3.codes" target="_blank" rel="noopener noreferrer">Open T3 Connect ↗</a></div></div>
           : <div className="copy-field"><code>{command}</code><Button size="small" variant="secondary" onClick={async () => { try { await navigator.clipboard.writeText(command); setCopied(true); } catch { toast('Copy failed; select the command instead.', true); } }}>{copied ? 'Copied' : 'Copy'}</Button></div>}
       </Card>
+      <ClientRegistrations name={p.metadata.name} />
       <dl className="facts">{facts.map(([term, value]) => <div key={term}><dt>{term}</dt><dd>{value}</dd></div>)}</dl>
       {p.spec.desiredState !== 'Removed' ? (
         <Card variant="sunk" width="full" className="danger-zone">
@@ -57,6 +58,30 @@ function Overview({p}: {p: ProjectWorkspace}) {
       ) : null}
     </div>
   );
+}
+
+function ClientRegistrations({name}: {name: string}) {
+  const [clients, setClients] = useState<{kind: string; state: string}[]>([]);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let live = true;
+    setClients([]);
+    setFailed(false);
+    const load = () => api<{clients: {kind: string; state: string}[]}>('workspaces/' + encodeURIComponent(name) + '/clients')
+      .then(result => { if (live) { setClients(result.clients || []); setFailed(false); } }, () => { if (live) setFailed(true); });
+    void load();
+    const timer = setInterval(load, 10000);
+    return () => { live = false; clearInterval(timer); };
+  }, [name]);
+  if (failed) return <Callout variant="warning" description="Client registration status is unavailable. Check the control host before removing this sandbox." />;
+  if (!clients.length) return null;
+  return <Card variant="sunk" width="full">
+    <CardHeader title="Registered clients" subtitle="Project entries managed by the control-host registrar." />
+    <ul className="items">{clients.map(client => <li key={client.kind}>
+      <div className="item-main"><strong>{client.kind}</strong></div>
+      <Tag size="sm" variant={client.state === 'registered' ? 'info' : 'neutral'} text={client.state} />
+    </li>)}</ul>
+  </Card>;
 }
 
 function Repositories({p}: {p: ProjectWorkspace}) {

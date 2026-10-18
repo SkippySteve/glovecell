@@ -82,6 +82,20 @@ controllerImagePullSecrets: []
 controllerDNS:
   policy: ClusterFirst
   config: {}
+# Operator control T3. Disabled until you choose a separate namespace.
+# The pod is privileged so it can mount FUSE. Project sandboxes stay on gVisor.
+# Set REGISTRAR_NAMESPACE from controlClient.namespace. Do not place this pod
+# in the restricted control namespace.
+controlClient:
+  enabled: false
+  namespace: agent-project-control-t3
+  storageClass: ""
+  storageSize: 5Gi
+  servicePort: 8788
+  routing:
+    enabled: false
+    parentRefs: []
+    hostnames: []
 # Optional explicit in-cluster TLS backend route for inspecting proxies.
 # namespace, selector, port and disableSNIFilter match the network provider API.
 # Leave empty when no backend gateway exception is needed.

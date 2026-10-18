@@ -26,11 +26,15 @@ how those components work together.
 
 The earlier static dashboard and UI design branches are historical experiments.
 The current console source is `web/src`, compiled into `internal/web/dist`.
-The separate `checkpoint/project-access-20261018` branch preserves unfinished
-local client-registration and mount work. `checkpoint/access-concepts-20261018`
-preserves retired design mockups; its preservation PR is closed. Client
-registration remains draft PR 28 because its older dashboard changes conflict
-with the current console. Neither checkpoint is part of this consolidation.
+The local client-registration and mount work was recovered from
+`checkpoint/project-access-20261018` and reconciled with the current console.
+The optional registrar, registration ledger, and removal checks are documented
+in [control-host clients](clients.md). Its Helm control client remains disabled
+by default. Source integration does not activate a registrar or qualify its
+privileged control pod for deployment.
+
+`checkpoint/access-concepts-20261018` preserves retired design mockups. The
+older static UI concept files are removed from current source.
 
 ## Working in Orca
 

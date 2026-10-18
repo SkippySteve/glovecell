@@ -1,0 +1,156 @@
+{{- if .Values.controlClient.enabled }}
+{{- $ns := required "controlClient.namespace is required" .Values.controlClient.namespace }}
+{{- if eq $ns .Release.Namespace }}
+{{- fail "controlClient.namespace must be separate from the control namespace" }}
+{{- end }}
+{{- $storageClass := default (index .Values.config "STORAGE_CLASS") .Values.controlClient.storageClass }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $ns }}
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/enforce-version: v1.34
+    app.kubernetes.io/name: agent-project-control-t3
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: registrar
+  namespace: {{ $ns }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: registrar
+  namespace: {{ .Release.Namespace }}
+rules:
+  - apiGroups: [projects.agentwork.dev]
+    resources: [projectworkspaces]
+    verbs: [get, list, watch]
+  - apiGroups: ['']
+    resources: [configmaps]
+    verbs: [get, list, watch, create, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: registrar
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: registrar
+subjects:
+  - kind: ServiceAccount
+    name: registrar
+    namespace: {{ $ns }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: control-t3
+  namespace: {{ $ns }}
+data:
+  control-t3.sh: |
+{{ .Files.Get "files/control-t3.sh" | indent 4 }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: control-t3
+  namespace: {{ $ns }}
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: {{ $storageClass | quote }}
+  resources:
+    requests:
+      storage: {{ .Values.controlClient.storageSize | quote }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: control-t3
+  namespace: {{ $ns }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agent-project-control-t3
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: agent-project-control-t3
+    spec:
+      serviceAccountName: registrar
+      automountServiceAccountToken: true
+      securityContext:
+        fsGroup: 0
+      containers:
+        - name: control-t3
+          image: {{ .Values.workspaceImage | quote }}
+          command: ["/bin/sh", "/etc/control-t3/control-t3.sh"]
+          env:
+            - name: CONTROL_NAMESPACE
+              value: {{ .Release.Namespace | quote }}
+            - name: CLIENT_INTEGRATIONS
+              value: t3
+            - name: APC_T3_BINARY
+              value: /opt/t3/t3
+            - name: T3CODE_HOME
+              value: /var/lib/control-t3/state
+          securityContext:
+            privileged: true
+            runAsUser: 0
+            allowPrivilegeEscalation: true
+          ports:
+            - name: t3
+              containerPort: 8788
+          volumeMounts:
+            - name: state
+              mountPath: /var/lib/control-t3
+            - name: entry
+              mountPath: /etc/control-t3
+              readOnly: true
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: control-t3
+        - name: entry
+          configMap:
+            name: control-t3
+            defaultMode: 0555
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: control-t3
+  namespace: {{ $ns }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: agent-project-control-t3
+  ports:
+    - name: t3
+      port: {{ .Values.controlClient.servicePort }}
+      targetPort: t3
+{{- if .Values.controlClient.routing.enabled }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: control-t3
+  namespace: {{ $ns }}
+spec:
+  parentRefs:
+{{ toYaml (required "controlClient.routing.parentRefs is required" .Values.controlClient.routing.parentRefs) | indent 4 }}
+  hostnames:
+{{ toYaml (required "controlClient.routing.hostnames is required" .Values.controlClient.routing.hostnames) | indent 4 }}
+  rules:
+    - backendRefs:
+        - name: control-t3
+          port: {{ .Values.controlClient.servicePort }}
+{{- end }}
+{{- end }}
