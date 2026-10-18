@@ -1,7 +1,7 @@
 import {useState} from 'react';
 import {egressControllable, egressExpires, egressState, type ExistingSandbox, type Project} from './api';
 import {useData} from './data';
-import {navigate, projectHref} from './router';
+import {navigate, projectHref, sandboxHref} from './router';
 import {clock, existingState, projectState, type Status} from './state';
 import {Button, Callout, Card, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tag, ToggleGroup, ToggleItem} from './ui';
 
@@ -56,10 +56,10 @@ function SandboxRow({sandbox, minutes}: {sandbox: ExistingSandbox; minutes: stri
   const {egress, busy} = useData();
   const state = egressState(sandbox), waiting = (sandbox.pending || 0) + (sandbox.approvals || 0);
   const pending = busy.has(sandbox.id);
-  const review = '/sandboxes/?workspace=' + encodeURIComponent(sandbox.id) + '&tab=access';
+  const review = sandboxHref(sandbox.id, egressControllable(sandbox) ? 'access' : 'overview');
   return (
     <TableRow data-sandbox={sandbox.id}>
-      <TableCell data-label="Sandbox"><a className="row-title" href={review}>{sandbox.id}</a><span className="row-sub">{sandbox.namespace} · {sandbox.sandbox}</span></TableCell>
+      <TableCell data-label="Sandbox"><a className="row-title" href={sandboxHref(sandbox.id)}>{sandbox.id}</a><span className="row-sub">{sandbox.namespace} · {sandbox.sandbox}</span></TableCell>
       <TableCell data-label="Status"><StatusTag state={existingState(sandbox)} /></TableCell>
       <TableCell data-label="Web access"><EgressTag sandbox={sandbox} /></TableCell>
       <TableCell data-label="Review">{waiting ? <a href={review} className="count-link"><span className="count">{waiting}</span> awaiting review</a> : <span className="subtle">None</span>}</TableCell>
@@ -67,7 +67,7 @@ function SandboxRow({sandbox, minutes}: {sandbox: ExistingSandbox; minutes: stri
         {egressControllable(sandbox) ? (state === 'Locked'
           ? <Button size="small" variant="secondary" disabled={pending} onClick={() => egress([sandbox.id], 'open', Number(minutes))} aria-label={'Open web access for ' + sandbox.id}>{pending ? 'Opening…' : 'Open'}</Button>
           : <Button size="small" variant="primary" buttonType="destructive" disabled={pending} onClick={() => egress([sandbox.id], 'lock', Number(minutes))} aria-label={'Lock web access for ' + sandbox.id}>{pending ? 'Locking…' : 'Lock'}</Button>)
-          : <Button size="small" variant="tertiary" onClick={() => location.assign(review)}>Manage</Button>}
+          : <Button size="small" variant="tertiary" onClick={() => navigate(sandboxHref(sandbox.id))}>Manage</Button>}
       </TableCell>
     </TableRow>
   );
