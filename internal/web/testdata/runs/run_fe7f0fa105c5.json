@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "run": {
+    "id": "run_fe7f0fa105c5",
+    "objective": "Orchestration trial: parallel textkit features on separate worktrees, then a dependent integration task",
+    "host": "agent-workspace-example/orca",
+    "createdAt": "2026-10-17T13:33:48Z",
+    "collectedAt": "2026-10-18T14:00:00Z"
+  },
+  "tasks": [
+    {
+      "id": "task_e12e12ff6a58",
+      "title": "slugify helper",
+      "spec": "Add textkit/slug.py with slugify() and tests.",
+      "status": "failed",
+      "deps": [],
+      "checks": [],
+      "attempts": [
+        {
+          "dispatchId": "ctx_f00f3c5e097e",
+          "agent": "codex",
+          "state": "failed",
+          "failedStage": "agent_readiness",
+          "lastError": "Agent startup blocked: agent-update-prompt"
+        }
+      ],
+      "git": {
+        "branch": "trial-slugify",
+        "base": "main",
+        "worktree": "/home/agent/orca/workspaces/orchestration-trial/trial-slugify",
+        "commits": [],
+        "files": []
+      }
+    },
+    {
+      "id": "task_7f57e2f02ba4",
+      "title": "top_words helper",
+      "spec": "Add textkit/freq.py with top_words() and tests.",
+      "status": "failed",
+      "deps": [],
+      "checks": [],
+      "attempts": [
+        {
+          "dispatchId": "ctx_73d0523c7b18",
+          "agent": "claude",
+          "state": "failed",
+          "failedStage": "dispatch_input",
+          "lastError": "agent_not_in_foreground"
+        }
+      ],
+      "git": {
+        "branch": "trial-wordfreq",
+        "base": "main",
+        "worktree": "/home/agent/orca/workspaces/orchestration-trial/trial-wordfreq",
+        "commits": [],
+        "files": []
+      }
+    }
+  ],
+  "gates": [],
+  "agentReports": []
+}

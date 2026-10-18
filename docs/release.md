@@ -1,6 +1,6 @@
 # Alpha release criteria
 
-The first release is `0.1.0-alpha.1`: Linux amd64 controller/operator CLI, Helm chart, dashboard, manual terminal workflow, and T3/Codex project interface. Deploy immutable image digests. It is a single-controller deployment with the qualified Cilium, inspecting proxy, gVisor, Forgejo and OIDC configuration described in [qualification](qualification.md).
+The first release is `0.1.0-alpha.1`: Linux amd64 controller/operator CLI, Helm chart, dashboard, manual terminal workflow, and T3/Codex project interface. Deploy immutable image digests. It is a single-controller deployment with the qualified Cilium, inspecting proxy, gVisor, Forgejo and OIDC configuration described in [qualification](qualification.md). The experimental `NETWORK_PROVIDER=network-policy` profile is not part of this alpha claim.
 
 A candidate is publishable only after all of these checks pass:
 
@@ -12,5 +12,14 @@ A candidate is publishable only after all of these checks pass:
 - Maintainer review of the candidate PR and approval to merge/tag/publish.
 
 `make release VERSION=0.1.0-alpha.1` creates artifacts in an empty `dist/` directory, including source metadata, Go dependency inventory, operator scripts and SHA256SUMS. CI uploads those artifacts for review. Release image build/scanning and live qualification evidence must refer to the same reviewed source revision; an earlier successful pilot is insufficient.
+
+`.github/workflows/publish-images.yml` publishes the `runtime` and `workspace` image targets to GHCR as `agent-project-controller` and `agent-project-workspace`. Each image is tagged with the release version and the full source revision. A published GitHub release runs it. Building an existing tag requires dispatch from the default branch, because GitHub reads this workflow from that branch. The source release archive does not contain those images.
+
+The `0.1.0-alpha.1` images built from `6d754c47f223edbe5bfff399405fb1450abb0c4b` are anonymously pullable:
+
+- `ghcr.io/skippysteve/agent-project-controller@sha256:084fdfa09f04a279d6ea11bf168222e388f9f5230ddda38a62dcade5f9b9b9d3`
+- `ghcr.io/skippysteve/agent-project-workspace@sha256:caf59a3dac5b216aa670f02cc4db857cf7b214d346fc844722f7a7c602ba9892`
+
+The workflow then requests public visibility at `/user/packages`. That call returned 404 for this release and is not what made the packages readable. Confirm a future package with an anonymous pull before advertising it. Later commits on `main` are not included in these digests.
 
 Full control-namespace and lost-volume recovery remain unqualified. Backblaze S3-compatible storage transport has been exercised, but scheduled encrypted backup, retention and complete restore are not part of the current release claim. Do not describe this alpha as production-ready. Native Orca provider registration and Roamgate are optional; T3 is included in the alpha scope.

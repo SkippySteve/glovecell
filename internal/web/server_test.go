@@ -3,13 +3,16 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/forgejo"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -110,6 +113,42 @@ func TestRegistrySelection(t *testing.T) {
 	}
 }
 
+func TestRemovedNameCanBeRequestedAgain(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = api.AddToScheme(scheme)
+	password := strings.Repeat("a", 32)
+	removed := &api.ProjectWorkspace{ObjectMeta: metav1.ObjectMeta{Name: "repo", Namespace: "control", Finalizers: []string{api.Finalizer}}, Spec: api.WorkspaceSpec{Repository: "steve/old", DesiredState: "Removed"}, Status: api.WorkspaceStatus{Phase: "Removed"}}
+	removing := &api.ProjectWorkspace{ObjectMeta: metav1.ObjectMeta{Name: "busy", Namespace: "control", Finalizers: []string{api.Finalizer}}, Spec: api.WorkspaceSpec{Repository: "steve/old", DesiredState: "Removed"}, Status: api.WorkspaceStatus{Phase: "Removing"}}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(removed, removing).Build()
+	s := &Server{Client: c, Host: host{}, Namespace: "control", Owner: "steve", Password: password, Origin: "https://projects.example.com", AllowBasic: true}
+	h, e := s.Handler()
+	if e != nil {
+		t.Fatal(e)
+	}
+	post := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+password)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := post(`{"name":"busy","repository":"steve/repo"}`); rec.Code != 409 {
+		t.Fatalf("in-progress removal: got %d %s", rec.Code, rec.Body.String())
+	}
+	rec := post(`{"name":"repo","repository":"steve/repo"}`)
+	if rec.Code != 201 {
+		t.Fatalf("reuse: got %d %s", rec.Code, rec.Body.String())
+	}
+	stored := &api.ProjectWorkspace{}
+	if e = c.Get(context.Background(), types.NamespacedName{Namespace: "control", Name: "repo"}, stored); e != nil {
+		t.Fatal(e)
+	}
+	if stored.Spec.Repository != "steve/repo" || stored.Spec.DesiredState != "Running" || len(stored.Finalizers) != 0 {
+		t.Fatalf("replacement = %#v", stored.Spec)
+	}
+}
+
 func TestOIDCDoesNotEnableEmptyStaticPassword(t *testing.T) {
 	s := &Server{OIDC: &OIDC{}, Origin: "https://projects.example.com", AllowBasic: true}
 	if _, e := s.Handler(); e == nil {
@@ -145,7 +184,13 @@ func TestSignedOutPageDoesNotRestartSSOOrExposeAPI(t *testing.T) {
 	if out.Code != 401 {
 		t.Fatal("signed-out client can access projects")
 	}
-	if !strings.Contains(string(app), "location.assign('/auth/signed-out')") {
+	scripts, _ := fs.Glob(dist, "dist/assets/*.js")
+	bundle := ""
+	for _, name := range scripts {
+		raw, _ := dist.ReadFile(name)
+		bundle += string(raw)
+	}
+	if !regexp.MustCompile("location\\.assign\\([\"'`]/auth/signed-out[\"'`]\\)").MatchString(bundle) {
 		t.Fatal("logout reloads the protected dashboard")
 	}
 }

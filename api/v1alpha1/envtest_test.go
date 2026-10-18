@@ -54,6 +54,34 @@ func TestCRDValidation(t *testing.T) {
 		t.Fatal("HTTPS expansion accepted", e)
 	}
 	_ = c.Get(ctx, key, w)
+	w.Spec.Repositories = []RepositoryProject{{Name: "extra", Host: "forgejo", Repository: "operator/extra"}}
+	if e = c.Update(ctx, w); !apierrors.IsInvalid(e) {
+		t.Fatal("repository enrollment while running accepted", e)
+	}
+	_ = c.Get(ctx, key, w)
+	w.Spec.DesiredState = "Paused"
+	if e = c.Update(ctx, w); e != nil {
+		t.Fatal("pause", e)
+	}
+	w.Spec.Repositories = []RepositoryProject{{Name: "extra", Host: "forgejo", Repository: "operator/extra"}}
+	if e = c.Update(ctx, w); e != nil {
+		t.Fatal("paused enrollment rejected", e)
+	}
+	w.Spec.Repositories = nil
+	if e = c.Update(ctx, w); !apierrors.IsInvalid(e) {
+		t.Fatal("unverified individual removal accepted", e)
+	}
+	_ = c.Get(ctx, key, w)
+	w.Spec.HTTPS = []HTTPSRule{{Host: "example.com", Methods: []string{"GET"}, Paths: []string{"/"}}}
+	if e = c.Update(ctx, w); e != nil {
+		t.Fatal("paused HTTPS change rejected", e)
+	}
+	w.Spec.DesiredState = "Running"
+	w.Spec.HTTPS = nil
+	if e = c.Update(ctx, w); !apierrors.IsInvalid(e) {
+		t.Fatal("policy edit combined with resume accepted", e)
+	}
+	_ = c.Get(ctx, key, w)
 	w.Spec.DesiredState = "Removed"
 	if e = c.Update(ctx, w); e != nil {
 		t.Fatal(e)

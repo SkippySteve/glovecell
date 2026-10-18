@@ -1,4 +1,23 @@
-{{- range $key := list "CONTROL_NAMESPACE" "WORKSPACE_IMAGE" "PROXY_IMAGE" "LISTEN_ADDR" "FORGEJO_TOKEN_FILE" "OIDC_CLIENT_SECRET_FILE" "API_SECRET_FILE" "WORKSPACE_SCHEDULING_JSON" "PROXY_SCHEDULING_JSON" }}
+{{- if not (kindIs "bool" .Values.additionalGitHub.enabled) }}
+{{- fail "additionalGitHub.enabled must be a boolean" }}
+{{- end }}
+{{- range $key := list "ADDITIONAL_GITHUB_OWNER" "GITHUB_REPOSITORY_TOKEN_FILE" }}
+{{- if hasKey $.Values.config $key }}
+{{- fail (printf "config.%s is managed by additionalGitHub settings" $key) }}
+{{- end }}
+{{- end }}
+{{- if not (kindIs "bool" .Values.tailscaleIngress.enabled) }}
+{{- fail "tailscaleIngress.enabled must be a boolean" }}
+{{- end }}
+{{- if not (kindIs "bool" .Values.t3Connect.enabled) }}
+{{- fail "t3Connect.enabled must be a boolean" }}
+{{- end }}
+{{- if .Values.t3Connect.enabled }}
+{{- if not (regexMatch "^https://[a-zA-Z0-9.-]+(:[0-9]+)?$" .Values.t3Connect.relayURL) }}
+{{- fail "t3Connect.relayURL must be an HTTPS origin" }}
+{{- end }}
+{{- end }}
+{{- range $key := list "CONTROL_NAMESPACE" "WORKSPACE_IMAGE" "PROXY_IMAGE" "LISTEN_ADDR" "FORGEJO_TOKEN_FILE" "GITHUB_APP_PRIVATE_KEY_FILE" "OIDC_CLIENT_SECRET_FILE" "API_SECRET_FILE" "WORKSPACE_SCHEDULING_JSON" "PROXY_SCHEDULING_JSON" "T3_CONNECT_ENABLED" "T3_CONNECT_DATA" "T3_CONNECT_RELAY_URL" "T3_CONNECT_BINARY" "T3_CONNECT_CONNECTOR" "REGISTRAR_NAMESPACE" }}
 {{- if hasKey $.Values.config $key }}
 {{- fail (printf "config.%s is managed by the chart; use the corresponding chart setting" $key) }}
 {{- end }}
@@ -9,7 +28,32 @@
 {{- if not (regexMatch "^.+@sha256:[a-f0-9]{64}$" .Values.workspaceImage) }}
 {{- fail "workspaceImage must use @sha256:<64 lowercase hex characters>" }}
 {{- end }}
-{{- range $key := list "FORGEJO_ORIGIN" "FORGEJO_OWNER" "PUBLIC_ORIGIN" "OIDC_ISSUER" "OIDC_CLIENT_ID" }}
+{{- $gitHost := default "forgejo" (index .Values.config "GIT_HOST" | toString) }}
+{{- if not (or (eq $gitHost "forgejo") (eq $gitHost "github")) }}
+{{- fail "GIT_HOST must be forgejo or github" }}
+{{- end }}
+{{- if eq $gitHost "github" }}
+{{- range $key := list "GITHUB_OWNER" "GITHUB_APP_ID" "GITHUB_APP_INSTALLATION_ID" }}
+{{- $_ := required (printf "config.%s is required" $key) (index $.Values.config $key) }}
+{{- end }}
+{{- if not (regexMatch "^[1-9][0-9]*$" (index .Values.config "GITHUB_APP_ID" | toString)) }}
+{{- fail "config.GITHUB_APP_ID must be a positive integer" }}
+{{- end }}
+{{- if not (regexMatch "^[1-9][0-9]*$" (index .Values.config "GITHUB_APP_INSTALLATION_ID" | toString)) }}
+{{- fail "config.GITHUB_APP_INSTALLATION_ID must be a positive integer" }}
+{{- end }}
+{{- if or (index .Values.config "FORGEJO_ORIGIN") (index .Values.config "FORGEJO_OWNER") }}
+{{- fail "GIT_HOST=github does not accept FORGEJO_ORIGIN or FORGEJO_OWNER" }}
+{{- end }}
+{{- else }}
+{{- range $key := list "FORGEJO_ORIGIN" "FORGEJO_OWNER" }}
+{{- $_ := required (printf "config.%s is required" $key) (index $.Values.config $key) }}
+{{- end }}
+{{- if or (index .Values.config "GITHUB_OWNER") (index .Values.config "GITHUB_APP_ID") (index .Values.config "GITHUB_APP_INSTALLATION_ID") }}
+{{- fail "GIT_HOST=forgejo does not accept GitHub App settings" }}
+{{- end }}
+{{- end }}
+{{- range $key := list "PUBLIC_ORIGIN" "OIDC_ISSUER" "OIDC_CLIENT_ID" }}
 {{- $_ := required (printf "config.%s is required" $key) (index $.Values.config $key) }}
 {{- end }}
 {{- $proxyImage := default .Values.controllerImage .Values.proxyImage }}
@@ -18,6 +62,27 @@
 {{- end }}
 {{- if and .Values.proxyGateway (index .Values.config "PROXY_GATEWAY_JSON") }}
 {{- fail "use proxyGateway or config.PROXY_GATEWAY_JSON, not both" }}
+{{- end }}
+{{- $provider := default "cilium" (index .Values.config "NETWORK_PROVIDER") }}
+{{- if not (or (eq $provider "cilium") (eq $provider "network-policy")) }}
+{{- fail "NETWORK_PROVIDER must be cilium or network-policy" }}
+{{- end }}
+{{- if eq $provider "network-policy" }}
+{{- if ne (toString (index .Values.config "NETWORK_POLICY_ENFORCEMENT_ACKNOWLEDGED")) "true" }}
+{{- fail "network-policy requires NETWORK_POLICY_ENFORCEMENT_ACKNOWLEDGED=true after an independent dataplane test" }}
+{{- end }}
+{{- $cidrs := required "network-policy requires NETWORK_POLICY_CLUSTER_CIDRS_JSON" (index .Values.config "NETWORK_POLICY_CLUSTER_CIDRS_JSON") | mustFromJson }}
+{{- if or (not (kindIs "slice" $cidrs)) (eq (len $cidrs) 0) }}
+{{- fail "network-policy requires a non-empty JSON array of cluster pod, service and node CIDRs" }}
+{{- end }}
+{{- if and (index .Values.proxyGateway "namespace") (not (index .Values.proxyGateway "disableSNIFilter")) }}
+{{- fail "network-policy cannot enforce gateway SNI; set proxyGateway.disableSNIFilter true" }}
+{{- end }}
+{{- end }}
+{{- if or (index .Values.config "SANDBOX_CONTROL_URL") (index .Values.config "SANDBOX_CONTROL_ORIGIN") (index .Values.config "SANDBOX_CONTROL_OPERATOR") }}
+{{- range $key := list "SANDBOX_CONTROL_URL" "SANDBOX_CONTROL_ORIGIN" "SANDBOX_CONTROL_OPERATOR" }}
+{{- $_ := required (printf "config.%s is required when integrating existing sandbox controls" $key) (index $.Values.config $key) }}
+{{- end }}
 {{- end }}
 apiVersion: v1
 kind: ConfigMap
@@ -30,11 +95,19 @@ data:
   WORKSPACE_IMAGE: {{ .Values.workspaceImage | quote }}
   WORKSPACE_SCHEDULING_JSON: {{ toJson .Values.workspaceScheduling | quote }}
   PROXY_SCHEDULING_JSON: {{ toJson .Values.proxyScheduling | quote }}
+{{- if .Values.controlClient.enabled }}
+  REGISTRAR_NAMESPACE: {{ .Values.controlClient.namespace | quote }}
+{{- end }}
 {{- if .Values.proxyGateway }}
   PROXY_GATEWAY_JSON: {{ toJson .Values.proxyGateway | quote }}
 {{- end }}
 {{- range $key, $value := .Values.config }}
-{{- if not (and (eq $key "PROXY_GATEWAY_JSON") $.Values.proxyGateway) }}
+{{- if and (eq $gitHost "github") (or (eq $key "FORGEJO_ORIGIN") (eq $key "FORGEJO_OWNER")) }}
+{{- else if not (and (eq $key "PROXY_GATEWAY_JSON") $.Values.proxyGateway) }}
   {{ $key }}: {{ $value | toString | quote }}
 {{- end }}
 {{- end }}
+
+  T3_CONNECT_ENABLED: {{ .Values.t3Connect.enabled | toString | quote }}
+  T3_CONNECT_DATA: "/var/lib/apc/t3-connect"
+  T3_CONNECT_RELAY_URL: {{ .Values.t3Connect.relayURL | quote }}

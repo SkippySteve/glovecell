@@ -7,3 +7,12 @@ Keep the control backend in Go. Build on upstream Agent Sandbox APIs without for
 Do not include deployment-specific addresses, credentials or source from private infrastructure in reusable code. Do not grant project access or deploy to a live cluster as a side effect of unit tests. Qualification must use disposable environments and repositories.
 
 Security changes need tests for denial and interrupted-operation recovery. Unsupported policies must fail closed. Removal must never report completion before external revocation and owned storage cleanup are verified.
+
+## Forgejo author and reviewer identities
+
+Create automation pull requests with a dedicated automation account. Before
+creating a PR, verify that account's repository access and resulting PR author.
+Reserve the maintainer account for reviews and merges; Forgejo rejects approval
+by the PR author. Keep required approvals and merge restrictions enabled.
+Maintainer-authorized review and merge operations use the maintainer identity,
+not the automation author's token. Never copy either token into Git or logs.

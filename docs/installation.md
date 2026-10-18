@@ -1,6 +1,6 @@
 # Installation
 
-Deploy first in a disposable qualification cluster. This initial implementation is not a qualified production replacement for an existing broker.
+Deploy first in a disposable qualification cluster. This initial implementation is not a qualified production replacement for an existing broker. The [quickstart](quickstart.md) is the public `0.1.0-alpha.1` install path.
 
 ## Prerequisites
 
@@ -15,6 +15,41 @@ Deploy first in a disposable qualification cluster. This initial implementation 
 
 Approved operators share one trust boundary and can manage every project under that owner.
 
+## GitHub project host
+
+GitHub can replace Forgejo as the place projects are stored. It is optional, it is not qualified, and it is not in the published `0.1.0-alpha.1` images or chart. A deployment that selects it must be built from the commit that adds `GIT_HOST=github` and deployed by that build's digest. `docs/examples/github-values.yaml` shows the Helm shape and repeats the published digests only so they are recognizable. Do not install those digests with `GIT_HOST=github`.
+
+One controller process uses one host. `GIT_HOST` defaults to `forgejo`, which keeps an existing installation unchanged. `GIT_HOST=github` is a separate deployment. A workspace repository is still `owner/name`; it does not carry its own host. Dashboard login stays the operator OIDC provider. GitHub is not a substitute for that login. GitHub Enterprise Server is not supported.
+
+Create a GitHub App, disable its webhook, and grant the installation Administration read, Contents read and write, Pull requests read and write, and Metadata read. Install it on the account named by `GITHUB_OWNER`, preferably with only the repositories operators may open. Record the App id and the installation id. Store the App private key, a PKCS#1 or PKCS#8 RSA PEM of at least 2048 bits, as Secret key `github-app-private-key`. The chart does not create that Secret and the key must not be committed.
+
+```sh
+kubectl create namespace agent-project-controller
+kubectl -n agent-project-controller create secret generic controller-secrets \
+  --from-file=github-app-private-key=/secure/path/github-app-private-key.pem \
+  --from-file=oidc-client-secret=/secure/path/oidc-client-secret
+```
+
+Set `GITHUB_OWNER`, `GITHUB_APP_ID`, and `GITHUB_APP_INSTALLATION_ID`. Leave `FORGEJO_ORIGIN`, `FORGEJO_OWNER`, and the Forgejo token unset on that deployment. `PUBLIC_ORIGIN` and the OIDC client stay required.
+
+Before the first grant, classic branch protection on `main` must enforce rules for administrators, require at least one approving review, restrict who can push, omit this GitHub App from that allow list, and leave force-push and branch deletion disabled. A missing rule or a ruleset-only repository is refused. The controller does not create or repair GitHub protection.
+
+The controller keeps one installation token in memory for discovery and protection reads. Each workspace receives a separate token limited to that one repository, with contents write, pull requests write, and metadata read. A response that names another repository, selects every repository, or carries any other permission is discarded and revoked. The workspace clones `https://github.com/owner/name.git`. Its ledger username is the workspace identity; GitHub accepts that username when the password is the installation token. `github.com` and `api.github.com` are not private-host exceptions, so a private or reserved DNS answer is rejected.
+
+Tokens expire in about one hour. A stored token is reused while its recorded expiry is more than 20 minutes away and GitHub still accepts it. Otherwise the controller revokes it and mints a replacement. A restart forgets those expiry records, so the next grant rotates the stored token. GitHub does not list live installation tokens. A token issued and then lost before the ledger save can remain valid until GitHub expires it. Removal confirms the stored token and any token this process still remembers. No live GitHub grant is part of this alpha.
+
+## Experimental standard NetworkPolicy
+
+`NETWORK_PROVIDER=network-policy` is an opt-in profile for clusters that do not run Cilium. It is not qualified. Do not describe it as a supported dataplane, and do not point it at a cluster whose enforcement has not been tested independently. The default remains `cilium`.
+
+Standard NetworkPolicy has no DNS name filter. In this profile the worker has no DNS egress at all. The controller allocates a proxy ClusterIP and pins the hostname `proxy` in the worker pod with `hostAliases`. Worker egress is only that proxy on TCP 3128. The proxy may query CoreDNS and connect to public IPv4, and to IPv6 global unicast `2000::/3`, on TCP 443. Reserved, private, documentation, and operator-declared cluster ranges are excluded. IPv4-mapped IPv6 addresses are outside the IPv6 allow. HTTPS host, method, and path checks still happen inside the inspecting proxy.
+
+The profile refuses to start unless `NETWORK_POLICY_ENFORCEMENT_ACKNOWLEDGED` is exactly `true` and `NETWORK_POLICY_CLUSTER_CIDRS_JSON` is a non-empty JSON array of canonical pod, service, and node prefixes. A default route is rejected. The acknowledgement records that an operator ran the procedure in [qualification](qualification.md). API objects do not prove that the installed CNI enforces the policy.
+
+An explicit gateway must set `disableSNIFilter` to true. Native policy can limit the gateway peer and port, and it cannot limit TLS server names. A compromised proxy is the remaining HTTPS boundary: it can use its own public TCP 443 permission and any configured gateway. Workers still cannot. Extra NetworkPolicy objects in a project namespace are rejected because the API is additive. Policies outside the project namespace are not visible to this check.
+
+Switching an existing project between `cilium` and `network-policy` is refused. The controller leaves the old proxy Service and policies in place and suspends the workspace. Remove and recreate the project after the dataplane procedure passes. See `docs/examples/network-policy-values.yaml` for the Helm shape. The sample Kustomize ClusterRole also grants NetworkPolicy and node read access so an overlay can select this profile. Remove those rules when the experimental profile is not installed.
+
 ## Build and configure
 
 Build and push the image to your registry. For release builds pass digest-pinned base references with `--build-arg GO_IMAGE=...` and `--build-arg RUNTIME_IMAGE=...`. Deploy the resulting image by its registry digest, not a mutable tag.
@@ -24,6 +59,8 @@ docker build -t registry.example.com/agent-project-controller:dev .
 docker push registry.example.com/agent-project-controller:dev
 ```
 
+The published alpha images can be used instead of that local build. Their digests are in [examples/alpha-values.yaml](examples/alpha-values.yaml) and on the [0.1.0-alpha.1 release](https://github.com/SkippySteve/agent-project-controller/releases/tag/0.1.0-alpha.1). Those images are commit `6d754c47f223edbe5bfff399405fb1450abb0c4b`. Workspace-image replacement, the experimental NetworkPolicy provider, and the optional GitHub project host landed on `main` after that commit. A deployment that needs any of those behaviors must build that later source and deploy the resulting digest.
+
 Prepare a Kustomize overlay over `config/deploy`. Set the controller Deployment image and `WORKSPACE_IMAGE` to the built digest. Replace example hosts, Forgejo owner, runtime class, storage class and OIDC settings. Set `CLUSTER_DOMAIN` if it differs from `cluster.local`. `WORKSPACE_IMAGE` is empty in the sample, so unconfigured installations fail rather than launching an arbitrary image.
 
 The controller discovers the address of `DNS_SERVICE_NAMESPACE` / `DNS_SERVICE_NAME`, default `kube-system` / `kube-dns`. The service must select CoreDNS pods labeled `k8s-app=kube-dns` and expose TCP and UDP port 53. Workers and proxies use `dnsPolicy: None`, that address and the configured cluster search domain. DNS policy still permits only the names required by each role. Invalid or missing resolver configuration blocks project grants.
@@ -32,7 +69,9 @@ Clusters can keep node-local DNS for other workloads. For this profile, project 
 
 Workspace resource defaults are a `500m` CPU and `512Mi` memory request with limits of `4` CPUs and `4Gi`. The clone init container uses the same profile. The HTTPS proxy has separate defaults of `100m` / `128Mi` requests and `1` CPU / `512Mi` limits. Configure these with `WORKSPACE_CPU_REQUEST`, `WORKSPACE_MEMORY_REQUEST`, `WORKSPACE_CPU_LIMIT`, `WORKSPACE_MEMORY_LIMIT` and the equivalent `PROXY_` variables. Values must be positive and requests must not exceed limits. Requests reserve scheduling capacity; limits bound use, so a memory-heavy build may still need a larger profile.
 
-Resource profiles and resolver settings are immutable for already provisioned environments. Configuration changes apply to new projects. Existing projects report configuration drift and remain suspended rather than silently changing their security settings. Remove and recreate them after saving local work when changing these settings.
+Resource profiles, resolver settings, and the selected network provider are immutable for already provisioned environments. Configuration changes apply to new projects. Existing projects report configuration drift and remain suspended rather than silently changing their security settings. Remove and recreate them after saving local work when changing these settings.
+
+The workspace image digest is the one template field that can move with the controller. Replacement waits until the worker pod is gone, deletes only the Sandbox, and the next reconcile creates the controller's pinned image on the same volume and Git identity. A Sandbox image changed to any other value is not adopted. While a worker pod still exists, that mutation suspends the project and leaves the Sandbox in place. Other Sandbox differences, including placement, stay drift as well.
 
 Create the control namespace, then supply a Secret named `controller-secrets` there. Use `--from-file` with protected files so credentials do not enter shell arguments or Git:
 
@@ -59,7 +98,7 @@ Expose the ClusterIP Service through your existing TLS reverse proxy. Do not exp
 
 Render your overlay, inspect its RBAC and apply it to the qualification cluster. The controller has cross-namespace resource permissions to provision projects, so its credential and service account must be treated as privileged infrastructure.
 
-Before trusting a cluster, run `agent-project-controller preflight` with the same `RUNTIME_CLASS`, `STORAGE_CLASS`, DNS and `PROXY_GATEWAY_JSON` settings the controller will use. It checks the Agent Sandbox CRD, Cilium and CoreDNS, the RuntimeClass, and Delete reclaim on the storage class. A passing preflight is not the qualification in [qualification](qualification.md). Applying the CRD is not qualification either.
+Before trusting a cluster, run `agent-project-controller preflight` with the same `RUNTIME_CLASS`, `STORAGE_CLASS`, `NETWORK_PROVIDER`, DNS, cluster CIDR, and `PROXY_GATEWAY_JSON` settings the controller will use. The Cilium profile checks the Agent Sandbox CRD, the CiliumNetworkPolicy CRD, and CoreDNS. The experimental NetworkPolicy profile reports `network-policy-dns` and checks that declared exclusions cover CoreDNS, the Kubernetes API address, node addresses, and pod CIDRs. Both profiles check the RuntimeClass and Delete reclaim on the storage class. A passing preflight is not the qualification in [qualification](qualification.md). Applying the CRD is not qualification either.
 
 ## Client limit
 
@@ -67,7 +106,7 @@ Inspection is an HTTP CONNECT to port 443. The proxy then inspects the negotiate
 
 ## Using a project
 
-Sign in, select a repository and enter a project name. The dashboard can also select the reviewed package registries `go`, `npm`, `python` and `rust`. Each selection allows GET and HEAD for the whole host, including the redirect hosts below. It does not approve package versions, and lockfiles are not read. The resulting HTTPS rules are immutable.
+Sign in, select a repository and enter a project name. The dashboard can also select the reviewed package registries `go`, `npm`, `python` and `rust`. Each selection allows GET and HEAD for the whole host, including the redirect hosts below. It does not approve package versions, and lockfiles are not read. The resulting HTTPS rules can be changed from the sandbox's Access tab while the project is paused.
 
 | Selection | Hosts |
 | --- | --- |
@@ -84,7 +123,7 @@ The repository is cloned into `/workspace/repo`. Home, caches and configuration 
 
 Model credentials stay out of the image. Create a Secret named `model-access` in the project namespace when a tool needs them. The worker mounts it read-only at `/run/model` and tolerates its absence. The controller rejects that Secret when it contains a refresh token, and it never copies an owner refresh token into the image or the Secret. `agent-project-controller exec <workspace> -- <command>` runs one command in the workspace for a tool that can start a local process.
 
-Add any other HTTPS destinations at project creation through the API or custom resource. The initial policy is immutable: broadening it requires a new environment. Extra host access is never inferred from package files. Package registries often redirect to additional hosts, which must be explicitly authorized. List every host before creation.
+Add other HTTPS destinations through the dashboard, API or custom resource at project creation, or through a paused access update afterward. Extra host access is never inferred from package files. Package registries often redirect to additional hosts, which must be explicitly authorized. See [the combined console workflow](console.md) for editing access and including existing sandboxes.
 
 ## Optional telemetry
 
@@ -148,10 +187,11 @@ Before uninstalling the Helm release, request removal of every project and wait 
 ## Cluster configuration through Helm values
 
 The chart is the shared renderer for portable installations and private pilot
-manifests. Start with [custom-cluster-values.yaml](examples/custom-cluster-values.yaml)
-or the qualified [gVisor profile](examples/gvisor-values.yaml). Example image
-digests are placeholders. Configure your own registry references and qualified
-settings, then render for review:
+manifests. [alpha-values.yaml](examples/alpha-values.yaml) pins the published
+`0.1.0-alpha.1` images. The qualified [gVisor profile](examples/gvisor-values.yaml)
+uses placeholder digests, and [custom-cluster-values.yaml](examples/custom-cluster-values.yaml)
+shows scheduling and routing fields. Replace Forgejo, origin and OIDC settings,
+then render for review:
 
 ```sh
 helm template projects charts/agent-project-controller \

@@ -5,10 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,9 +18,14 @@ import (
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/connect"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/controller"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/forgejo"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/githubhost"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/network"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/preflight"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/projects"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/providerbroker"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/proxy"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/reader"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/registration"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/t3"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/telemetry"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/web"
@@ -56,9 +62,77 @@ func secret(k string) (string, error) {
 	}
 	return strings.TrimSpace(string(b)), nil
 }
+func positiveID(key string) (int64, error) {
+	value := os.Getenv(key)
+	n, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || n <= 0 || strconv.FormatInt(n, 10) != value {
+		return 0, fmt.Errorf("%s must be a positive integer", key)
+	}
+	return n, nil
+}
+func openGitHost() (forgejo.Host, string, string, string, error) {
+	switch env("GIT_HOST", "forgejo") {
+	case "forgejo":
+		token, err := secret("FORGEJO_TOKEN_FILE")
+		if err != nil {
+			return nil, "", "", "", err
+		}
+		client, err := forgejo.New(os.Getenv("FORGEJO_ORIGIN"), os.Getenv("FORGEJO_OWNER"), token)
+		if err != nil {
+			return nil, "", "", "", err
+		}
+		return client, "forgejo", client.Origin, client.Owner, nil
+	case "github":
+		if os.Getenv("FORGEJO_ORIGIN") != "" || os.Getenv("FORGEJO_OWNER") != "" || os.Getenv("FORGEJO_TOKEN_FILE") != "" {
+			return nil, "", "", "", errors.New("GIT_HOST=github does not use Forgejo settings")
+		}
+		appID, err := positiveID("GITHUB_APP_ID")
+		if err != nil {
+			return nil, "", "", "", err
+		}
+		installationID, err := positiveID("GITHUB_APP_INSTALLATION_ID")
+		if err != nil {
+			return nil, "", "", "", err
+		}
+		path := os.Getenv("GITHUB_APP_PRIVATE_KEY_FILE")
+		if path == "" {
+			return nil, "", "", "", errors.New("GITHUB_APP_PRIVATE_KEY_FILE is required")
+		}
+		key, err := os.ReadFile(path)
+		if err != nil {
+			return nil, "", "", "", errors.New("unable to read GITHUB_APP_PRIVATE_KEY_FILE")
+		}
+		client, err := githubhost.New(os.Getenv("GITHUB_OWNER"), appID, installationID, key)
+		if err != nil {
+			return nil, "", "", "", err
+		}
+		return client, "github", "https://github.com", client.Owner, nil
+	default:
+		return nil, "", "", "", errors.New("GIT_HOST must be forgejo or github")
+	}
+}
 func run(ctx context.Context) error {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "provider-broker":
+			config, err := ctrl.GetConfig()
+			if err != nil {
+				return errors.New("trusted Kubernetes client unavailable")
+			}
+			scheme := runtime.NewScheme()
+			if err := clientgoscheme.AddToScheme(scheme); err != nil {
+				return err
+			}
+			if err := api.AddToScheme(scheme); err != nil {
+				return err
+			}
+			c, err := client.New(config, client.Options{Scheme: scheme})
+			if err != nil {
+				return errors.New("trusted broker client unavailable")
+			}
+			return providerbroker.Run(ctx, c, config)
+		case "register-projects":
+			return projects.Register(ctx)
 		case "version", "--version":
 			return json.NewEncoder(os.Stdout).Encode(map[string]string{"version": version, "commit": commit})
 		case "t3":
@@ -71,6 +145,11 @@ func run(ctx context.Context) error {
 				return errors.New("T3 launch instance required")
 			}
 			return t3.Serve(os.Args[2])
+		case "t3-managed":
+			if len(os.Args) != 3 {
+				return errors.New("managed T3 launch instance required")
+			}
+			return t3.ManagedServe(os.Args[2])
 		case "t3-stop":
 			if len(os.Args) != 3 {
 				return errors.New("T3 launch instance required")
@@ -84,6 +163,8 @@ func run(ctx context.Context) error {
 			return bootstrap.Run(ctx)
 		case "credential":
 			return bootstrap.Credential()
+		case "reader":
+			return reader.Run(ctx)
 		case "proxy":
 			return proxy.Run(ctx)
 		case "preflight":
@@ -103,24 +184,23 @@ func run(ctx context.Context) error {
 				return errors.New("usage: agent-project-controller exec <workspace> -- <command>")
 			}
 			return connectCLI(ctx, os.Args[2], os.Args[4:])
+		case "register":
+			return registerCLI(ctx, os.Args[2:])
 		case "controller":
 		default:
 			return errors.New("unknown command")
 		}
 	}
 	ns := env("CONTROL_NAMESPACE", "agent-project-controller")
-	token, e := secret("FORGEJO_TOKEN_FILE")
-	if e != nil {
-		return e
-	}
 	password := ""
 	if os.Getenv("API_SECRET_FILE") != "" {
+		var e error
 		password, e = secret("API_SECRET_FILE")
 		if e != nil {
 			return e
 		}
 	}
-	host, e := forgejo.New(os.Getenv("FORGEJO_ORIGIN"), os.Getenv("FORGEJO_OWNER"), token)
+	host, gitHost, origin, owner, e := openGitHost()
 	if e != nil {
 		return e
 	}
@@ -150,20 +230,8 @@ func run(ctx context.Context) error {
 	if e != nil {
 		return e
 	}
-	networkProvider := network.Cilium{ClusterDomain: env("CLUSTER_DOMAIN", "cluster.local"), DNSNamespace: env("DNS_SERVICE_NAMESPACE", "kube-system"), DNSService: env("DNS_SERVICE_NAME", "kube-dns"), DirectDNS: os.Getenv("DNS_DIRECT_ENDPOINTS") == "true"}
-	if raw := os.Getenv("PROXY_GATEWAY_JSON"); raw != "" {
-		decoder := json.NewDecoder(strings.NewReader(raw))
-		decoder.DisallowUnknownFields()
-		var gateway network.Gateway
-		if e := decoder.Decode(&gateway); e != nil {
-			return errors.New("invalid proxy gateway configuration")
-		}
-		if decoder.Decode(new(any)) != io.EOF {
-			return errors.New("invalid trailing proxy gateway configuration")
-		}
-		networkProvider.Gateway = &gateway
-	}
-	if e := networkProvider.Validate(); e != nil {
+	networkProvider, e := network.FromEnvironment()
+	if e != nil {
 		return e
 	}
 	workerScheduling, e := controller.ParseScheduling(os.Getenv("WORKSPACE_SCHEDULING_JSON"))
@@ -174,9 +242,49 @@ func run(ctx context.Context) error {
 	if e != nil {
 		return fmt.Errorf("proxy scheduling: %w", e)
 	}
-	reconciler := &controller.Reconciler{Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, ForgejoOrigin: host.Origin, Owner: host.Owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling}}
+	reconciler := &controller.Reconciler{Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, GitHost: gitHost, ForgejoOrigin: origin, Owner: owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling, RegistrarNamespace: os.Getenv("REGISTRAR_NAMESPACE")}}
+	if os.Getenv("GITHUB_REPOSITORY_TOKEN_FILE") != "" {
+		reconciler.GitHubToken, e = secret("GITHUB_REPOSITORY_TOKEN_FILE")
+		if e != nil {
+			return e
+		}
+		reconciler.Config.GitHubOwner = os.Getenv("ADDITIONAL_GITHUB_OWNER")
+		if forgejo.ValidateRepository(reconciler.Config.GitHubOwner+"/repository", reconciler.Config.GitHubOwner) != nil || reconciler.Config.GitHubOwner == "" || reconciler.GitHubToken == "" {
+			return errors.New("additional GitHub access requires an owner and trusted repository token")
+		}
+	} else if os.Getenv("ADDITIONAL_GITHUB_OWNER") != "" {
+		return errors.New("additional GitHub owner requires a trusted repository token")
+	}
+	reconciler.IndependentCodexWorkspaceUID = os.Getenv("INDEPENDENT_CODEX_WORKSPACE_UID")
+	reconciler.MuseSubscriptionKeyFile = os.Getenv("MUSE_SUBSCRIPTION_KEY_FILE")
+	if host := os.Getenv("READER_HTTPS_HOST"); host != "" {
+		route := &proxy.ReaderRoute{Host: host, Upstream: os.Getenv("READER_UPSTREAM")}
+		if err := route.Validate(); err != nil {
+			return err
+		}
+		reconciler.ReaderWorkspaceUID = os.Getenv("READER_WORKSPACE_UID")
+		if reconciler.ReaderWorkspaceUID == "" {
+			return errors.New("reader workspace UID required")
+		}
+		reconciler.ReaderRoute = route
+	}
 	if e = reconciler.Config.Validate(); e != nil {
 		return e
+	}
+	if v := os.Getenv("T3_CONNECT_ENABLED"); v != "" && v != "true" && v != "false" {
+		return errors.New("T3_CONNECT_ENABLED must be true or false")
+	}
+	if os.Getenv("T3_CONNECT_ENABLED") == "true" {
+		account := &t3.Account{Binary: env("T3_CONNECT_BINARY", t3.Binary), Directory: env("T3_CONNECT_DATA", "/var/lib/apc/t3-connect")}
+		cloud := &t3.Cloud{URL: env("T3_CONNECT_RELAY_URL", t3.DefaultRelayURL), Tokens: account}
+		if e = cloud.Validate(); e != nil {
+			return e
+		}
+		access := &t3.Managed{Registry: &t3.Registry{Client: direct, Namespace: ns, Cloud: cloud}, Config: config, Connector: env("T3_CONNECT_CONNECTOR", "/opt/t3/cloudflared")}
+		reconciler.Access = access
+		if e = manager.Add(access); e != nil {
+			return e
+		}
 	}
 	if e = reconciler.Setup(manager); e != nil {
 		return e
@@ -187,7 +295,26 @@ func run(ctx context.Context) error {
 	if e = manager.AddReadyzCheck("readyz", healthz.Ping); e != nil {
 		return e
 	}
-	server := &web.Server{Client: direct, Host: host, Namespace: ns, Owner: host.Owner, Password: password, Origin: os.Getenv("PUBLIC_ORIGIN"), AllowBasic: os.Getenv("ALLOW_STATIC_LOGIN") == "true"}
+	server := &web.Server{T3Connect: reconciler.Access != nil, Client: direct, Host: host, Namespace: ns, Owner: owner, Password: password, Origin: os.Getenv("PUBLIC_ORIGIN"), GitHost: gitHost, GitOrigin: origin, AllowBasic: os.Getenv("ALLOW_STATIC_LOGIN") == "true"}
+	server.GitHubOwner = reconciler.Config.GitHubOwner
+	if os.Getenv("SANDBOX_CONTROL_URL") != "" {
+		server.SandboxControl = &web.SandboxControl{URL: os.Getenv("SANDBOX_CONTROL_URL"), Origin: os.Getenv("SANDBOX_CONTROL_ORIGIN"), Operator: os.Getenv("SANDBOX_CONTROL_OPERATOR")}
+	} else if os.Getenv("SANDBOX_CONTROL_ORIGIN") != "" || os.Getenv("SANDBOX_CONTROL_OPERATOR") != "" {
+		return errors.New("sandbox control integration requires URL, origin and delegated operator together")
+	}
+	if dir := os.Getenv("RUN_RECORDS_DIR"); dir != "" {
+		server.RunRecords = &web.RunRecords{Dir: dir}
+		// Optional read-only publishers, such as an Orca runtime, to copy run records from.
+		if sources := web.CSV(os.Getenv("RUN_RECORDS_SOURCES")); len(sources) > 0 {
+			puller := web.RunRecordPuller{Dir: dir, Sources: sources}
+			if err := puller.Validate(); err != nil {
+				return err
+			}
+			go puller.Run(ctx, time.Minute)
+		}
+	} else if os.Getenv("RUN_RECORDS_SOURCES") != "" {
+		return errors.New("RUN_RECORDS_SOURCES requires RUN_RECORDS_DIR")
+	}
 	if os.Getenv("OIDC_ISSUER") != "" {
 		clientSecret, err := secret("OIDC_CLIENT_SECRET_FILE")
 		if err != nil {
@@ -235,6 +362,47 @@ func t3CLI(ctx context.Context, workspace string) error {
 		return err
 	}
 	return t3.Launch(ctx, c, config, env("CONTROL_NAMESPACE", "agent-project-controller"), workspace)
+}
+
+func registerCLI(ctx context.Context, args []string) error {
+	watch := false
+	for _, a := range args {
+		switch a {
+		case "--watch":
+			watch = true
+		case "-h", "--help":
+			return errors.New("usage: agent-project-controller register --watch")
+		default:
+			return fmt.Errorf("unknown register flag %q", a)
+		}
+	}
+	if !watch {
+		return errors.New("usage: agent-project-controller register --watch")
+	}
+	config := ctrl.GetConfigOrDie()
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		return err
+	}
+	if err := api.AddToScheme(scheme); err != nil {
+		return err
+	}
+	c, err := client.New(config, client.Options{Scheme: scheme})
+	if err != nil {
+		return err
+	}
+	t3Bin, _ := exec.LookPath("t3")
+	opts := registration.Options{
+		ControlNamespace: env("CONTROL_NAMESPACE", "agent-project-controller"),
+		MountRoot:        env("APC_MOUNT_ROOT", registration.DefaultMountRoot()),
+		T3Binary:         env("APC_T3_BINARY", t3Bin),
+		OrcaBinary:       env("APC_ORCA_BINARY", registration.ResolveOrcaBinary()),
+		Integrations:     registration.ParseIntegrations(os.Getenv("CLIENT_INTEGRATIONS")),
+		Watch:            watch,
+	}
+	return registration.RunRegister(ctx, c, opts, func(namespace, pod string) (*registration.Remote, func() error, error) {
+		return registration.StartKubectlHelper(ctx, config, namespace, pod)
+	})
 }
 
 func connectCLI(ctx context.Context, workspace string, command []string) error {

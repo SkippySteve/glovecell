@@ -4,9 +4,23 @@ workspaceImage: ''
 # Optional smaller proxy image; defaults to controllerImage in the chart.
 proxyImage: ''
 existingSecret: controller-secrets
+# Additional private GitHub clones in the same workbench. The token is mounted
+# only in the trusted controller and inspecting gateway, never in a worker.
+additionalGitHub:
+  enabled: false
+  owner: ''
+  existingSecret: ''
+  tokenKey: token
 automationAPI:
   enabled: false
 config:
+  # network-policy is experimental and requires independent dataplane qualification.
+  NETWORK_PROVIDER: cilium
+  NETWORK_POLICY_ENFORCEMENT_ACKNOWLEDGED: 'false'
+  NETWORK_POLICY_CLUSTER_CIDRS_JSON: ''
+  # forgejo is the qualified host. github is an optional project host and is
+  # not in the published 0.1.0-alpha.1 images. One controller uses one host.
+  GIT_HOST: forgejo
   FORGEJO_ORIGIN: ''
   FORGEJO_OWNER: ''
   RUNTIME_CLASS: gvisor
@@ -27,6 +41,10 @@ config:
   PROXY_MEMORY_REQUEST: 128Mi
   PROXY_CPU_LIMIT: '1'
   PROXY_MEMORY_LIMIT: 512Mi
+  # Optional trusted backend for pre-existing sandbox controls in the same app.
+  SANDBOX_CONTROL_URL: ''
+  SANDBOX_CONTROL_ORIGIN: ''
+  SANDBOX_CONTROL_OPERATOR: ''
   PUBLIC_ORIGIN: ''
   OIDC_ISSUER: ''
   OIDC_CLIENT_ID: ''
@@ -64,6 +82,20 @@ controllerImagePullSecrets: []
 controllerDNS:
   policy: ClusterFirst
   config: {}
+# Operator control T3. Disabled until you choose a separate namespace.
+# The pod is privileged so it can mount FUSE. Project sandboxes stay on gVisor.
+# Set REGISTRAR_NAMESPACE from controlClient.namespace. Do not place this pod
+# in the restricted control namespace.
+controlClient:
+  enabled: false
+  namespace: agent-project-control-t3
+  storageClass: ""
+  storageSize: 5Gi
+  servicePort: 8788
+  routing:
+    enabled: false
+    parentRefs: []
+    hostnames: []
 # Optional explicit in-cluster TLS backend route for inspecting proxies.
 # namespace, selector, port and disableSNIFilter match the network provider API.
 # Leave empty when no backend gateway exception is needed.
@@ -81,3 +113,15 @@ namespace:
   labels:
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: latest
+
+# Use the t3-controller image target when enabled. This existing PVC holds the
+# stock CLI account state, outside every project namespace and storage volume.
+t3Connect:
+  enabled: false
+  existingClaim: ''
+  relayURL: https://relay.t3.codes
+# Optional private access to the controller through an installed Tailscale
+# Kubernetes operator. This does not replace T3 account authorization.
+tailscaleIngress:
+  enabled: false
+  hostname: ''

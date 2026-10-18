@@ -44,6 +44,9 @@ func New(origin, owner, token string) (*Client, error) {
 	if e != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
 		return nil, errors.New("Forgejo origin must be an HTTPS origin")
 	}
+	if host := strings.ToLower(u.Hostname()); host == "github.com" || host == "api.github.com" {
+		return nil, errors.New("use GIT_HOST=github for GitHub")
+	}
 	if !namePattern.MatchString(owner) || strings.TrimSpace(token) == "" {
 		return nil, errors.New("Forgejo owner and administrative token are required")
 	}
@@ -147,7 +150,23 @@ func (c *Client) protect(ctx context.Context, repo string) error {
 		return c.protect(ctx, repo)
 	}
 	if main.EnablePush || main.EnableForcePush || !main.ApplyToAdmins || !main.EnableMergeWhitelist || main.RequiredApprovals < 1 || len(main.MergeWhitelistTeams) > 0 || len(main.MergeWhitelistUsernames) != 1 || main.MergeWhitelistUsernames[0] != c.Owner {
-		return errors.New("main protection requires no direct pushes and reviewed merges by the configured owner only")
+		var unmet []string
+		if main.EnablePush {
+			unmet = append(unmet, "disable direct pushes")
+		}
+		if main.EnableForcePush {
+			unmet = append(unmet, "disable force pushes")
+		}
+		if !main.ApplyToAdmins {
+			unmet = append(unmet, "apply protection to administrators")
+		}
+		if main.RequiredApprovals < 1 {
+			unmet = append(unmet, fmt.Sprintf("require at least 1 approval (currently %d)", main.RequiredApprovals))
+		}
+		if !main.EnableMergeWhitelist || len(main.MergeWhitelistTeams) > 0 || len(main.MergeWhitelistUsernames) != 1 || main.MergeWhitelistUsernames[0] != c.Owner {
+			unmet = append(unmet, "allow merges only by the configured repository owner")
+		}
+		return fmt.Errorf("main branch protection needs operator review: %s. Edit the repository's main protection rule in Settings > Branches; preparation retries automatically", strings.Join(unmet, "; "))
 	}
 	return nil
 }
@@ -201,7 +220,8 @@ func (c *Client) Grant(ctx context.Context, repo string, cred Credentials) (stri
 		return "", e
 	}
 	if cred.Token != "" { // A stored token is reusable only if the server still accepts it.
-		req, _ := http.NewRequestWithContext(ctx, "GET", c.Origin+"/api/v1/repos/"+repo, nil)
+		// Native CLI PR search uses the issues API. Validate its required scope too.
+		req, _ := http.NewRequestWithContext(ctx, "GET", c.Origin+"/api/v1/repos/"+repo+"/issues?type=pulls&limit=1", nil)
 		req.Header.Set("Authorization", "token "+cred.Token)
 		res, e := c.HTTP.Do(req)
 		if e == nil {
@@ -223,7 +243,7 @@ func (c *Client) Grant(ctx context.Context, repo string, cred Credentials) (stri
 	}
 	var t token
 	parts := strings.Split(repo, "/")
-	if e := c.call(ctx, "POST", "/users/"+cred.Username+"/tokens", map[string]any{"name": "project-workspace", "scopes": []string{"write:repository"}, "repositories": []map[string]string{{"owner": parts[0], "name": parts[1]}}}, &t, &cred); e != nil {
+	if e := c.call(ctx, "POST", "/users/"+cred.Username+"/tokens", map[string]any{"name": "project-workspace", "scopes": []string{"write:repository", "write:issue"}, "repositories": []map[string]string{{"owner": parts[0], "name": parts[1]}}}, &t, &cred); e != nil {
 		return "", e
 	}
 	if t.SHA == "" {

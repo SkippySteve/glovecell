@@ -357,6 +357,78 @@
           }
         }
       ]
+    },
+    "config": {
+      "type": "object",
+      "properties": {
+        "NETWORK_PROVIDER": {
+          "enum": ["cilium", "network-policy"]
+        },
+        "NETWORK_POLICY_ENFORCEMENT_ACKNOWLEDGED": {
+          "enum": ["true", "false"]
+        },
+        "NETWORK_POLICY_CLUSTER_CIDRS_JSON": {
+          "type": "string"
+        },
+        "GIT_HOST": {
+          "enum": ["forgejo", "github"]
+        },
+        "GITHUB_OWNER": {
+          "type": "string",
+          "minLength": 1
+        },
+        "GITHUB_APP_ID": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$"
+        },
+        "GITHUB_APP_INSTALLATION_ID": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "NETWORK_PROVIDER": {
+                "const": "network-policy"
+              }
+            },
+            "required": ["NETWORK_PROVIDER"]
+          },
+          "then": {
+            "required": [
+              "NETWORK_POLICY_ENFORCEMENT_ACKNOWLEDGED",
+              "NETWORK_POLICY_CLUSTER_CIDRS_JSON"
+            ],
+            "properties": {
+              "NETWORK_POLICY_ENFORCEMENT_ACKNOWLEDGED": {
+                "const": "true"
+              },
+              "NETWORK_POLICY_CLUSTER_CIDRS_JSON": {
+                "minLength": 2
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "GIT_HOST": {
+                "const": "github"
+              }
+            },
+            "required": ["GIT_HOST"]
+          },
+          "then": {
+            "required": [
+              "GITHUB_OWNER",
+              "GITHUB_APP_ID",
+              "GITHUB_APP_INSTALLATION_ID"
+            ]
+          }
+        }
+      ]
     }
   }
 }

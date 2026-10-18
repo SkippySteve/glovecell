@@ -10,7 +10,7 @@ Each workspace gets a unique non-admin Forgejo user and repository-scoped token.
 
 OIDC login requires a verified token and an explicit operator allowlist. Operators share one administration boundary. Email addresses and proxy-injected identity headers do not confer authority. Group changes at the identity provider take effect on the next login; existing application sessions expire within 15 minutes. Local sign-out does not terminate the provider's own session. Login transaction and application sessions live in memory, so rolling multi-replica OIDC operation is unsupported.
 
-API mutations from browser credentials require the configured Origin and JSON content type. Automation bearer credentials are independently configured and have operator-level authority. They are not OIDC machine tokens or project credentials.
+Project API mutations from browser credentials require the configured Origin and JSON content type. The optional existing-sandbox section accepts the backend's bounded POST forms after the same console authentication and Origin check, and retains its signed CSRF cookie and form token. See [console integration](console.md) for explicit delegation and the required trusted backend network boundary. Automation bearer credentials are independently configured and have operator-level authority. They are not OIDC machine tokens or project credentials.
 
 Requested-by identity is copied into immutable audit records. Kubernetes clients can supply that annotation themselves, so it is attribution from the submitted request, not cryptographic proof of the Kubernetes caller. Use Kubernetes API audit logs for direct-client attribution. The controller's own broad RBAC and cluster administrators can delete audit objects; export or back them up if independent audit retention is required.
 
@@ -20,9 +20,17 @@ When main protection is absent, the controller creates a rule that forbids direc
 
 Agents can perform operations supported by their Forgejo repository write permission. This is broader than the old broker's branch-ownership model. Protect additional release branches or tags explicitly if they matter. Main protection does not stop an agent from damaging its working branches, creating misleading PRs or disclosing source through permitted writes.
 
+### GitHub
+
+GitHub mode does not create or replace branch protection. Grant refuses the repository unless classic protection on `main` enforces rules for administrators, requires at least one approving review, restricts who can push, excludes this GitHub App from that allow list, and leaves force-push and branch deletion disabled. A missing rule or a ruleset-only repository is a refusal. The controller will not weaken an existing rule to make a grant succeed.
+
+Workspace credentials are installation access tokens for one repository. The requested permissions are contents write, pull requests write, and metadata read. The controller drops a token whose response names a different repository, selects every repository, or carries any other permission, and it revokes that token before returning the error. Tokens expire in about one hour. The process reuses a stored token only while its recorded expiry is more than 20 minutes away and GitHub still accepts it. Otherwise it revokes the stored token and mints a replacement. Restarting the controller forgets those expiry records, so the next grant rotates the stored token.
+
+GitHub does not list live installation tokens. A token that is issued and then lost before the ledger save, including a controller token held only in memory, stays valid until GitHub expires it. Removal confirms the stored workspace token and any token this process still remembers. It cannot confirm a token lost in a crash. The Forgejo host deletes orphaned personal tokens before issuing another; GitHub cannot do that.
+
 ## HTTPS enforcement
 
-Cilium restricts workers to their proxy and necessary DNS resolution. The proxy allows exact configured hosts, HTTP methods and literal path prefixes. DNS policy permits necessary exact names rather than arbitrary queries. Upstream TLS certificates are verified normally. Private upstream addresses are prohibited except for the operator-configured Forgejo host.
+Cilium restricts workers to their proxy and necessary DNS resolution. The proxy allows exact configured hosts, HTTP methods and literal path prefixes. DNS policy permits necessary exact names rather than arbitrary queries. Upstream TLS certificates are verified normally. Private upstream addresses are prohibited except for the operator-configured Forgejo host. GitHub mode leaves that exception empty, so `github.com` and `api.github.com` must resolve to public addresses.
 
 Project pods use an explicit CoreDNS service rather than inheriting the node-local resolver. This keeps their resolver selection consistent with endpoint-scoped DNS policy. Node-local interception and service routing still require dataplane qualification. The controller rejects unsupported resolver settings and does not grant unrestricted host DNS access.
 
@@ -32,6 +40,8 @@ Request bodies are forwarded, not classified or filtered. Allowed API requests, 
 
 Policy creation and a Cilium CRD check do not prove enforcement. Broad cluster policies, host networking, node-local DNS and runtime differences must be checked in an actual cluster. Creating a pod before network enforcement is ready must not allow unfiltered bootstrap traffic. The release qualification requires an independent bypass test.
 
+The experimental `network-policy` provider keeps that fail-closed boundary only for clusters whose CNI actually enforces standard NetworkPolicy. Workers have no DNS. Their proxy name is a host alias for an allocated ClusterIP, so a mutated alias or an unallocated Service blocks provisioning. Proxy egress is TCP 443 to IPv4 public space, with reserved, private, and declared cluster prefixes excluded, and to IPv6 global unicast `2000::/3`, with documentation and in-range cluster prefixes excluded. IPv4-mapped IPv6, unique-local, and link-local destinations stay outside that allow. CoreDNS and an optional gateway peer are separate rules. Gateway rules require `disableSNIFilter` because this API cannot match TLS names. A compromised inspecting proxy can still open those proxy-only destinations; worker pods cannot. Additive allow policies in the project namespace are rejected. Policies installed outside that namespace, service translation that lands on an unexpected address, and a CNI that ignores NetworkPolicy are outside the controller's view. The provider acknowledgement flag does not change any of those facts.
+
 Each project has an inspection CA with a one-year lifetime. Leaf certificates renew in the running proxy. Set the annotation `projects.agentwork.dev/ca-generation` to the next integer to mint a new CA, update the worker trust bundle, and restart the proxy and worker. The private key stays in the control ledger and the proxy. The generation cannot skip or go backwards. Removal still requires a new project before access can be granted again.
 
 ## Removal and recovery
@@ -40,9 +50,11 @@ The controller persists the external identity before any grant. If it crashes af
 
 Removal requests suspend the Sandbox and terminate owned pods, revoke collaborator access, delete tokens and disable the Forgejo identity. An unavailable Forgejo instance leaves removal pending. Kubernetes resources and storage are retained until external revocation succeeds. The namespace is then deleted, and any matching persistent volume keeps cleanup pending until the storage provisioner removes it. Finalizers prevent normal object deletion from skipping this process.
 
+GitHub removal deletes the stored installation token and reads the repository again with that token. HTTP 401 or 404 confirms revocation. HTTP 200 leaves removal pending. There is no GitHub user to disable. The repository, its branches, and its pull requests stay. An installation token that was never written to the ledger can remain usable for up to about an hour.
+
 After verified cleanup the controller removes stored token, password and private CA material, keeping a small revoked tombstone. Disabled Forgejo users preserve PR attribution and are intentionally retained. Immutable audit records have separate retention. Removing a project does not delete the original Forgejo repository or its branches and PRs.
 
-Pause stops the worker but preserves repository credentials and files. It is not revocation. Removal is terminal; regranting access requires a new workspace and identity. Requests are asynchronous: only an observed `Removed` state confirms this controller's cleanup checks finished.
+Pause stops the worker and inspecting proxy but preserves repository credentials and files. HTTPS access changes require all their pods to be gone and the project to remain paused until the controller records the new policy. It is not revocation. Removal is terminal; regranting access requires a new workspace and identity. Requests are asynchronous: only an observed `Removed` state confirms this controller's cleanup checks finished.
 
 Volume and namespace deletion are infrastructure checks, not proof of physical secure erasure. Snapshots, backups, external resources and information already copied elsewhere are outside automatic cleanup. Restrict these separately and use encryption or storage-specific erasure where required.
 

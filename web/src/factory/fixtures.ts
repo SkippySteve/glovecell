@@ -1,0 +1,36 @@
+// Run records for tests and local previews. `trialRun` mirrors the 2026-10-17
+// orchestration trial on the Orca sandbox; `sampleRun` is invented to show a
+// healthy run with checks, a gate and an agent report.
+import type {RunRecord} from './record';
+
+export const trialRun: RunRecord = {
+  version: 1,
+  run: {id: 'run_fe7f0fa105c5', objective: 'Orchestration trial: parallel textkit features on separate worktrees, then a dependent integration task', host: 'agent-workspace-example/orca', createdAt: '2026-10-17T13:33:48Z', collectedAt: '2026-10-18T14:00:00Z'},
+  tasks: [
+    {id: 'task_e12e12ff6a58', title: 'slugify helper', spec: 'Add textkit/slug.py with slugify() and tests.', status: 'failed', deps: [], checks: [],
+      attempts: [{dispatchId: 'ctx_f00f3c5e097e', agent: 'codex', state: 'failed', failedStage: 'agent_readiness', lastError: 'Agent startup blocked: agent-update-prompt'}],
+      git: {branch: 'trial-slugify', base: 'main', worktree: '/home/agent/orca/workspaces/orchestration-trial/trial-slugify', commits: [], files: []}},
+    {id: 'task_7f57e2f02ba4', title: 'top_words helper', spec: 'Add textkit/freq.py with top_words() and tests.', status: 'failed', deps: [], checks: [],
+      attempts: [{dispatchId: 'ctx_73d0523c7b18', agent: 'claude', state: 'failed', failedStage: 'dispatch_input', lastError: 'agent_not_in_foreground'}],
+      git: {branch: 'trial-wordfreq', base: 'main', worktree: '/home/agent/orca/workspaces/orchestration-trial/trial-wordfreq', commits: [], files: []}},
+  ],
+  gates: [],
+  agentReports: [],
+};
+
+export const sampleRun: RunRecord = {
+  version: 1,
+  run: {id: 'run_sample', objective: 'Sample run (fixture): textkit helpers and a CLI', host: 'agent-workspace-example/orca', createdAt: '2026-10-18T09:00:00Z', collectedAt: '2026-10-18T09:42:00Z'},
+  tasks: [
+    {id: 'task_slugify', title: 'slugify helper', spec: 'Add textkit/slug.py with slugify() and tests.', status: 'completed', deps: [],
+      attempts: [{dispatchId: 'ctx_a1', agent: 'codex', state: 'settled', outcome: 'succeeded', startedAt: '2026-10-18T09:01:00Z', endedAt: '2026-10-18T09:12:00Z', summary: 'Added slugify with NFKD transliteration and hyphen collapsing. Tests cover accents, repeated separators, symbol-only input and truncation. All tests pass locally.'}],
+      git: {branch: 'task/example/trial-slugify', base: 'main', commits: [{sha: '3f2a9c1e5b7d4e8a', subject: 'Add slugify helper with tests'}], files: [{path: 'textkit/slug.py', added: 31, removed: 0}, {path: 'tests/test_slug.py', added: 44, removed: 0}]},
+      checks: [{name: 'unit tests', command: 'python3 -m unittest discover -s tests', status: 'passed', source: 'ci'}]},
+    {id: 'task_cli', title: 'Integrate helpers into a CLI', spec: 'Merge both branches and add textkit/cli.py.', status: 'blocked', deps: ['task_slugify'],
+      attempts: [{dispatchId: 'ctx_c3', agent: 'claude', state: 'running', startedAt: '2026-10-18T09:30:00Z'}],
+      git: {branch: 'task/example/trial-cli', base: 'main', commits: [{sha: '9b1d0c4e7a2f3e55', subject: 'Merge slugify and add CLI skeleton'}], files: [{path: 'textkit/cli.py', added: 58, removed: 0}, {path: 'README.md', added: 12, removed: 1}]},
+      checks: [{name: 'unit tests', command: 'python3 -m unittest discover -s tests', status: 'failed', source: 'ci', detail: 'FAIL: test_top_cli (tests.test_cli.CliTest)\nAssertionError: \'b 2\\n\' != \'b 2\''}]},
+  ],
+  gates: [{id: 'gate_cli_output', taskId: 'task_cli', question: 'Should `textkit top` print a trailing newline after the last line?', options: ['Keep the newline', 'Drop the newline'], status: 'pending'}],
+  agentReports: [{taskId: 'task_cli', dispatchId: 'ctx_c3', agent: 'claude', lang: 'root = AgentReport([h, p, kv, n])\nh = Heading("Integration status")\np = Paragraph("The CLI is wired up. One test fails on a trailing newline; I asked the coordinator which behaviour is wanted.")\nkv = KeyValues([{label: "Tests", value: "11 passed, 1 failed"}, {label: "Files", value: "cli.py, README.md"}])\nn = Note("warning", "Waiting on the newline decision before finishing.")'}],
+};

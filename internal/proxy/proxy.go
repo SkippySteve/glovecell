@@ -32,13 +32,29 @@ import (
 )
 
 type Config struct {
-	Rules        []api.HTTPSRule `json:"rules"`
-	PrivateHosts []string        `json:"privateHosts,omitempty"`
+	IndependentCodex          bool            `json:"independentCodex,omitempty"`
+	Reader                    *ReaderRoute    `json:"reader,omitempty"`
+	Rules                     []api.HTTPSRule `json:"rules"`
+	PrivateHosts              []string        `json:"privateHosts,omitempty"`
+	PrivateGitHubRepositories []string        `json:"privateGitHubRepositories,omitempty"`
+	MuseSubscriptionGateway   bool            `json:"museSubscriptionGateway,omitempty"`
+	BrokeredProviders         bool            `json:"brokeredProviders,omitempty"`
 }
 
 var dnsHost = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$`)
 
 func Validate(c Config) error {
+	if err := c.Reader.Validate(); err != nil {
+		return err
+	}
+	if len(c.PrivateGitHubRepositories) > 16 {
+		return errors.New("too many private GitHub repositories")
+	}
+	for _, repo := range c.PrivateGitHubRepositories {
+		if _, err := GitHubRules(repo); err != nil {
+			return err
+		}
+	}
 	if len(c.Rules) == 0 || len(c.Rules) > 64 {
 		return errors.New("between one and 64 HTTPS rules required")
 	}
@@ -116,13 +132,17 @@ func GenerateCA() ([]byte, []byte, error) {
 }
 
 type Server struct {
-	Config    Config
-	CA        *x509.Certificate
-	Key       any
-	Transport *http.Transport
-	slots     chan struct{}
-	mu        sync.Mutex
-	certs     map[string]tls.Certificate
+	Config              Config
+	CA                  *x509.Certificate
+	Key                 any
+	ReaderTransport     *http.Transport
+	Transport           *http.Transport
+	GitHubToken         func() (string, error)
+	MuseSubscriptionKey func() (string, error)
+	ProviderGrants      func() ([]byte, error)
+	slots               chan struct{}
+	mu                  sync.Mutex
+	certs               map[string]tls.Certificate
 }
 
 func New(c Config, cert, key []byte) (*Server, error) {
@@ -140,7 +160,7 @@ func New(c Config, cert, key []byte) (*Server, error) {
 	if !ca.IsCA || time.Now().After(ca.NotAfter) {
 		return nil, errors.New("valid inspection CA required")
 	}
-	s := &Server{Config: c, CA: ca, Key: pair.PrivateKey, slots: make(chan struct{}, 8), certs: map[string]tls.Certificate{}}
+	s := &Server{Config: c, CA: ca, Key: pair.PrivateKey, slots: make(chan struct{}, 32), certs: map[string]tls.Certificate{}, ReaderTransport: readerTransport()}
 	s.Transport = &http.Transport{Proxy: nil, DialContext: s.dial, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 30 * time.Second, IdleConnTimeout: 30 * time.Second, MaxIdleConns: 32, ForceAttemptHTTP2: false}
 	return s, nil
 }
@@ -300,6 +320,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case s.slots <- struct{}{}:
 		defer func() { <-s.slots }()
 	default:
+		if os.Getenv("APC_TRACE_PROXY_ROUTES") == "1" {
+			slog.Info("operator proxy capacity diagnostic", "active_tunnels", len(s.slots))
+		}
 		http.Error(w, "proxy busy", 503)
 		return
 	}
@@ -341,8 +364,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Reject alternate authorities, escaped paths and protocol upgrades. HTTP/2 is inspected on its own path.
+		traceRequestRoute(host, req)
 		denied := requestDenied(s.Config, host, req)
 		if denied {
+			traceRequestStatus(host, req, 403)
 			req.Body.Close()
 			writeError(conn, 403, "request denied")
 			return
@@ -358,9 +383,30 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		req.URL.Host = host
 		req.Host = host
 		dropHopHeaders(req.Header)
+		if s.providerAuthorization(req) != nil {
+			traceRequestStatus(host, req, 403)
+			req.Body.Close()
+			writeError(conn, 403, "provider grant expired, revoked or unavailable")
+			return
+		}
+		if !githubGitReadAllowed(s.Config, req) {
+			req.Body.Close()
+			writeError(conn, 403, "request denied")
+			return
+		}
+		if s.githubCredentials(req) != nil {
+			req.Body.Close()
+			writeError(conn, 502, "GitHub repository authorization unavailable")
+			return
+		}
+		if s.museCredentials(req) != nil {
+			req.Body.Close()
+			writeError(conn, 502, "Muse subscription authorization unavailable")
+			return
+		}
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 		req = req.WithContext(ctx)
-		res, e := s.Transport.RoundTrip(req)
+		res, e := s.roundTrip(req)
 		if e != nil {
 			req.Body.Close()
 			cancel()
@@ -368,6 +414,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeError(conn, 502, "upstream unavailable")
 			return
 		}
+		traceRequestStatus(host, req, res.StatusCode)
 		dropHopHeaders(res.Header)
 		res.Close = true
 		e = res.Write(conn)
@@ -390,7 +437,9 @@ func (s *Server) serveHTTP2(ctx context.Context, conn net.Conn, host string) {
 		Context:    ctx,
 		BaseConfig: &http.Server{MaxHeaderBytes: 32 << 10, ReadHeaderTimeout: 10 * time.Second},
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			traceRequestRoute(host, req)
 			if requestDenied(s.Config, host, req) {
+				traceRequestStatus(host, req, 403)
 				http.Error(w, "request denied", http.StatusForbidden)
 				return
 			}
@@ -405,14 +454,32 @@ func (s *Server) serveHTTP2(ctx context.Context, conn net.Conn, host string) {
 			forward.URL.Host = host
 			forward.Host = host
 			dropHopHeaders(forward.Header)
+			if s.providerAuthorization(forward) != nil {
+				traceRequestStatus(host, req, 403)
+				http.Error(w, "provider grant expired, revoked or unavailable", http.StatusForbidden)
+				return
+			}
+			if !githubGitReadAllowed(s.Config, forward) {
+				http.Error(w, "request denied", http.StatusForbidden)
+				return
+			}
+			if s.githubCredentials(forward) != nil {
+				http.Error(w, "GitHub repository authorization unavailable", http.StatusBadGateway)
+				return
+			}
+			if s.museCredentials(forward) != nil {
+				http.Error(w, "Muse subscription authorization unavailable", http.StatusBadGateway)
+				return
+			}
 			callCtx, cancel := context.WithTimeout(req.Context(), 2*time.Minute)
 			defer cancel()
-			res, e := s.Transport.RoundTrip(forward.WithContext(callCtx))
+			res, e := s.roundTrip(forward.WithContext(callCtx))
 			if e != nil {
 				slog.Warn("proxy upstream request failed", "failure_kind", failureKind(e))
 				http.Error(w, "upstream unavailable", http.StatusBadGateway)
 				return
 			}
+			traceRequestStatus(host, req, res.StatusCode)
 			defer res.Body.Close()
 			dropHopHeaders(res.Header)
 			for key, values := range res.Header {
@@ -463,6 +530,9 @@ func Run(ctx context.Context) error {
 	if e != nil {
 		return e
 	}
+	s.GitHubToken = gatewayGitHubToken
+	s.MuseSubscriptionKey = gatewayMuseSubscriptionKey
+	s.ProviderGrants = gatewayProviderGrants
 	server := &http.Server{Addr: ":3128", Handler: s, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 32 << 10}
 	go func() { <-ctx.Done(); _ = server.Close() }()
 	e = server.ListenAndServe()
@@ -479,4 +549,20 @@ func ForgejoRule(origin, repo string) (api.HTTPSRule, error) {
 		return api.HTTPSRule{}, errors.New("Forgejo requires HTTPS on port 443")
 	}
 	return api.HTTPSRule{Host: u.Hostname(), Methods: []string{"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"}, Paths: []string{"/" + repo + ".git", "/api/v1/repos/" + repo}}, nil
+}
+
+var repositoryName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$`)
+
+// GitHubRules allows git transport on github.com and the REST API for one
+// repository on api.github.com. Callers leave both hosts off the private-host
+// list so a private DNS answer is rejected.
+func GitHubRules(repo string) ([]api.HTTPSRule, error) {
+	owner, name, ok := strings.Cut(repo, "/")
+	if !ok || strings.Contains(name, "/") || !repositoryName.MatchString(owner) || !repositoryName.MatchString(name) {
+		return nil, errors.New("GitHub repository must be owner/name")
+	}
+	return []api.HTTPSRule{
+		{Host: "github.com", Methods: []string{"GET", "POST"}, Paths: []string{"/" + repo + ".git"}},
+		{Host: "api.github.com", Methods: []string{"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"}, Paths: []string{"/repos/" + repo}},
+	}, nil
 }

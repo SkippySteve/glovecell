@@ -2,6 +2,16 @@
 ARG WORKSPACE_IMAGE=debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
 ARG GO_IMAGE=golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d
 ARG RUNTIME_IMAGE=alpine:3.23@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
+ARG NODE_IMAGE=node:24.11.1-alpine3.23@sha256:682368d8253e0c3364b803956085c456a612d738bd635926d73fa24db3ce53d7
+
+# Console UI. Rebuilt from the lockfile so the image never trusts the committed bundle.
+FROM ${NODE_IMAGE} AS console
+WORKDIR /src/web
+COPY web/package.json web/package-lock.json web/.npmrc ./
+RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
+COPY web/ ./
+RUN npm run build
+
 FROM ${GO_IMAGE} AS build
 ARG VERSION=dev
 ARG SOURCE_REVISION=unknown
@@ -11,6 +21,7 @@ RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY api/ api/
 COPY cmd/ cmd/
 COPY internal/ internal/
+COPY --from=console /src/internal/web/dist/ internal/web/dist/
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${SOURCE_REVISION}" -o /agent-project-controller ./cmd/agent-project-controller
 
 FROM ${RUNTIME_IMAGE} AS runtime
@@ -26,8 +37,6 @@ FROM ${WORKSPACE_IMAGE} AS workspace
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git openssh-client build-essential python3 nodejs npm curl jq ripgrep bash \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -g 1000 agent && useradd -m -u 1000 -g 1000 agent
-COPY --from=build /agent-project-controller /usr/local/bin/agent-project-controller
-ENTRYPOINT ["/usr/local/bin/agent-project-controller"]
 COPY --from=toolchain /usr/local/go /usr/local/go
 ENV PATH="/usr/local/go/bin:${PATH}" CGO_ENABLED=0
 # Official musl package, verified against the release asset's SHA-256.
@@ -50,6 +59,47 @@ RUN curl -fsSL https://github.com/pingdotgg/t3code/releases/download/v0.0.45/t3-
     && mkdir /opt/t3 && tar xzf /tmp/t3.tar.gz -C /opt/t3 --strip-components=1 \
     && rm /tmp/t3.tar.gz
 COPY scripts/apc-codex /usr/local/bin/apc-codex
+# Stock Forgejo client. The wrapper supplies the enrolled Git identity per call.
+RUN curl -fsSL https://codeberg.org/forgejo-contrib/forgejo-cli/releases/download/v0.6.0/forgejo-cli-x86_64-linux.tar.gz -o /tmp/fj.tar.gz \
+    && echo 'ea559da5449b6dd7e0dd9f7ea51c906b575696f782edd606b52adcf773602742  /tmp/fj.tar.gz' | sha256sum -c - \
+    && mkdir /opt/fj && tar xzf /tmp/fj.tar.gz -C /opt/fj \
+    && rm /tmp/fj.tar.gz
+COPY scripts/apc-fj.py /usr/local/bin/fj
+# Stock subscription clients, pinned independently of the application runtimes.
+RUN curl -fsSL https://x.ai/cli/grok-1.0.46-linux-x86_64.zst -o /tmp/grok.zst \
+    && echo '3d6fff352acd5658758f9b7b627313468e779c86fb259273df40eda5bac9d713  /tmp/grok.zst' | sha256sum -c - \
+    && apt-get update && apt-get install -y --no-install-recommends zstd \
+    && mkdir /opt/grok && unzstd -f -o /opt/grok/grok /tmp/grok.zst \
+    && chmod 0755 /opt/grok/grok && rm /tmp/grok.zst \
+    && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL https://downloads.cursor.com/lab/2026.10.01-e373342/linux/x64/agent-cli-package.tar.gz -o /tmp/cursor.tar.gz \
+    && echo 'a79726c6e644520e993970be4c45775a6889802b67abe461a677a53219ae28e8  /tmp/cursor.tar.gz' | sha256sum -c - \
+    && mkdir /opt/cursor-agent && tar xzf /tmp/cursor.tar.gz -C /opt/cursor-agent --strip-components=1 \
+    && rm /tmp/cursor.tar.gz
+RUN curl -fsSL 'https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.7-R6101.1&file=muse-x86-linux' -o /tmp/muse \
+    && echo '36e3dac91f56c15572b95be55d70ee9fd9685cd9ab49f747bab4746c8d7c2518  /tmp/muse' | sha256sum -c - \
+    && mkdir /opt/muse && mv /tmp/muse /opt/muse/muse && chmod 0755 /opt/muse/muse
+COPY scripts/apc-provider.py /usr/local/bin/apc-provider
+RUN ln -s apc-provider /usr/local/bin/grok \
+    && ln -s apc-provider /usr/local/bin/cursor-agent \
+    && ln -s apc-provider /usr/local/bin/muse
+COPY --from=build /agent-project-controller /usr/local/bin/agent-project-controller
+ENTRYPOINT ["/usr/local/bin/agent-project-controller"]
 COPY third_party/licenses/ /usr/share/agent-project-controller/licenses/
 USER 1000:1000
+CMD ["controller"]
+
+# Trusted T3 Connect registrar. Project T3 servers and agent CLIs stay in workers.
+FROM ${WORKSPACE_IMAGE} AS t3-controller
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -g 1000 agent && useradd -m -u 1000 -g 1000 agent
+COPY --from=build /agent-project-controller /usr/local/bin/agent-project-controller
+COPY --from=workspace /opt/t3 /opt/t3
+COPY third_party/licenses/ /usr/share/agent-project-controller/licenses/
+RUN curl -fsSL https://github.com/cloudflare/cloudflared/releases/download/2026.5.2/cloudflared-linux-amd64 -o /opt/t3/cloudflared \
+    && echo '5286698547f03df745adb2355f04c12dde52ef425491e81f433642d695521886  /opt/t3/cloudflared' | sha256sum -c - \
+    && chmod 0755 /opt/t3/cloudflared
+USER 1000:1000
+ENTRYPOINT ["/usr/local/bin/agent-project-controller"]
 CMD ["controller"]
