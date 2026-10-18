@@ -172,12 +172,12 @@ function GateButtons({gateId, options}: {gateId: string; options: string[]}) {
 const Gate = defineComponent({
   name: 'Gate',
   description: 'A decision gate that blocks a task until someone resolves it.',
-  props: z.object({gateId: short, taskId: short, question: z.string().max(1000), options: z.array(short).min(1).max(8), status: z.enum(['pending', 'resolved']), resolution: short.optional()}),
+  props: z.object({gateId: short, taskId: short, question: z.string().max(1000), options: z.array(short).min(1).max(8), status: z.enum(['pending', 'resolved', 'timeout']), resolution: short.optional()}),
   component: ({props}) => (
     <Card variant="sunk" width="full" className="factory-gate">
       <div className="factory-task-head">
         <CardHeader title="Decision needed" subtitle={props.taskId} />
-        <Tag size="sm" variant={props.status === 'pending' ? 'warning' : 'success'} text={props.status === 'pending' ? 'Waiting' : 'Resolved: ' + (props.resolution || '')} />
+        <Tag size="sm" variant={props.status === 'pending' ? 'warning' : props.status === 'timeout' ? 'danger' : 'success'} text={props.status === 'pending' ? 'Waiting' : props.status === 'timeout' ? 'Timed out' : 'Resolved: ' + (props.resolution || '')} />
       </div>
       <p>{props.question}</p>
       {props.status === 'pending' ? <GateButtons gateId={props.gateId} options={props.options} /> : null}

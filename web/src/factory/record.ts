@@ -52,7 +52,7 @@ export const GateSchema = z.object({
   taskId: id,
   question: text(1000),
   options: z.array(text(120)).min(1).max(8),
-  status: z.enum(['pending', 'resolved']),
+  status: z.enum(['pending', 'resolved', 'timeout']),
   resolution: text(120).optional(),
 });
 
