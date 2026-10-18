@@ -101,3 +101,11 @@ describe('fixtures', () => {
     }
   });
 });
+
+describe('runsFor', () => {
+  it('matches runs to a sandbox by the namespace part of run.host', async () => {
+    const {runsFor} = await import('./SandboxRuns');
+    const runs = [{id: 'a', objective: '', host: 'agent-workspace-example/orca', collectedAt: '', tasks: 1}, {id: 'b', objective: '', host: 'agent-workspace-examples/orca', collectedAt: '', tasks: 1}, {id: 'c', objective: '', host: 'other/orca', collectedAt: '', tasks: 1}];
+    expect(runsFor(runs, 'agent-workspace-example').map(r => r.id)).toEqual(['a']);
+  });
+});

@@ -2,8 +2,8 @@ import {useEffect, useState} from 'react';
 
 export type Tab = 'overview' | 'repositories' | 'access' | 'history';
 export const TABS: [Tab, string][] = [['overview', 'Overview'], ['repositories', 'Repositories'], ['access', 'Access'], ['history', 'History']];
-export type SandboxTab = 'overview' | 'access' | 'previews' | 'activity' | 'settings';
-export const SANDBOX_TABS: [SandboxTab, string][] = [['overview', 'Overview'], ['access', 'Web access'], ['previews', 'Previews'], ['activity', 'Activity'], ['settings', 'Settings']];
+export type SandboxTab = 'overview' | 'access' | 'previews' | 'activity' | 'runs' | 'settings';
+export const SANDBOX_TABS: [SandboxTab, string][] = [['overview', 'Overview'], ['access', 'Web access'], ['previews', 'Previews'], ['activity', 'Activity'], ['runs', 'Runs'], ['settings', 'Settings']];
 export type Route = {view: 'home'} | {view: 'new'} | {view: 'project'; name: string; tab: Tab} | {view: 'sandbox'; id: string; tab: SandboxTab} | {view: 'runs'} | {view: 'run'; id: string};
 
 export const projectHref = (name: string, tab?: Tab) => '#/projects/' + encodeURIComponent(name) + (tab && tab !== 'overview' ? '/' + tab : '');
