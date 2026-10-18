@@ -4,10 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
-	_ "embed"
+	"embed"
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -23,11 +24,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-//go:embed index.html
-var index []byte
-
-//go:embed app.js
-var app []byte
+// dist is the OpenUI console built from web/ (npm run build).
+//
+//go:embed dist
+var dist embed.FS
 
 //go:embed style.css
 var style []byte
@@ -67,14 +67,16 @@ func (s *Server) Handler() (http.Handler, error) {
 		}
 	}
 	mux := http.NewServeMux()
+	index, e := dist.ReadFile("dist/index.html")
+	if e != nil {
+		return nil, errors.New("console build is missing; run npm run build in web/")
+	}
+	assets, _ := fs.Sub(dist, "dist")
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write(index)
 	})
-	mux.HandleFunc("GET /app.js", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
-		w.Write(app)
-	})
+	mux.Handle("GET /assets/", http.FileServerFS(assets))
 	mux.HandleFunc("GET /style.css", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
 		w.Write(style)
@@ -127,7 +129,7 @@ func (s *Server) Handler() (http.Handler, error) {
 		if s.OIDC != nil && r.Method == "GET" {
 			if r.URL.Path == "/auth/signed-out" {
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
-				io.WriteString(w, `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Signed out</title><link rel="stylesheet" href="/style.css"><main><h1>You are signed out</h1><p>Your dashboard session has ended. Your identity provider may still have a login session.</p><a href="/auth/login">Sign in</a></main></html>`)
+				io.WriteString(w, `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Signed out</title><link rel="stylesheet" href="/style.css"><main class="plain"><h1>You are signed out</h1><p>Your dashboard session has ended. Your identity provider may still have a login session.</p><p><a class="button primary" href="/auth/login">Sign in again</a></p></main></html>`)
 				return
 			}
 			if r.URL.Path == "/style.css" {

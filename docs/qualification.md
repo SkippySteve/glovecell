@@ -37,7 +37,7 @@ To exercise the dashboard in Chromium, install Playwright in a separate tooling 
 APC_BROWSER_TEST=true PLAYWRIGHT_MODULE_PATH=/path/to/node_modules/playwright go test -count=1 -v ./internal/web -run TestBrowserDashboard
 ```
 
-This uses the real Go HTTP handler with a fake Kubernetes client. It checks project creation, pause, resume, removal and audit rendering, including JavaScript errors. It does not provision a running sandbox. Node and Chromium are test tools only.
+This uses the real Go HTTP handler with a fake Kubernetes client. It checks instant open and lock of sandbox-control web access (all and per sandbox, against a fake sandbox-control), project creation, pause, resume, removal and audit rendering, including JavaScript errors and CSP violations. Set `APC_TEST_SCREENSHOT_DIR` to keep screenshots. Rebuild the UI with `npm run build` in `web/` before running it. It does not provision a running sandbox. Node and Chromium are test tools only.
 
 The inspected HTTP/2 streaming regression uses a local TLS upstream that sends a small server-sent event and keeps the response open. The client must receive the event before upstream completion. This checks streaming delivery and cancellation without model credentials; it does not qualify authenticated inference.
 
