@@ -2,6 +2,10 @@
 
 A Go controller that gives selected Forgejo repositories isolated project environments on Kubernetes Agent Sandbox. Open a project from the dashboard, work on a dedicated branch, then pause it or revoke access and remove its environment.
 
+For the current console, factory reports, repository boundary, and pending
+consolidation, read [current source status](docs/current-status.md). The published
+alpha described below predates those changes.
+
 ## Published alpha
 
 Release [0.1.0-alpha.1](https://github.com/SkippySteve/agent-project-controller/releases/tag/0.1.0-alpha.1) is the public starting point. The [quickstart](docs/quickstart.md) downloads its Linux amd64 CLI and Helm chart, checks `SHA256SUMS`, and installs the published images. The source archive does not contain container images.
@@ -13,7 +17,7 @@ These images were built from commit `6d754c47f223edbe5bfff399405fb1450abb0c4b` a
 
 Deploy those digests. The tags `0.1.0-alpha.1` and `6d754c47f223edbe5bfff399405fb1450abb0c4b` point at the same images. [docs/examples/alpha-values.yaml](docs/examples/alpha-values.yaml) is a Helm values file with those pins. Replace the Forgejo origin, owner, runtime class, storage class, public origin and OIDC client, and create the `controller-secrets` Secret yourself. The chart does not install Agent Sandbox, Cilium, gVisor, Forgejo or an identity provider.
 
-Current `main` also contains workspace-image replacement, an experimental standard NetworkPolicy provider, and an optional GitHub project host. None of those behaviors are in the `0.1.0-alpha.1` images. Rebuild from the commit you intend to run before relying on it. The NetworkPolicy provider is opt-in and is not a qualified dataplane. GitHub replaces Forgejo as the place one controller stores projects; it is not part of the qualified profile, and one controller uses one host. The qualified profile remains Cilium, gVisor, and Forgejo.
+Current development source also contains workspace-image replacement, an experimental standard NetworkPolicy provider, and an optional GitHub project host. None of those behaviors are in the `0.1.0-alpha.1` images. Rebuild from the commit you intend to run before relying on it. The NetworkPolicy provider is opt-in and is not a qualified dataplane. GitHub replaces Forgejo as the place one controller stores projects; it is not part of the qualified profile, and one controller uses one host. The qualified profile remains Cilium, gVisor, and Forgejo.
 
 An alpha pilot has run on a live Cilium and gVisor cluster with upstream Agent Sandbox. The qualified combination is Kubernetes 1.36.2, Agent Sandbox 1.0.4, Cilium 1.19.5, gVisor, Forgejo 15.0.9 and Authentik 2026.5.6. See [installation](docs/installation.md), [security boundaries](docs/security.md), [API](docs/api.md) and [qualification](docs/qualification.md) for the evidence and the remaining limits. Deploy digest-pinned images. The moving `:pilot` tag is not the published release.
 
