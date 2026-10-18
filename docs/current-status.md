@@ -7,9 +7,10 @@ access, provider renewal, and factory run reports. The console uses the Go
 sandbox-control API for existing sandbox summaries and access controls. Factory
 reports use a read-only mailbox and validate records before storing them.
 
-This consolidation is on `SkippySteve/cleanup-controller-current` until its
-Forgejo pull request reaches `main`. Earlier PRs targeted feature branches;
-their merged status alone did not mean the changes were on `main`.
+The cleanup consolidates the feature stack into `main`. Earlier PRs targeted
+feature branches; their merged status alone did not mean the changes were on
+`main`. Automation opens PRs under its own account so the maintainer can review
+and merge them without the author/reviewer deadlock.
 
 The published `0.1.0-alpha.1` images predate this console. Build and pin an image
 from the reviewed source revision before deploying these features. Factory
@@ -39,7 +40,7 @@ older static UI concept files are removed from current source.
 ## Working in Orca
 
 Open this repository as its own project. Create new worktrees from the default
-branch once the consolidation PR is merged. Use explicit parent worktrees only
+branch. Use explicit parent worktrees only
 for changes that depend on another unfinished change. Merge finished work into
 the default branch before deleting its feature branch.
 
