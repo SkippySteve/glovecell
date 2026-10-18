@@ -7,6 +7,7 @@ import {DataProvider, useData} from './data';
 import {Home} from './Home';
 import {NewSandbox} from './NewSandbox';
 import {Project} from './Project';
+import {Sandbox} from './sandbox/Sandbox';
 import {useRoute} from './router';
 import {Button, Callout} from './ui';
 
@@ -37,7 +38,7 @@ function App() {
     <>
       <Bar />
       <main id="view" className="page" tabIndex={-1}>
-        {route.view === 'new' ? <NewSandbox /> : route.view === 'project' ? <Project name={route.name} tab={route.tab} /> : <Home />}
+        {route.view === 'new' ? <NewSandbox /> : route.view === 'project' ? <Project name={route.name} tab={route.tab} /> : route.view === 'sandbox' ? <Sandbox id={route.id} tab={route.tab} /> : <Home />}
       </main>
       <Toasts />
     </>
