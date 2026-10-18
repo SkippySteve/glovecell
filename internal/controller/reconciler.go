@@ -48,6 +48,7 @@ var sandboxGVK = schema.GroupVersionKind{Group: "agents.x-k8s.io", Version: "v1b
 
 type Config struct {
 	Namespace, GitHost, ForgejoOrigin, Owner, Image, RuntimeClass, StorageClass string
+	RegistrarNamespace                                                         string
 	ProxyImage                                                                  string
 	StorageSize                                                                 string
 	WorkerResources, ProxyResources                                             ResourceProfile
@@ -62,6 +63,9 @@ func (c Config) Validate() error {
 	}
 	if c.Namespace == "" || c.Owner == "" || c.RuntimeClass == "" || c.StorageClass == "" {
 		return errors.New("control namespace, repository owner, runtime class and storage class required")
+	}
+	if err := validateRegistrarNamespace(c.RegistrarNamespace, c.Namespace); err != nil {
+		return err
 	}
 	if q, e := resource.ParseQuantity(c.StorageSize); e != nil || q.Sign() <= 0 {
 		return errors.New("invalid storage size")
@@ -413,6 +417,9 @@ func (r *Reconciler) ensure(ctx context.Context, w *api.ProjectWorkspace) error 
 	}
 	if !ns.DeletionTimestamp.IsZero() {
 		return errors.New("project namespace is terminating")
+	}
+	if e = r.ensureRegistrarAccess(ctx, w); e != nil {
+		return e
 	}
 	if w.Spec.DesiredState != "Paused" {
 		if e = r.modelAccess(ctx, w); e != nil {
@@ -911,6 +918,11 @@ func (r *Reconciler) remove(ctx context.Context, w *api.ProjectWorkspace) error 
 	}
 	if stopErr != nil {
 		return stopErr
+	}
+	// Desktop T3/Orca revoke by stored id; do not delete the project namespace
+	// while a registrar ledger still shows pending or registered clients.
+	if e = r.clientsPending(ctx, w); e != nil {
+		return e
 	}
 	ns := &corev1.Namespace{}
 	e = r.Get(ctx, types.NamespacedName{Name: namespace(w)}, ns)

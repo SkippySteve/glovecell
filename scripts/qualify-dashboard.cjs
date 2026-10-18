@@ -41,7 +41,7 @@ const {chromium} = require(process.env.PLAYWRIGHT_MODULE_PATH || 'playwright');
 	await page.getByRole('button',{name:'Save existing access',exact:true}).click();
 	await page.waitForURL(/\/sandboxes\/\?workspace=shared-pilot&tab=access/);
 	await page.getByRole('link',{name:'Projects',exact:true}).click();
-	await page.getByRole('heading',{name:'Projects and sandboxes',exact:true}).waitFor();
+	await page.getByRole('heading',{name:'Build. Test. Keep control.',exact:true}).waitFor();
     if (errors.length) throw new Error(errors.join('\n'));
     console.log('Browser qualification passed: visible preparation blocker, paused egress editing, create/pause/resume/remove, audit and existing sandbox controls in one authenticated app.');
   } finally { await browser.close(); }

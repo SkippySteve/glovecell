@@ -16,6 +16,7 @@ import (
 
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/forgejo"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/registration"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -109,6 +110,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.HandleFunc("PATCH /api/v1/workspaces/{name}", s.change)
 	mux.HandleFunc("PATCH /api/v1/workspaces/{name}/access", s.changeAccess)
 	mux.HandleFunc("GET /api/v1/workspaces/{name}/audit", s.audit)
+	mux.HandleFunc("GET /api/v1/workspaces/{name}/clients", s.clients)
 	if s.SandboxControl != nil {
 		mux.Handle("/sandboxes/", s.SandboxControl.Handler(s.Origin))
 		mux.HandleFunc("GET /sandboxes", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/sandboxes/", http.StatusSeeOther) })
@@ -200,6 +202,38 @@ func decode(w http.ResponseWriter, r *http.Request, v any) error {
 
 var validName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,39}$`)
 
+var errNameInUse = errors.New("project name already exists")
+
+// releaseRemovedName deletes a workspace only after removal has been verified,
+// so the same project name can be requested again.
+func (s *Server) releaseRemovedName(ctx context.Context, name string) error {
+	existing := &api.ProjectWorkspace{}
+	if e := s.Client.Get(ctx, types.NamespacedName{Namespace: s.Namespace, Name: name}, existing); e != nil {
+		if apierrors.IsNotFound(e) {
+			return nil
+		}
+		return e
+	}
+	if existing.Spec.DesiredState != "Removed" || existing.Status.Phase != "Removed" || !existing.DeletionTimestamp.IsZero() {
+		return errNameInUse
+	}
+	original := append([]string(nil), existing.Finalizers...)
+	kept := make([]string, 0, len(original))
+	for _, f := range original {
+		if f != api.Finalizer {
+			kept = append(kept, f)
+		}
+	}
+	existing.Finalizers = kept
+	if e := s.Client.Update(ctx, existing); e != nil {
+		return e
+	}
+	if e := s.Client.Delete(ctx, existing); e != nil && !apierrors.IsNotFound(e) {
+		return e
+	}
+	return nil
+}
+
 func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Name       string          `json:"name"`
@@ -217,6 +251,14 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor, _ := r.Context().Value(actorKey{}).(string)
+	if e := s.releaseRemovedName(r.Context(), request.Name); e != nil {
+		if errors.Is(e, errNameInUse) {
+			http.Error(w, "project name already exists", 409)
+		} else {
+			http.Error(w, "project request could not be saved", 503)
+		}
+		return
+	}
 	obj := &api.ProjectWorkspace{TypeMeta: metav1.TypeMeta{APIVersion: api.GroupVersion.String(), Kind: "ProjectWorkspace"}, ObjectMeta: metav1.ObjectMeta{Name: request.Name, Namespace: s.Namespace, Annotations: map[string]string{"projects.agentwork.dev/requested-by": actor}}, Spec: api.WorkspaceSpec{Repository: request.Repository, DesiredState: "Running", HTTPS: rules}}
 	if e := s.Client.Create(r.Context(), obj); e != nil {
 		if apierrors.IsAlreadyExists(e) {
@@ -287,4 +329,37 @@ func (s *Server) audit(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, items)
+}
+
+func (s *Server) clients(w http.ResponseWriter, r *http.Request) {
+	obj := &api.ProjectWorkspace{}
+	if e := s.Client.Get(r.Context(), types.NamespacedName{Namespace: s.Namespace, Name: r.PathValue("name")}, obj); e != nil {
+		http.Error(w, "project unavailable", 404)
+		return
+	}
+	cm := &corev1.ConfigMap{}
+	name := registration.ConfigMapName(string(obj.UID))
+	err := s.Client.Get(r.Context(), types.NamespacedName{Namespace: s.Namespace, Name: name}, cm)
+	if apierrors.IsNotFound(err) {
+		writeJSON(w, map[string]any{"clients": []any{}, "owners": map[string]string{}})
+		return
+	}
+	if err != nil {
+		http.Error(w, "client ledger unavailable", 503)
+		return
+	}
+	if cm.Labels[api.OwnerLabel] != string(obj.UID) {
+		http.Error(w, "client ledger ownership mismatch", 409)
+		return
+	}
+	ledger, err := registration.DecodeConfigMapData(cm.Data)
+	if err != nil {
+		http.Error(w, "client ledger unavailable", 503)
+		return
+	}
+	clients := []map[string]string{}
+	for kind, rec := range ledger.Clients {
+		clients = append(clients, map[string]string{"kind": kind, "state": rec.State, "id": rec.ID, "path": rec.Path})
+	}
+	writeJSON(w, map[string]any{"clients": clients, "owners": ledger.Owners})
 }
