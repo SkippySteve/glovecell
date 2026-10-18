@@ -10,6 +10,9 @@ import (
 )
 
 func TestFuseMountLooksLikeGitToGitAndOrca(t *testing.T) {
+	if os.Getenv("APC_ORCA_INTEGRATION") != "1" {
+		t.Skip("set APC_ORCA_INTEGRATION=1 to test against a disposable Orca profile")
+	}
 	if _, err := os.Stat("/dev/fuse"); err != nil {
 		t.Skip("no /dev/fuse")
 	}
@@ -82,7 +85,7 @@ func TestFuseMountLooksLikeGitToGitAndOrca(t *testing.T) {
 	if id == "" {
 		t.Fatalf("no repo id in %s", addOut)
 	}
-	del := exec.Command(orca, "project", "setup-delete", "--setup", id, "--json")
+	del := exec.Command(orca, "project", "setup-delete", "--setup", id, "--force", "--json")
 	if out, err := del.CombinedOutput(); err != nil {
 		t.Fatalf("orca delete id=%s: %v %s", id, err, out)
 	}
