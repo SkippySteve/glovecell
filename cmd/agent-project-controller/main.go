@@ -298,6 +298,9 @@ func run(ctx context.Context) error {
 	} else if os.Getenv("SANDBOX_CONTROL_ORIGIN") != "" || os.Getenv("SANDBOX_CONTROL_OPERATOR") != "" {
 		return errors.New("sandbox control integration requires URL, origin and delegated operator together")
 	}
+	if dir := os.Getenv("RUN_RECORDS_DIR"); dir != "" {
+		server.RunRecords = &web.RunRecords{Dir: dir}
+	}
 	if os.Getenv("OIDC_ISSUER") != "" {
 		clientSecret, err := secret("OIDC_CLIENT_SECRET_FILE")
 		if err != nil {

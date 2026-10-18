@@ -10,7 +10,7 @@ export interface Project {
   status?: { phase?: string; namespace?: string; observedGeneration?: number; conditions?: Condition[] };
 }
 export interface AuditRecord { time: string; action: string; message?: string }
-export interface Session { actor?: string; oidc?: boolean; sandboxControl?: boolean; t3Connect?: boolean; githubOwner?: string }
+export interface Session { actor?: string; oidc?: boolean; sandboxControl?: boolean; t3Connect?: boolean; githubOwner?: string; runRecords?: boolean }
 export interface Repository { full_name: string }
 
 export type EgressState = 'Open' | 'Learning' | 'Locked';

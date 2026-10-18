@@ -7,9 +7,11 @@
   "scripts": {
     "theme": "node scripts/theme-css.mjs",
     "build": "npm run theme && tsc --noEmit && vite build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
+    "@openuidev/lang-core": "0.3.2",
     "@openuidev/react-headless": "0.16.3",
     "@openuidev/react-lang": "0.3.0",
     "@openuidev/react-ui": "0.16.3",
@@ -23,6 +25,7 @@
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.1",
     "typescript": "7.0.2",
-    "vite": "8.3.2"
+    "vite": "8.3.2",
+    "vitest": "3.2.4"
   }
 }
