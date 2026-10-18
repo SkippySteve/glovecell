@@ -17,6 +17,18 @@ The schema is `web/src/factory/record.ts`. The console validates every record
 against it before rendering and refuses one that fails. Check results must come
 from CI or the collector; an agent cannot report them.
 
+### Pulling records from a publisher
+
+Set `RUN_RECORDS_SOURCES` to one or more comma-separated `http(s)` origins of
+read-only run record publishers, such as an Orca runtime. Once a minute the
+controller reads each source's `GET /runs` index of `{id, sha256}` and fetches
+`GET /runs/<id>` only for records it does not already hold with that hash. A
+record must match its index hash and pass the same bounds as a served record before
+it is written, atomically, into `RUN_RECORDS_DIR`. Publishers never write to the
+console. The controller needs a writable `RUN_RECORDS_DIR`, for example an
+`emptyDir`, because its root filesystem is read-only; pulled records come back
+within a minute after a restart.
+
 ## How a report is built
 
 `web/src/factory/project.ts` projects a record into OpenUI Lang with OpenUI's own

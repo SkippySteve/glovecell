@@ -50,6 +50,7 @@ type Server struct {
 	SandboxControl                     *SandboxControl
 	RunRecords                         *RunRecords
 }
+
 // openUISpinnerStyle allows the one stylesheet OpenUI's Renderer injects on mount
 // (its query-loader keyframes). web/src/factory/csp.test.ts checks the hash still
 // matches the installed @openuidev/react-lang.

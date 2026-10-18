@@ -63,13 +63,20 @@ func (c RunRecords) read(id string) ([]byte, runHeader, error) {
 	if err != nil {
 		return nil, header, err
 	}
+	header, err = validRunRecord(raw, id)
+	return raw, header, err
+}
+
+// validRunRecord applies the bounds every served or pulled record must meet.
+func validRunRecord(raw []byte, id string) (runHeader, error) {
+	var header runHeader
 	if len(raw) > maxRunRecord {
-		return nil, header, errors.New("run record exceeds the size bound")
+		return header, errors.New("run record exceeds the size bound")
 	}
-	if err = json.Unmarshal(raw, &header); err != nil || header.Version != 1 || header.Run.ID != id {
-		return nil, header, errors.New("run record is invalid or names another run")
+	if err := json.Unmarshal(raw, &header); err != nil || header.Version != 1 || header.Run.ID != id {
+		return header, errors.New("run record is invalid or names another run")
 	}
-	return raw, header, nil
+	return header, nil
 }
 
 func (c RunRecords) list(w http.ResponseWriter, r *http.Request) {
