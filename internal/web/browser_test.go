@@ -41,6 +41,7 @@ func TestBrowserDashboard(t *testing.T) {
 	pendingObs := map[string]bool{"files.example.com": true, "tracker.example.com": true}
 	approvedObs := map[string]bool{"registry.example.com": true}
 	previewState := "Pending"
+	devLinkState := "Pending"
 	var nativeActions []string
 	observations := func(set map[string]bool) []map[string]any {
 		out := []map[string]any{}
@@ -115,6 +116,12 @@ func TestBrowserDashboard(t *testing.T) {
 						return
 					}
 					previewState = r.Form.Get("state")
+				case "/devlink-decision ":
+					if r.Form.Get("name") != "todo" || r.Form.Get("duration") != "7d" {
+						fail(400, "unexpected dev link decision")
+						return
+					}
+					devLinkState = r.Form.Get("state")
 				case "/rollback ", "/services ", "/profile ":
 				default:
 					fail(400, "unknown learning action")
@@ -152,6 +159,13 @@ func TestBrowserDashboard(t *testing.T) {
 			case "/api/previews":
 				body = map[string]any{"expiredCount": 0, "requests": []map[string]any{{"id": "p1", "state": previewState, "proposedName": "docs-site", "proposedRulesText": "GET,HEAD prefix:/", "rulesText": "", "lan": false, "tailscale": false, "gapAcknowledged": false, "seen": 1900000000.0, "first": 1899999000.0, "count": 3,
 					"listener": map[string]any{"project": "workspace", "worktree": "main", "port": 8080, "pid": 41, "address": "0.0.0.0", "loopback": false}, "urls": map[string]string{"lan": "https://preview-p1.example.com", "tailnet": "https://preview-p1-ts.example.com"}}}}
+			case "/api/devlinks":
+				live := devLinkState == "Approved"
+				body = []map[string]any{{"Name": "todo", "Workspace": id, "State": devLinkState, "URL": "https://todo.dev.cluster.aimingupward.com/", "Host": "todo.dev.cluster.aimingupward.com", "Port": 3000,
+					"Cwd": "/workspace/worktrees/todo", "Project": "unknown", "Note": "Todo app for review", "RulesText": "GET,HEAD,POST prefix:/", "Approved": live, "ApprovedDigest": map[bool]string{true: "abcdef0123456789"}[live],
+					"Expires": 1900600000, "Requested": 1899990000, "Actor": "operator", "Live": live, "AccessTotal": 0, "Viewers": "operator via Authentik",
+					"Scan":   map[string]any{"ID": "s1", "Status": "Complete", "Commit": strings.Repeat("c", 40), "Branch": "task/orca-pilot/todo", "Worktree": "clean", "Scanner": "Trivy 0.74.0", "Digest": "abcdef0123456789"},
+					"Counts": map[string]int{"packages": 42, "unapproved": 3, "critical": 0, "high": 1, "medium": 2, "low": 0, "secrets": 0, "modified": 0}}}
 			case "/api/activity":
 				body = map[string]any{"window": map[string]any{"start": "2030-03-17T17:31:40Z", "end": "2030-03-17T17:46:40Z", "minutes": 15}, "links": map[string]string{},
 					"sources": []map[string]any{{"source": "Web inspection", "scope": "agent-workspace-" + id, "at": 1900000000, "items": []map[string]any{{"title": "GET files.example.com", "target": "https://files.example.com/v1", "time": "17:40", "outcome": "Blocked", "blocked": map[string]any{"host": "files.example.com", "method": "GET", "path": "/v1", "timestamp": "x", "reason": "Approve web requests on the Access tab"}}}}},
@@ -207,7 +221,7 @@ func TestBrowserDashboard(t *testing.T) {
 	if egressChanges.Load() != 7 || egress["shared-pilot"] != "Locked" || egress["orca"] != "Open" || minutes["orca"] != "240" {
 		t.Fatalf("instant egress changes did not reach sandbox control: %d %v %v", egressChanges.Load(), egress, minutes)
 	}
-	want := []string{"/egress learning-open", "/egress learning-lock", "/egress approve-learning", "/egress clear-unapproved", "/decision", "/lifecycle", "/lifecycle", "/rollback"}
+	want := []string{"/egress learning-open", "/egress learning-lock", "/egress approve-learning", "/egress clear-unapproved", "/decision", "/devlink-decision", "/lifecycle", "/lifecycle", "/rollback"}
 	if strings.Join(nativeActions[len(nativeActions)-len(want):], ",") != strings.Join(want, ",") {
 		t.Fatalf("native sandbox actions: %v", nativeActions)
 	}

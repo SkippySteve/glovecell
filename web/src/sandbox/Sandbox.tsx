@@ -6,6 +6,7 @@ import {clock} from '../state';
 import {Button, Callout, Card, CardHeader, Tabs, TabsContent, TabsList, TabsTrigger, Tag, TextArea, ToggleGroup, ToggleItem} from '../ui';
 import {AccessTab} from './Access';
 import {ActivityTab} from './Activity';
+import {DevLinksTab} from './DevLinks';
 import {PreviewsTab} from './Previews';
 import {SettingsTab} from './Settings';
 import {SandboxRuns} from '../factory/SandboxRuns';
@@ -168,7 +169,7 @@ export function Sandbox({id, tab}: {id: string; tab: SandboxTab}) {
     setWorking(false);
   };
   const ctx: SandboxContext = {detail, reload, act};
-  const counts: Partial<Record<SandboxTab, number>> = {access: detail.egressCounts?.pending, previews: detail.previewPending};
+  const counts: Partial<Record<SandboxTab, number>> = {access: detail.egressCounts?.pending, previews: detail.previewPending, devlinks: detail.devLinkPending};
   const egress = detail.learning?.phase;
   return (
     <>
@@ -194,6 +195,7 @@ export function Sandbox({id, tab}: {id: string; tab: SandboxTab}) {
         </TabsList>
         <TabsContent value="overview"><Overview {...ctx} /></TabsContent>
         {detail.learningEgress ? <TabsContent value="access"><AccessTab {...ctx} /></TabsContent> : null}
+        <TabsContent value="devlinks">{tab === 'devlinks' ? <DevLinksTab {...ctx} /> : null}</TabsContent>
         <TabsContent value="previews"><PreviewsTab {...ctx} /></TabsContent>
         <TabsContent value="activity">{tab === 'activity' ? <ActivityTab {...ctx} /> : null}</TabsContent>
         {session.runRecords ? <TabsContent value="runs">{tab === 'runs' ? <SandboxRuns namespace={detail.namespace} /> : null}</TabsContent> : null}

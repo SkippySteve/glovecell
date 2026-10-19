@@ -80,7 +80,7 @@ export interface ServiceAccess { name: string; host: string; editable: boolean; 
 export interface SandboxDetail {
   id: string; namespace: string; sandbox: string; mode: 'Running' | 'Suspended' | string;
   revision: Revision; learningEgress: boolean; tailnetReady: boolean; serviceOwner: boolean;
-  learning?: LearningWindow; providerHosts: string[]; previewPending: number;
+  learning?: LearningWindow; providerHosts: string[]; previewPending: number; devLinkPending?: number;
   egressCounts?: {pending: number; approved: number};
   links: {grafana?: string; openlit?: string};
   services: ServiceAccess[]; revisions: Revision[];
@@ -92,6 +92,22 @@ export interface Preview {
   lan: boolean; tailscale: boolean; gapAcknowledged: boolean; seen: number; first: number; count: number;
   listener: {project: string; worktree: string; port: number; pid: number; address: string; loopback: boolean};
   urls: {lan: string; tailnet: string};
+}
+export interface DevScan {
+  ID: string; Status: string; Error: string; Started: number; Finished: number; Root: string;
+  Commit: string; Branch: string; Remote: string; Worktree: string; Modified: string[] | null;
+  Packages: {Ecosystem: string; Name: string; Version: string; License: string; Approved: boolean}[] | null;
+  Vulns: {ID: string; Package: string; Version: string; Fixed: string; Severity: string; Title: string}[] | null;
+  Secrets: {File: string; Rule: string; Title: string; Severity: string; Line: number}[] | null;
+  Scanner: string; Truncated: boolean; Digest: string;
+}
+export interface DevLink {
+  Name: string; Workspace: string; State: string; URL: string; Host: string; Port: number;
+  Cwd: string; Project: string; Worktree: string; Note: string; RulesText: string;
+  Scan: DevScan; Approved: boolean; ApprovedDigest: string; Expires: number; Requested: number; Decided: number; Actor: string; Live: boolean;
+  Counts: Record<'packages' | 'unapproved' | 'critical' | 'high' | 'medium' | 'low' | 'secrets' | 'modified', number>;
+  Events: {Action: string; Actor: string; Detail: string; At: number}[] | null;
+  AccessTotal: number; Egress: string; Viewers: string;
 }
 export interface ActivityItem { title: string; target: string; time: string; outcome?: string; details?: {label: string; value: string}[]; count?: number; blocked?: {host: string; method: string; path: string; timestamp: string; reason?: string; token?: string} }
 export interface ActivitySource { source: string; scope: string; at: number; error?: string; items: ActivityItem[] }
@@ -107,6 +123,7 @@ async function sandboxGet<T>(path: string, params: Record<string, string>): Prom
 export const sandboxDetail = (id: string) => sandboxGet<SandboxDetail>('/api/workspace', {workspace: id});
 export const sandboxObservations = (id: string, q: string) => sandboxGet<ObservationPage>('/api/egress', {workspace: id, q});
 export const sandboxPreviews = (id: string, expired: boolean) => sandboxGet<{expiredCount: number; requests: Preview[]}>('/api/previews', expired ? {workspace: id, expired: '1'} : {workspace: id});
+export const sandboxDevLinks = (id: string) => sandboxGet<DevLink[]>('/api/devlinks', {workspace: id});
 export const sandboxActivity = (id: string, minutes: number) => sandboxGet<Activity>('/api/activity', {workspace: id, minutes: String(minutes)});
 
 // Posts a sandbox-control form action and returns the refreshed summary.
