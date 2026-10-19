@@ -50,6 +50,7 @@ type Server struct {
 	GitHubOwner                        string
 	SandboxControl                     *SandboxControl
 	RunRecords                         *RunRecords
+	Handoffs                           *Handoffs
 }
 
 // openUISpinnerStyle allows the one stylesheet OpenUI's Renderer injects on mount
@@ -112,11 +113,19 @@ func (s *Server) Handler() (http.Handler, error) {
 	})
 	mux.HandleFunc("GET /api/v1/session", func(w http.ResponseWriter, r *http.Request) {
 		actor, _ := r.Context().Value(actorKey{}).(string)
-		writeJSON(w, map[string]any{"actor": actor, "oidc": s.OIDC != nil, "sandboxControl": s.SandboxControl != nil, "t3Connect": s.T3Connect, "githubOwner": s.GitHubOwner, "runRecords": s.RunRecords != nil})
+		writeJSON(w, map[string]any{"actor": actor, "oidc": s.OIDC != nil, "sandboxControl": s.SandboxControl != nil, "t3Connect": s.T3Connect, "githubOwner": s.GitHubOwner, "runRecords": s.RunRecords != nil, "handoffs": s.Handoffs != nil})
 	})
 	if s.RunRecords != nil {
 		mux.HandleFunc("GET /api/v1/runs", s.RunRecords.list)
 		mux.HandleFunc("GET /api/v1/runs/{id}", s.RunRecords.get)
+	}
+	if s.Handoffs != nil {
+		if e := s.Handoffs.Validate(); e != nil {
+			return nil, e
+		}
+		mux.HandleFunc("POST /api/v1/handoffs", s.Handoffs.create)
+		mux.HandleFunc("GET /api/v1/handoffs", s.Handoffs.list)
+		mux.HandleFunc("GET /api/v1/handoffs/{name}", s.Handoffs.get)
 	}
 	mux.HandleFunc("GET /api/v1/workspaces", func(w http.ResponseWriter, r *http.Request) {
 		list := &api.ProjectWorkspaceList{}
