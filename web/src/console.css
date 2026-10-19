@@ -182,3 +182,16 @@ code { font-family: var(--openui-font-code); font-size: 0.9em; }
 .profile-row { display: flex; gap: var(--openui-space-m); align-items: flex-end; flex-wrap: wrap; }
 .profile-row .field { flex: 1 1 240px; }
 .subtle-link { border-color: transparent; color: var(--openui-text-neutral-secondary); }
+
+/* Dev links */
+.devlink-checks { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--openui-space-s); }
+.devlink-check { display: grid; grid-template-columns: 20px 1fr; gap: var(--openui-space-s); align-items: start; }
+.devlink-check > span { font-weight: 700; text-align: center; }
+.devlink-check div { display: flex; flex-direction: column; }
+.devlink-check.is-ok > span { color: var(--openui-text-success-primary); }
+.devlink-check.is-warn > span { color: var(--openui-text-alert-primary); }
+.devlink-check.is-bad > span { color: var(--openui-text-danger-primary); }
+.devlink-note { border-left: 3px solid var(--openui-border-default); padding-left: var(--openui-space-s); margin: 0; overflow-wrap: anywhere; }
+.devlink code { overflow-wrap: anywhere; }
+/* The theme's accent text is near-white on light surfaces; dev link URLs must stay legible. */
+.devlink a { color: var(--openui-text-info-primary); }
