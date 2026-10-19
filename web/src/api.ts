@@ -85,7 +85,9 @@ export interface SandboxDetail {
   links: {grafana?: string; openlit?: string};
   services: ServiceAccess[]; revisions: Revision[];
 }
-export interface Observation { host: string; method: string; path: string; scheme: string; port: number; queryHash?: string; package?: {ecosystem: string; name: string; version?: string}; last?: number; observation: string }
+// One method and URL. fingerprints counts its distinct queries and bodies; older
+// sandbox-control releases list each fingerprint on its own and omit the counts.
+export interface Observation { host: string; method: string; path: string; scheme: string; port: number; queryHash?: string; package?: {ecosystem: string; name: string; version?: string}; fingerprints?: number; requests?: number; first?: number; last?: number; observation: string }
 export interface ObservationPage { filter: string; pending: {total: number; items: Observation[]}; approved: {total: number; items: Observation[]} }
 export interface Preview {
   id: string; state: string; proposedName: string; proposedRulesText: string; rulesText: string;
@@ -109,7 +111,7 @@ export interface DevLink {
   Events: {Action: string; Actor: string; Detail: string; At: number}[] | null;
   AccessTotal: number; Egress: string; Viewers: string;
 }
-export interface ActivityItem { title: string; target: string; time: string; outcome?: string; details?: {label: string; value: string}[]; count?: number; blocked?: {host: string; method: string; path: string; timestamp: string; reason?: string; token?: string} }
+export interface ActivityItem { title: string; target: string; time: string; outcome?: string; details?: {label: string; value: string}[]; count?: number; first?: string; blocked?: {host: string; method: string; path: string; timestamp: string; reason?: string; token?: string} }
 export interface ActivitySource { source: string; scope: string; at: number; error?: string; items: ActivityItem[] }
 export interface Activity { window: {start: string; end: string; minutes: number}; links: {grafana?: string; openlit?: string}; sources: ActivitySource[]; health: {error?: string; cards: {title: string; target: string}[]} }
 

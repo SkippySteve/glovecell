@@ -47,7 +47,11 @@ func TestBrowserDashboard(t *testing.T) {
 		out := []map[string]any{}
 		for host := range set {
 			raw, _ := json.Marshal(map[string]any{"Host": host, "Method": "GET", "Path": "/v1", "Scheme": "https", "Port": 443, "QueryHash": ""})
-			out = append(out, map[string]any{"host": host, "method": "GET", "path": "/v1", "scheme": "https", "port": 443, "observation": string(raw)})
+			item := map[string]any{"host": host, "method": "GET", "path": "/v1", "scheme": "https", "port": 443, "fingerprints": 1, "requests": 1, "first": 1900000000, "last": 1900000000, "observation": string(raw)}
+			if host == "files.example.com" {
+				item["fingerprints"], item["requests"], item["last"] = 3, 5, 1900000600
+			}
+			out = append(out, item)
 		}
 		sort.Slice(out, func(i, j int) bool { return out[i]["host"].(string) < out[j]["host"].(string) })
 		return out
@@ -92,14 +96,14 @@ func TestBrowserDashboard(t *testing.T) {
 					egress[id] = map[string]string{"learning-open": "Open", "learning-lock": "Locked", "learning-resume": "Learning"}[action]
 					minutes[id] = r.Form.Get("minutes")
 					egressChanges.Add(1)
-				case "/egress approve-learning", "/egress revoke-learning":
+				case "/egress approve-endpoint", "/egress revoke-endpoint":
 					var o map[string]any
 					if json.Unmarshal([]byte(r.Form.Get("observation")), &o) != nil || o["Host"] == nil {
 						fail(400, "invalid observation")
 						return
 					}
 					host := o["Host"].(string)
-					if action == "approve-learning" {
+					if action == "approve-endpoint" {
 						delete(pendingObs, host)
 						approvedObs[host] = true
 					} else {
@@ -168,7 +172,7 @@ func TestBrowserDashboard(t *testing.T) {
 					"Counts": map[string]int{"packages": 42, "unapproved": 3, "critical": 0, "high": 1, "medium": 2, "low": 0, "secrets": 0, "modified": 0}}}
 			case "/api/activity":
 				body = map[string]any{"window": map[string]any{"start": "2030-03-17T17:31:40Z", "end": "2030-03-17T17:46:40Z", "minutes": 15}, "links": map[string]string{},
-					"sources": []map[string]any{{"source": "Web inspection", "scope": "agent-workspace-" + id, "at": 1900000000, "items": []map[string]any{{"title": "GET files.example.com", "target": "https://files.example.com/v1", "time": "17:40", "outcome": "Blocked", "blocked": map[string]any{"host": "files.example.com", "method": "GET", "path": "/v1", "timestamp": "x", "reason": "Approve web requests on the Access tab"}}}}},
+					"sources": []map[string]any{{"source": "Web inspection", "scope": "agent-workspace-" + id, "at": 1900000000, "items": []map[string]any{{"title": "GET files.example.com", "target": "https://files.example.com/v1", "time": "17:40", "outcome": "Blocked", "count": 4, "first": "Oct 19, 17:31:02 UTC", "blocked": map[string]any{"host": "files.example.com", "method": "GET", "path": "/v1", "timestamp": "x", "reason": "Approve web requests on the Access tab"}}}}},
 					"health":  map[string]any{"cards": []map[string]string{{"title": "worker", "target": "212.0 MiB memory in use"}}}}
 			default:
 				http.NotFound(w, r)
@@ -221,7 +225,7 @@ func TestBrowserDashboard(t *testing.T) {
 	if egressChanges.Load() != 7 || egress["shared-pilot"] != "Locked" || egress["orca"] != "Open" || minutes["orca"] != "240" {
 		t.Fatalf("instant egress changes did not reach sandbox control: %d %v %v", egressChanges.Load(), egress, minutes)
 	}
-	want := []string{"/egress learning-open", "/egress learning-lock", "/egress approve-learning", "/egress clear-unapproved", "/decision", "/devlink-decision", "/lifecycle", "/lifecycle", "/rollback"}
+	want := []string{"/egress learning-open", "/egress learning-lock", "/egress approve-endpoint", "/egress clear-unapproved", "/decision", "/devlink-decision", "/lifecycle", "/lifecycle", "/rollback"}
 	if strings.Join(nativeActions[len(nativeActions)-len(want):], ",") != strings.Join(want, ",") {
 		t.Fatalf("native sandbox actions: %v", nativeActions)
 	}
