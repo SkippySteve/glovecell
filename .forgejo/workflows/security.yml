@@ -1,0 +1,91 @@
+# Security gates from the factory CI.md (templates/forgejo/security.yml), with one image
+# job per Dockerfile target.
+name: security
+on:
+  push:
+    branches: [main]
+    tags: ['*']
+  pull_request:
+  schedule:
+    - cron: '23 5 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  TRIVY_VERSION: 0.76.0
+  TRIVY_SHA256: e24b1c51293c1b15e4ba8d45bbc7891ba053f90278ec2698f3562c993e145fe7
+  GITLEAKS_VERSION: 8.30.1
+  GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+  # Gate: fixable HIGH/CRITICAL findings fail the job. Reports keep every severity.
+  GATE: --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Install pinned scanners
+        run: |
+          set -eu
+          cd /tmp
+          curl -fsSLo trivy.tgz "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          echo "${TRIVY_SHA256}  trivy.tgz" | sha256sum -c -
+          curl -fsSLo gitleaks.tgz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tgz" | sha256sum -c -
+          mkdir -p "$HOME/.local/bin"
+          tar -xzf trivy.tgz -C "$HOME/.local/bin" trivy
+          tar -xzf gitleaks.tgz -C "$HOME/.local/bin" gitleaks
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          mkdir -p "$GITHUB_WORKSPACE/reports"
+      - name: Secrets in history
+        run: gitleaks git --redact --report-format json --report-path reports/gitleaks.json .
+      - name: Record source findings and SBOM
+        if: always()
+        run: |
+          trivy fs --scanners vuln,secret,misconfig --format json --output reports/trivy-source.json .
+          trivy fs --format cyclonedx --output reports/sbom-source.cdx.json .
+      - name: Gate source findings
+        run: trivy fs --scanners vuln,secret,misconfig $GATE .
+      - uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
+        if: always()
+        with:
+          name: security-reports-source
+          path: reports/
+          if-no-files-found: warn
+  image:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [runtime, workspace]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install pinned Trivy
+        run: |
+          set -eu
+          curl -fsSLo /tmp/trivy.tgz "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          echo "${TRIVY_SHA256}  /tmp/trivy.tgz" | sha256sum -c -
+          mkdir -p "$HOME/.local/bin" reports
+          tar -xzf /tmp/trivy.tgz -C "$HOME/.local/bin" trivy
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Build candidate
+        run: |
+          docker build --target "${{ matrix.target }}" \
+            --build-arg VERSION=0.1.0-alpha.1 --build-arg SOURCE_REVISION="${GITHUB_SHA}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --tag "candidate-${{ matrix.target }}:${GITHUB_SHA}" .
+      - name: Record image findings and SBOM
+        if: always()
+        run: |
+          trivy image --format json --output reports/trivy-image.json "candidate-${{ matrix.target }}:${GITHUB_SHA}"
+          trivy image --format cyclonedx --output reports/sbom-image.cdx.json "candidate-${{ matrix.target }}:${GITHUB_SHA}"
+      - name: Gate image findings
+        run: trivy image $GATE "candidate-${{ matrix.target }}:${GITHUB_SHA}"
+      - uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
+        if: always()
+        with:
+          name: security-reports-image-${{ matrix.target }}
+          path: reports/
+          if-no-files-found: warn
