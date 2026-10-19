@@ -2,13 +2,24 @@ import {useCallback, useEffect, useState} from 'react';
 import {sandboxObservations, type Observation, type ObservationPage} from '../api';
 import {useData} from '../data';
 import {Button, Card, CardHeader, Input, Tag} from '../ui';
-import type {SandboxContext} from './Sandbox';
+import {timeOf, type SandboxContext} from './Sandbox';
+
+const plural = (n: number, word: string) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
+const grouped = (o: Observation) => o.fingerprints !== undefined;
 
 function Request({o}: {o: Observation}) {
+  const fingerprints = o.fingerprints ?? 1;
+  const span = !!o.first && !!o.last && o.first !== o.last;
+  const details = [
+    o.package ? `${o.package.ecosystem} ${o.package.name} ${o.package.version || ''}`.trim() : '',
+    fingerprints > 1 ? plural(fingerprints, 'request fingerprint') : o.queryHash ? 'Request fingerprint ' + o.queryHash.slice(0, 12) : '',
+    span ? `First seen ${timeOf(o.first!)}` : '',
+    o.last ? `${span ? 'last seen' : 'Seen'} ${timeOf(o.last)}` : '',
+  ].filter(Boolean);
   return (
     <div className="item-main">
-      <span className="request"><span className="method">{o.method}</span><code>{o.scheme}://{o.host}{o.port === 443 || o.port === 80 ? '' : ':' + o.port}{o.path}</code></span>
-      {o.package || o.queryHash ? <span className="subtle">{o.package ? `${o.package.ecosystem} ${o.package.name} ${o.package.version || ''}` : ''}{o.package && o.queryHash ? ' · ' : ''}{o.queryHash ? 'Request fingerprint ' + o.queryHash.slice(0, 12) : ''}</span> : null}
+      <span className="request"><span className="method">{o.method}</span><code>{o.scheme}://{o.host}{o.port === 443 || o.port === 80 ? '' : ':' + o.port}{o.path}</code>{o.requests ? <Tag size="sm" text={plural(o.requests, 'request')} className="inline-tag" /> : null}</span>
+      {details.length ? <span className="subtle">{details.join(' · ')}</span> : null}
     </div>
   );
 }
@@ -24,10 +35,14 @@ export function AccessTab({detail, act}: SandboxContext) {
   }, [detail.id, filter, toast]);
   // Reload when the filter changes or the sandbox's counts move.
   useEffect(() => { load(); }, [load, detail.egressCounts?.pending, detail.egressCounts?.approved, detail.learning?.phase]);
+  // Pending counts move only when an endpoint first appears; refresh its request counts too.
+  useEffect(() => { const t = window.setInterval(load, 30000); return () => window.clearInterval(t); }, [load]);
   useEffect(() => { const t = window.setTimeout(() => setFilter(query.trim()), 300); return () => window.clearTimeout(t); }, [query]);
+  // A grouped item decides every fingerprint seen for its method and URL.
   const decide = async (o: Observation, approve: boolean) => {
     setBusy(o.observation);
-    if (await act('/egress', {action: approve ? 'approve-learning' : 'revoke-learning', observation: o.observation}, approve ? 'request approved' : 'request revoked')) await load();
+    const action = (approve ? 'approve-' : 'revoke-') + (grouped(o) ? 'endpoint' : 'learning');
+    if (await act('/egress', {action, observation: o.observation}, approve ? 'request approved' : 'request revoked')) await load();
     setBusy('');
   };
   const clear = async () => {
@@ -47,9 +62,9 @@ export function AccessTab({detail, act}: SandboxContext) {
       </div>
       {!page ? <p className="empty">Loading requests…</p> : <>
         <Card variant="sunk" width="full" data-testid="pending-requests">
-          <CardHeader title={`Awaiting approval (${page.pending.total})`} subtitle={'Approving allows this exact method, path and request fingerprint' + shown(page.pending) + '.'} />
+          <CardHeader title={`Awaiting approval (${page.pending.total})`} subtitle={([...page.pending.items, ...page.approved.items].some(grouped) ? 'Requests are grouped by method and URL. Approving allows the request fingerprints seen so far; a new query or body needs approval again' : 'Approving allows this exact method, path and request fingerprint') + shown(page.pending) + '.'} />
           <ul className="items">
-            {page.pending.items.map(o => <li key={o.observation}><Request o={o} /><Button size="small" variant="primary" disabled={busy === o.observation} onClick={() => decide(o, true)}>Approve</Button></li>)}
+            {page.pending.items.map(o => <li key={o.observation}><Request o={o} /><Button size="small" variant="primary" disabled={busy === o.observation} onClick={() => decide(o, true)}>{(o.fingerprints ?? 1) > 1 ? `Approve all ${o.fingerprints!.toLocaleString()}` : 'Approve'}</Button></li>)}
             {!page.pending.items.length ? <li className="empty-item">{filter ? `No requests awaiting approval match “${filter}”.` : 'No requests awaiting approval.'}</li> : null}
           </ul>
         </Card>

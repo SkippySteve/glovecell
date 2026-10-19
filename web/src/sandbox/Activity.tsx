@@ -12,7 +12,7 @@ function Item({item, act}: {item: ActivityItem; act: SandboxContext['act']}) {
     <li className="activity-item">
       <div className="activity-heading"><strong>{item.title}</strong>{item.outcome ? <Tag size="sm" variant={item.outcome === 'Blocked' ? 'danger' : 'success'} text={item.outcome} /> : null}<time>{item.time}</time></div>
       {item.target ? <p className="request-target"><code>{item.target}</code></p> : null}
-      {item.count && item.count > 1 ? <p className="subtle">{item.count} blocked observations</p> : null}
+      {item.count && item.count > 1 ? <p className="subtle">{item.count.toLocaleString()} blocked observations{item.first ? ` since ${item.first}` : ''}</p> : null}
       {item.details?.length ? <dl className="event-details">{item.details.map(d => <div key={d.label}><dt>{d.label}</dt><dd>{d.value}</dd></div>)}</dl> : null}
       {blocked ? blocked.token
         ? <div><Button size="small" variant="primary" disabled={busy} onClick={async () => { setBusy(true); await act('/allow-request', {observation: blocked.token!, tab: 'activity'}, `future ${blocked.method} ${blocked.host}${blocked.path} allowed`); setBusy(false); }}>Allow future requests</Button></div>
