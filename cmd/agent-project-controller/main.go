@@ -315,6 +315,10 @@ func run(ctx context.Context) error {
 	} else if os.Getenv("RUN_RECORDS_SOURCES") != "" {
 		return errors.New("RUN_RECORDS_SOURCES requires RUN_RECORDS_DIR")
 	}
+	// Optional handoff intake of an agent runtime, such as the Orca sandbox.
+	if intake := os.Getenv("HANDOFF_URL"); intake != "" {
+		server.Handoffs = &web.Handoffs{URL: intake}
+	}
 	if os.Getenv("OIDC_ISSUER") != "" {
 		clientSecret, err := secret("OIDC_CLIENT_SECRET_FILE")
 		if err != nil {
