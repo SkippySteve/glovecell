@@ -89,3 +89,26 @@ jobs:
           name: security-reports-image-${{ matrix.target }}
           path: reports/
           if-no-files-found: warn
+      # Promotion: only the runtime image, only from main, only after its gate.
+      # The steps come from the monorepo so both repos promote the same way:
+      # push by digest as image-publisher, then open promote/project-controller
+      # once CI checks pass. Steve merges it; Flux deploys after the publish PR.
+      - name: Fetch the promotion scripts
+        if: matrix.target == 'runtime' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          CI_PUBLISHER_TOKEN: ${{ secrets.CI_PUBLISHER_TOKEN }}
+        run: |
+          git -c "http.extraHeader=Authorization: token ${CI_PUBLISHER_TOKEN}" clone --quiet --depth 1 https://git.cluster.aimingupward.com/steve/opnsense-kubernetes-bgp.git /tmp/monorepo
+      - name: Push the gated runtime image
+        if: matrix.target == 'runtime' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          CI_IMAGE_TOKEN: ${{ secrets.CI_IMAGE_TOKEN }}
+        run: /tmp/monorepo/.forgejo/scripts/push-image.sh "candidate-runtime:${GITHUB_SHA}" git.cluster.aimingupward.com/image-publisher/agent-project-controller
+      - name: Open the promotion PR
+        if: matrix.target == 'runtime' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          CI_PUBLISHER_TOKEN: ${{ secrets.CI_PUBLISHER_TOKEN }}
+        run: >-
+          python3 /tmp/monorepo/.forgejo/scripts/promote.py --component project-controller
+          --image "$IMAGE" --source-repo "$GITHUB_REPOSITORY" --source-sha "$GITHUB_SHA"
+          --require-status "CI / checks (push)"
