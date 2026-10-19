@@ -255,8 +255,11 @@ func (c *Client) Revoke(ctx context.Context, repo string, cred Credentials) erro
 	if e := ValidateRepository(repo, c.Owner); e != nil {
 		return e
 	}
-	if e := c.call(ctx, "DELETE", "/repos/"+repo+"/collaborators/"+cred.Username, nil, nil, nil); e != nil && !statusIs(e, 404) {
-		return e
+	// Forgejo answers 422, not 404, when the collaborator's user does not exist,
+	// as for an identity whose grant never completed. Only a missing user excuses it.
+	removeErr := c.call(ctx, "DELETE", "/repos/"+repo+"/collaborators/"+cred.Username, nil, nil, nil)
+	if removeErr != nil && !statusIs(removeErr, 404) && !statusIs(removeErr, 422) {
+		return removeErr
 	}
 	var u struct {
 		IsAdmin       bool   `json:"is_admin"`
@@ -266,6 +269,9 @@ func (c *Client) Revoke(ctx context.Context, repo string, cred Credentials) erro
 	e := c.call(ctx, "GET", "/users/"+cred.Username, nil, &u, nil)
 	if statusIs(e, 404) {
 		return nil
+	}
+	if statusIs(removeErr, 422) {
+		return removeErr
 	}
 	if e != nil {
 		return e
