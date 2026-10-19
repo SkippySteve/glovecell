@@ -10,7 +10,7 @@ metadata:
 rules:
   - apiGroups: [projects.agentwork.dev]
     resources: [projectworkspaces, projectworkspaces/status, projectworkspaces/finalizers]
-    verbs: [get, list, watch, create, update, patch]
+    verbs: [get, list, watch, create, update, patch, delete]
   - apiGroups: ['']
     resources: [namespaces, secrets, configmaps, persistentvolumeclaims, services, serviceaccounts]
     verbs: [get, list, watch, create, update, patch, delete]
