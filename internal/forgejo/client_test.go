@@ -44,3 +44,26 @@ func TestNewRejectsGitHubOrigin(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRevokeTreatsMissingUserAsRevoked(t *testing.T) {
+	for _, exists := range []bool{false, true} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == "DELETE" && strings.Contains(r.URL.Path, "/collaborators/"):
+				w.WriteHeader(422) // Forgejo's answer when the user does not exist
+			case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/users/apc-gone") && !exists:
+				w.WriteHeader(404)
+			case r.Method == "GET":
+				_ = json.NewEncoder(w).Encode(map[string]any{"email": "apc-gone@agentwork.invalid", "prohibit_login": true})
+			default:
+				t.Error("unexpected", r.Method, r.URL.Path)
+			}
+		}))
+		c := &Client{Origin: server.URL, Owner: "steve", AdminToken: "fixture", HTTP: server.Client()}
+		err := c.Revoke(context.Background(), "steve/repo", Credentials{Username: "apc-gone"})
+		server.Close()
+		if exists != (err != nil) || exists && !statusIs(err, 422) {
+			t.Fatal("user exists:", exists, err)
+		}
+	}
+}
