@@ -112,6 +112,39 @@ Project environments continue to use their own controller and inspecting proxy.
 The combined UI does not imply those environments share a network policy or a
 trust boundary.
 
+## Handoffs and Orca projects
+
+Set both values to connect the console to an agent runtime's handoff intake,
+such as the Orca sandbox:
+
+```yaml
+HANDOFF_URL: http://handoff-intake.runtime.svc.cluster.local:8791
+HANDOFF_TOKEN_FILE: /control-secrets/handoff-token
+```
+
+The console sends the token as `Authorization: Bearer` on every intake request.
+The intake must require it as well as limiting ingress to the controller; a
+network policy alone is not its authentication. A token shorter than 32 bytes,
+or a URL without a token, stops the controller from starting. An intake that
+refuses the token surfaces as a bad gateway, not as the caller's login failure.
+
+**Orca projects** publishes a repository to that runtime: the intake clones it
+with the runtime's own repository access and registers it as an Orca project. No
+agent starts. Orca pushes the project to every client paired with that runtime,
+so every paired phone and desktop lists it. Those clients have full control of
+the runtime: terminals, files and agent launches for all of its projects. Use a
+separate runtime and pairing when projects need separate trust boundaries.
+
+### Agent reports
+
+A sandbox's **Activity** tab lists open agent reports from sandbox-control: an
+agent's own statement that a denied resource stops its task. Kind, resource and
+reason are agent-written. The console shows them as plain text without links,
+and clamps their length. Dismissing a report changes no access; grant access
+through the existing controls. Agents reach their report endpoint through the
+sandbox broker, never through the console. Releases of sandbox-control without
+reports hide the section.
+
 ## Rollout
 
 Apply the reviewed CRD from `config/crd` before updating the controller. Helm

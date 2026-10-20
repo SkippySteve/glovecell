@@ -16,9 +16,13 @@ import (
 // Handoffs forwards tasks to an agent runtime's handoff intake, such as the Orca
 // sandbox. The console authenticates the person and adds them as the actor; the
 // intake, reachable only from this controller, prepares the repository and
-// brief and starts the agent. The console never execs into the runtime.
+// brief and starts the agent. The console never execs into the runtime. The same
+// intake publishes repositories as projects of that runtime, which every client
+// paired with it then lists. Every intake request carries Token as a bearer, so
+// the intake does not rely on its network policy alone.
 type Handoffs struct {
 	URL    string
+	Token  string
 	Client *http.Client
 }
 
@@ -30,7 +34,11 @@ const (
 var (
 	handoffName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 	handoffRepo = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]*/[A-Za-z0-9_][A-Za-z0-9_.-]*$`)
+	projectName = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}$`)
 )
+
+// minHandoffToken matches the console's own automation secret minimum.
+const minHandoffToken = 32
 
 type handoffRequest struct {
 	Repo  string            `json:"repo"`
@@ -46,6 +54,9 @@ func (h Handoffs) Validate() error {
 	u, err := url.Parse(h.URL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
 		return fmt.Errorf("handoff intake %q must be an http(s) origin", h.URL)
+	}
+	if len(h.Token) < minHandoffToken {
+		return fmt.Errorf("handoff intake token must contain at least %d bytes", minHandoffToken)
 	}
 	return nil
 }
@@ -70,6 +81,7 @@ func (h Handoffs) relay(w http.ResponseWriter, r *http.Request, method, path str
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	req.Header.Set("Authorization", "Bearer "+h.Token)
 	resp, err := h.client().Do(req)
 	if err != nil {
 		return 0, err
@@ -84,6 +96,10 @@ func (h Handoffs) relay(w http.ResponseWriter, r *http.Request, method, path str
 	}
 	if resp.StatusCode >= 500 {
 		return resp.StatusCode, fmt.Errorf("handoff intake: %s", resp.Status)
+	}
+	// The intake refusing the console's token is a configuration fault, not the caller's.
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return resp.StatusCode, fmt.Errorf("handoff intake refused the console token: %s", resp.Status)
 	}
 	if json.Valid(data) {
 		w.Header().Set("Content-Type", "application/json")
@@ -139,6 +155,57 @@ func (h Handoffs) get(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := h.relay(w, r, http.MethodGet, "/handoffs/"+name, nil); err != nil {
 		http.Error(w, "handoff record unavailable", http.StatusBadGateway)
+	}
+}
+
+type projectRequest struct {
+	Repo  string `json:"repo"`
+	Actor string `json:"actor"`
+}
+
+// publishProject asks the intake to clone a repository into the runtime and
+// register it as a project there, without starting an agent.
+func (h Handoffs) publishProject(w http.ResponseWriter, r *http.Request) {
+	var req projectRequest
+	if err := decode(w, r, &req); err != nil {
+		http.Error(w, "invalid project", http.StatusBadRequest)
+		return
+	}
+	if req.Actor != "" {
+		http.Error(w, "actor is set by the console", http.StatusBadRequest)
+		return
+	}
+	if !handoffRepo.MatchString(req.Repo) || len(req.Repo) > 200 {
+		http.Error(w, "project needs repo OWNER/NAME", http.StatusBadRequest)
+		return
+	}
+	req.Actor, _ = r.Context().Value(actorKey{}).(string)
+	body, err := json.Marshal(req)
+	if err != nil {
+		http.Error(w, "invalid project", http.StatusBadRequest)
+		return
+	}
+	status, err := h.relay(w, r, http.MethodPost, "/projects", body)
+	slog.InfoContext(r.Context(), "orca project publish requested", "actor", req.Actor, "repo", req.Repo, "status", status, "error", errString(err))
+	if err != nil {
+		http.Error(w, "The sandbox did not accept the project; check its records before retrying.", http.StatusBadGateway)
+	}
+}
+
+func (h Handoffs) listProjects(w http.ResponseWriter, r *http.Request) {
+	if _, err := h.relay(w, r, http.MethodGet, "/projects", nil); err != nil {
+		http.Error(w, "project records unavailable", http.StatusBadGateway)
+	}
+}
+
+func (h Handoffs) getProject(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !projectName.MatchString(name) {
+		http.NotFound(w, r)
+		return
+	}
+	if _, err := h.relay(w, r, http.MethodGet, "/projects/"+name, nil); err != nil {
+		http.Error(w, "project record unavailable", http.StatusBadGateway)
 	}
 }
 

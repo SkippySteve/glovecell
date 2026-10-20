@@ -10,7 +10,7 @@ export interface Project {
   status?: { phase?: string; namespace?: string; observedGeneration?: number; conditions?: Condition[] };
 }
 export interface AuditRecord { time: string; action: string; message?: string }
-export interface Session { actor?: string; oidc?: boolean; sandboxControl?: boolean; t3Connect?: boolean; githubOwner?: string; runRecords?: boolean }
+export interface Session { actor?: string; oidc?: boolean; sandboxControl?: boolean; t3Connect?: boolean; githubOwner?: string; runRecords?: boolean; handoffs?: boolean; orcaProjects?: boolean }
 export interface Repository { full_name: string }
 
 export type EgressState = 'Open' | 'Learning' | 'Locked';
@@ -127,6 +127,27 @@ export const sandboxObservations = (id: string, q: string) => sandboxGet<Observa
 export const sandboxPreviews = (id: string, expired: boolean) => sandboxGet<{expiredCount: number; requests: Preview[]}>('/api/previews', expired ? {workspace: id, expired: '1'} : {workspace: id});
 export const sandboxDevLinks = (id: string) => sandboxGet<DevLink[]>('/api/devlinks', {workspace: id});
 export const sandboxActivity = (id: string, minutes: number) => sandboxGet<Activity>('/api/activity', {workspace: id, minutes: String(minutes)});
+
+// An agent's own report that a denial stops its task. The agent supplies kind,
+// resource and reason; the operator reviews and dismisses. Agents approve nothing.
+export interface AgentReport { id: number; kind: string; resource: string; reason: string; count: number; first: string; last: string }
+// Null when this sandbox-control release has no agent reports.
+export async function sandboxReports(id: string): Promise<AgentReport[] | null> {
+  const response = await fetch('/sandboxes/api/reports?' + new URLSearchParams({workspace: id}), {credentials: 'same-origin', headers: {Accept: 'application/json'}});
+  if (response.status === 404 || response.status === 405) return null;
+  if (!response.ok) throw await failure(response);
+  csrf = response.headers.get('X-Sandbox-CSRF') || csrf;
+  if (!response.headers.get('Content-Type')?.startsWith('application/json')) return null;
+  const body = await response.json() as {reports?: AgentReport[]};
+  return body.reports || [];
+}
+
+// Repositories published as projects of the Orca sandbox, through its handoff intake.
+export type OrcaProjectStatus = 'preparing' | 'published' | 'failed';
+export interface OrcaProject { name: string; repo: string; actor: string; requestedAt: string; status: OrcaProjectStatus; step?: string; error?: string; clone?: string; repoId?: string; publishedAt?: string }
+export const orcaProjects = () => api<OrcaProject[]>('orca-projects').then(list => list || []);
+export const orcaProject = (name: string) => api<OrcaProject>('orca-projects/' + encodeURIComponent(name));
+export const publishOrcaProject = (repo: string) => api<OrcaProject>('orca-projects', 'POST', {repo});
 
 // Posts a sandbox-control form action and returns the refreshed summary.
 export async function sandboxAction(path: string, id: string, fields: Record<string, string | string[]>): Promise<ExistingSandbox> {

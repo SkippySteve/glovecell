@@ -8,9 +8,10 @@ import {DataProvider, useData} from './data';
 import {runHref} from './factory/href';
 import {Home} from './Home';
 import {NewSandbox} from './NewSandbox';
+import {OrcaProjects} from './OrcaProjects';
 import {Project} from './Project';
 import {Sandbox} from './sandbox/Sandbox';
-import {useRoute} from './router';
+import {orcaHref, useRoute} from './router';
 import {Button, Callout} from './ui';
 
 // Reports pull in the OpenUI Lang parser and renderer, so they load on first use.
@@ -27,6 +28,7 @@ function Bar() {
     <header className="console-bar">
       <a className="console-brand" href="/"><span className="console-logo" aria-hidden="true" />Sandboxes</a>
       {session.runRecords ? <a className="console-nav-link" href={runHref()}>Runs</a> : null}
+      {session.orcaProjects ? <a className="console-nav-link" href={orcaHref()}>Orca projects</a> : null}
       <span className="console-actor subtle">{session.actor || ''}</span>
       {session.oidc ? <Button variant="tertiary" size="small" onClick={logout}>Sign out</Button> : null}
     </header>
@@ -45,7 +47,7 @@ function App() {
     <>
       <Bar />
       <main id="view" className="page" tabIndex={-1}>
-        {route.view === 'new' ? <NewSandbox /> : route.view === 'project' ? <Project name={route.name} tab={route.tab} /> : route.view === 'sandbox' ? <Sandbox id={route.id} tab={route.tab} />
+        {route.view === 'new' ? <NewSandbox /> : route.view === 'orca' ? <OrcaProjects /> : route.view === 'project' ? <Project name={route.name} tab={route.tab} /> : route.view === 'sandbox' ? <Sandbox id={route.id} tab={route.tab} />
           : route.view === 'runs' || route.view === 'run' ? <Suspense fallback={<p className="empty">Loading…</p>}>{route.view === 'run' ? <RunReport id={route.id} /> : <RunList />}</Suspense> : <Home />}
       </main>
       <Toasts />

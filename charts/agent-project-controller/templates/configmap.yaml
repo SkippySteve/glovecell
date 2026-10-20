@@ -84,6 +84,11 @@
 {{- $_ := required (printf "config.%s is required when integrating existing sandbox controls" $key) (index $.Values.config $key) }}
 {{- end }}
 {{- end }}
+{{- if or (index .Values.config "HANDOFF_URL") (index .Values.config "HANDOFF_TOKEN_FILE") }}
+{{- range $key := list "HANDOFF_URL" "HANDOFF_TOKEN_FILE" }}
+{{- $_ := required (printf "config.%s is required when connecting a handoff intake" $key) (index $.Values.config $key) }}
+{{- end }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
