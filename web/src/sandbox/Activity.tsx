@@ -1,5 +1,6 @@
 import {useCallback, useEffect, useState} from 'react';
-import {sandboxActivity, type Activity, type ActivityItem} from '../api';
+import {sandboxActivity, sandboxReports, type Activity, type ActivityItem, type AgentReport} from '../api';
+import {plainText, reportKind, REASON_LIMIT, RESOURCE_LIMIT} from '../orca';
 import {Button, Callout, Card, CardHeader, Tag, ToggleGroup, ToggleItem} from '../ui';
 import type {SandboxContext} from './Sandbox';
 
@@ -21,16 +22,42 @@ function Item({item, act}: {item: ActivityItem; act: SandboxContext['act']}) {
   );
 }
 
+// An agent's report that a denial blocks its task. All of it is agent text:
+// shown as plain text, never as links or markup.
+function Report({report, dismiss}: {report: AgentReport; dismiss: (report: AgentReport) => Promise<void>}) {
+  const [busy, setBusy] = useState(false);
+  const reason = plainText(report.reason, REASON_LIMIT);
+  return (
+    <li className="activity-item" data-report={report.id}>
+      <div className="activity-heading"><strong>{reportKind(report.kind)}</strong><Tag size="sm" variant="warning" text="Agent blocked" /><time>{plainText(report.last, 40)}</time></div>
+      <p className="request-target"><code>{plainText(report.resource, RESOURCE_LIMIT)}</code></p>
+      {reason ? <blockquote className="agent-reason">{reason}</blockquote> : null}
+      <p className="subtle">{report.count > 1 ? `Reported ${report.count.toLocaleString()} times since ${plainText(report.first, 40)}. ` : ''}Written by the agent; it cannot approve anything. Grant access on the Web access tab or in Access if it is needed.</p>
+      <div><Button size="small" variant="secondary" disabled={busy} onClick={async () => { setBusy(true); await dismiss(report); setBusy(false); }}>Dismiss</Button></div>
+    </li>
+  );
+}
+
 export function ActivityTab({detail, act}: SandboxContext) {
   const [minutes, setMinutes] = useState('15');
   const [data, setData] = useState<Activity | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  // Null hides the section: older sandbox-control releases have no agent reports.
+  const [reports, setReports] = useState<AgentReport[] | null>(null);
+  const [reportError, setReportError] = useState('');
+  const loadReports = useCallback(async () => {
+    try { setReports(await sandboxReports(detail.id)); setReportError(''); } catch (e) { setReportError((e as Error).message); }
+  }, [detail.id]);
   const load = useCallback(async () => {
     setLoading(true); setError('');
+    loadReports();
     try { setData(await sandboxActivity(detail.id, Number(minutes))); } catch (e) { setError((e as Error).message); }
     finally { setLoading(false); }
-  }, [detail.id, minutes]);
+  }, [detail.id, minutes, loadReports]);
+  const dismiss = useCallback(async (report: AgentReport) => {
+    if (await act('/dismiss-report', {report: String(report.id), tab: 'activity'}, 'agent report dismissed')) await loadReports();
+  }, [act, loadReports]);
   useEffect(() => { load(); }, [load]);
   return (
     <div className="stack">
@@ -45,6 +72,12 @@ export function ActivityTab({detail, act}: SandboxContext) {
           {data?.links.openlit ? <a className="link-button" href={data.links.openlit} target="_blank" rel="noopener noreferrer">OpenLIT ↗</a> : null}
         </div>
       </div>
+      {reportError ? <Callout variant="danger" title="Agent reports unavailable" description={reportError} /> : null}
+      {reports?.length ? (
+        <Card variant="sunk" width="full" className="activity-source agent-reports">
+          <CardHeader title={`Agent reports: blocked (${reports.length})`} subtitle="Agents in this sandbox say a denial stops their task. Review each one; dismissing changes no access." />
+          <ul className="activity-list">{reports.map(r => <Report key={r.id} report={r} dismiss={dismiss} />)}</ul>
+        </Card>) : null}
       {error ? <Callout variant="danger" title="Activity unavailable" description={error} /> : null}
       {!data ? (loading ? <p className="empty">Querying logs and traces…</p> : null) : <>
         {data.health.cards.length || data.health.error ? (

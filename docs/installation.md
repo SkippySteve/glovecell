@@ -94,6 +94,8 @@ OIDC environment variables:
 
 For automation, optionally mount an additional authentication secret and set `API_SECRET_FILE` to its path. Requests use `Authorization: Bearer <secret>`. The secret must contain at least 32 bytes. Static browser login additionally requires `ALLOW_STATIC_LOGIN=true`; it is disabled in the sample.
 
+To hand tasks to an agent runtime and publish projects to it, set `HANDOFF_URL` to the runtime's handoff intake origin and `HANDOFF_TOKEN_FILE` to a mounted secret of at least 32 bytes that the intake also holds. The controller refuses to start with only one of the two. See [handoffs and Orca projects](console.md#handoffs-and-orca-projects).
+
 Expose the ClusterIP Service through your existing TLS reverse proxy. Do not expose the project namespace or proxy directly. Standard OIDC verification handles application login; forwarded identity headers are ignored. The proxy must preserve browser Origin headers, and the application origin must match exactly.
 
 Render your overlay, inspect its RBAC and apply it to the qualification cluster. The controller has cross-namespace resource permissions to provision projects, so its credential and service account must be treated as privileged infrastructure.

@@ -108,6 +108,28 @@ func TestExistingSandboxesShareAuthenticationAndKeepCSRFFence(t *testing.T) {
 	if rec.Code != 303 || rec.Header().Get("Location") != "/sandboxes/?workspace=shared-pilot&tab=access" {
 		t.Fatal("redirect leaves app", rec.Code, rec.Header())
 	}
+	// Agent reports: the operator reads and dismisses them; agents' own report
+	// endpoint lives on the broker and is never reachable through the console.
+	before = calls
+	if rec = request("GET", "/sandboxes/api/reports?workspace=shared-pilot", "", "", true); rec.Code != 200 || calls != before+1 {
+		t.Fatal("agent reports not forwarded", rec.Code)
+	}
+	before = calls
+	if rec = request("POST", "/sandboxes/dismiss-report", "https://evil.example", "csrf=fixture-csrf&report=1", true); rec.Code != 403 || calls != before {
+		t.Fatal("cross-origin dismissal forwarded", rec.Code)
+	}
+	if rec = request("POST", "/sandboxes/dismiss-report", s.Origin, "csrf=wrong&report=1", true); rec.Code != 403 {
+		t.Fatal("dismissal CSRF bypassed", rec.Code)
+	}
+	if rec = request("POST", "/sandboxes/dismiss-report", s.Origin, "csrf=fixture-csrf&report=1", true); rec.Code != 303 {
+		t.Fatal("dismissal not forwarded", rec.Code)
+	}
+	before = calls
+	for _, path := range []string{"/sandboxes/blocked-report", "/sandboxes/publish"} {
+		if rec = request("POST", path, s.Origin, "csrf=fixture-csrf", true); rec.Code != 404 || calls != before {
+			t.Fatal("agent broker route forwarded", path, rec.Code)
+		}
+	}
 	before = calls
 	for _, path := range []string{"/sandboxes/auth/login", "/sandboxes/admin", "/sandboxes/healthz"} {
 		rec = request("GET", path, "", "", true)

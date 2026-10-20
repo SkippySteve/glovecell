@@ -113,7 +113,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	})
 	mux.HandleFunc("GET /api/v1/session", func(w http.ResponseWriter, r *http.Request) {
 		actor, _ := r.Context().Value(actorKey{}).(string)
-		writeJSON(w, map[string]any{"actor": actor, "oidc": s.OIDC != nil, "sandboxControl": s.SandboxControl != nil, "t3Connect": s.T3Connect, "githubOwner": s.GitHubOwner, "runRecords": s.RunRecords != nil, "handoffs": s.Handoffs != nil})
+		writeJSON(w, map[string]any{"actor": actor, "oidc": s.OIDC != nil, "sandboxControl": s.SandboxControl != nil, "t3Connect": s.T3Connect, "githubOwner": s.GitHubOwner, "runRecords": s.RunRecords != nil, "handoffs": s.Handoffs != nil, "orcaProjects": s.Handoffs != nil})
 	})
 	if s.RunRecords != nil {
 		mux.HandleFunc("GET /api/v1/runs", s.RunRecords.list)
@@ -126,6 +126,9 @@ func (s *Server) Handler() (http.Handler, error) {
 		mux.HandleFunc("POST /api/v1/handoffs", s.Handoffs.create)
 		mux.HandleFunc("GET /api/v1/handoffs", s.Handoffs.list)
 		mux.HandleFunc("GET /api/v1/handoffs/{name}", s.Handoffs.get)
+		mux.HandleFunc("POST /api/v1/orca-projects", s.Handoffs.publishProject)
+		mux.HandleFunc("GET /api/v1/orca-projects", s.Handoffs.listProjects)
+		mux.HandleFunc("GET /api/v1/orca-projects/{name}", s.Handoffs.getProject)
 	}
 	mux.HandleFunc("GET /api/v1/workspaces", func(w http.ResponseWriter, r *http.Request) {
 		list := &api.ProjectWorkspaceList{}

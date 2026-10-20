@@ -174,6 +174,7 @@ code { font-family: var(--openui-font-code); font-size: 0.9em; }
 .activity-heading { display: flex; gap: var(--openui-space-s); align-items: center; flex-wrap: wrap; }
 .activity-heading time { margin-left: auto; color: var(--openui-text-neutral-tertiary); font: var(--openui-text-body-xs); }
 .request-target code { overflow-wrap: anywhere; }
+.agent-reason { margin: 0; padding-left: var(--openui-space-s); border-left: 3px solid var(--openui-border-default); overflow-wrap: anywhere; }
 .event-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 4px var(--openui-space-m); margin: 0; font: var(--openui-text-body-xs); }
 .event-details dt { color: var(--openui-text-neutral-tertiary); }
 .event-details dd { margin: 0; overflow-wrap: anywhere; }

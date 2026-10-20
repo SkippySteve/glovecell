@@ -62,6 +62,27 @@ func secret(k string) (string, error) {
 	}
 	return strings.TrimSpace(string(b)), nil
 }
+
+// handoffsFromEnv configures the optional handoff intake. The intake requires
+// the console's bearer token, so a URL without a readable token fails startup.
+func handoffsFromEnv() (*web.Handoffs, error) {
+	intake := os.Getenv("HANDOFF_URL")
+	if intake == "" {
+		if os.Getenv("HANDOFF_TOKEN_FILE") != "" {
+			return nil, errors.New("HANDOFF_TOKEN_FILE requires HANDOFF_URL")
+		}
+		return nil, nil
+	}
+	token, e := secret("HANDOFF_TOKEN_FILE")
+	if e != nil {
+		return nil, fmt.Errorf("HANDOFF_URL requires HANDOFF_TOKEN_FILE: %w", e)
+	}
+	h := &web.Handoffs{URL: intake, Token: token}
+	if e = h.Validate(); e != nil {
+		return nil, e
+	}
+	return h, nil
+}
 func positiveID(key string) (int64, error) {
 	value := os.Getenv(key)
 	n, err := strconv.ParseInt(value, 10, 64)
@@ -316,8 +337,8 @@ func run(ctx context.Context) error {
 		return errors.New("RUN_RECORDS_SOURCES requires RUN_RECORDS_DIR")
 	}
 	// Optional handoff intake of an agent runtime, such as the Orca sandbox.
-	if intake := os.Getenv("HANDOFF_URL"); intake != "" {
-		server.Handoffs = &web.Handoffs{URL: intake}
+	if server.Handoffs, e = handoffsFromEnv(); e != nil {
+		return e
 	}
 	if os.Getenv("OIDC_ISSUER") != "" {
 		clientSecret, err := secret("OIDC_CLIENT_SECRET_FILE")

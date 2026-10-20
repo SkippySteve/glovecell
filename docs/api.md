@@ -17,6 +17,8 @@ Automation can use an explicitly configured bearer secret. OIDC access tokens ar
 - `PATCH /api/v1/workspaces/{name}` sets `desiredState` to `Running`, `Paused` or `Removed`. Include the current `resourceVersion`; a stale request returns 409.
 - `PATCH /api/v1/workspaces/{name}/access` replaces optional HTTPS policy with `https`, optional `registries` and current `resourceVersion`. It requires observed Paused state, an applied previous policy and no project pods. Saving leaves the project paused. Stale, running or unconverged requests return 409.
 - `GET /api/v1/workspaces/{name}/audit` returns persisted lifecycle and condition records, including diagnostic `reason` and `message` when available.
+- With a handoff intake configured, `POST /api/v1/handoffs` hands a task to an agent in that runtime and `GET /api/v1/handoffs[/{name}]` reads its records.
+- With a handoff intake configured, `POST /api/v1/orca-projects` with `{"repo": "OWNER/NAME"}` publishes a repository as a project of that runtime, and `GET /api/v1/orca-projects[/{name}]` reads publish records (`status` is `preparing`, `published` or `failed`). The console sets the actor; a request that supplies one returns 400. `GET /api/v1/session` reports `orcaProjects`.
 
 ```json
 {

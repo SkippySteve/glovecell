@@ -7,3 +7,5 @@ The chart does not install Agent Sandbox, Cilium, a runtime class, Forgejo, or a
 Supply digest-pinned `controllerImage` and `workspaceImage`, plus the Forgejo origin, owner, public origin, and OIDC client. Create Secret `controller-secrets` outside the chart, with `forgejo-token` and `oidc-client-secret`. `proxyImage` defaults to `controllerImage`.
 
 Keep `config.NETWORK_PROVIDER` at `cilium` for the qualified profile. `network-policy` is an unvalidated experiment. The `0.1.0-alpha.1` images do not contain that provider or workspace-image replacement.
+
+To connect an agent runtime's handoff intake, set `config.HANDOFF_URL` and `config.HANDOFF_TOKEN_FILE` together, for example `/control-secrets/handoff-token` with a `handoff-token` key of at least 32 bytes in the existing Secret. The intake must hold the same token. See [handoffs and Orca projects](../../docs/console.md#handoffs-and-orca-projects).
