@@ -46,6 +46,17 @@ The environment ID is the workspace's Kubernetes UID, stored atomically in proje
 
 Registration intent is durable before the external link request. Removal stops the connection, revokes the T3 environment and repository access, verifies absence in T3's account catalog, and then verifies owned namespace and storage cleanup. A failed DELETE response is not enough to infer failure or success: an authoritative catalog check under the pinned account must confirm absence. Failed revocation, a missing ledger after recorded intent, or a disabled registration manager with existing registration history blocks completion. Retries can recover from a successful external operation whose durable update was interrupted.
 
+After verified cleanup, the controller deletes the revoked T3 ledger Secret and its intent ConfigMap from the control namespace. It deletes the intent marker first, so an interrupted cleanup leaves a revoked ledger, which does not block a retry.
+
+### Recovery with T3 Connect disabled
+
+When `T3_CONNECT_ENABLED` is not `true`, the controller cannot revoke an environment. Removal blocks while the ledger Secret `t3-connect-<workspace UID without dashes>` in the control namespace is in any state other than `revoked`. It also blocks while only the intent ConfigMap `<same name>-intent` remains. The removal status names the object to update. To finish removal:
+
+1. Revoke the environment link on T3 under the controller's T3 account. Then confirm that the environment ID, which is the workspace UID, is absent from the account's environment catalog.
+2. Record the revocation on the ledger Secret. Either annotate it with `projects.agentwork.dev/t3-revoked-externally=<environment-id>`, using the Secret's own `environment-id` value, or set its `state` key to `revoked`. If only the intent ConfigMap remains, annotate the ConfigMap the same way, using its `environment-id`.
+
+An annotation with any other value keeps removal blocked. So does an object without the workspace's owner label. The next reconcile finishes removal and deletes both objects. Do not delete these objects by hand. They are the only record that T3 registration existed.
+
 ## Optional private controller access through Tailscale
 
 An installed Tailscale Kubernetes operator can expose the controller privately:
@@ -62,7 +73,7 @@ Tailscale is an optional private transport. It does not create T3 environment en
 
 ## Qualification
 
-Normal `make test`, `make vet` and `make chart-check` run without T3 account access or cluster deployment. Tests cover proof rejection, credential permissions, unsafe endpoints, missing ledgers, unverified revocation, disabled-manager removal, and interrupted durable updates.
+Normal `make test`, `make vet` and `make chart-check` run without T3 account access or cluster deployment. Tests cover proof rejection, credential permissions, unsafe endpoints, missing ledgers, unverified revocation, disabled-manager removal with recorded or missing revocation, and interrupted durable updates.
 
 The opt-in local qualification creates two disposable containers with networking disabled and fresh local Git repositories. It runs the actual controller connection code against stock T3, checks both environments in the same account catalog, verifies remote identity and absent owner credentials in workers, reconnects after a pause, and revokes both environments before deleting their containers:
 
