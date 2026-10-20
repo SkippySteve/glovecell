@@ -960,21 +960,12 @@ func (r *Reconciler) remove(ctx context.Context, w *api.ProjectWorkspace) error 
 	var accessErr error
 	if r.Access != nil {
 		accessErr = r.Access.Remove(ctx, w)
-	} else {
-		ledger := &corev1.Secret{}
-		ledgerKey := types.NamespacedName{Namespace: r.Config.Namespace, Name: "t3-connect-" + strings.ReplaceAll(string(w.UID), "-", "")}
-		if e := r.Get(ctx, ledgerKey, ledger); e == nil {
-			accessErr = errors.New("T3 Connect ledger exists but registration manager is disabled; external revocation required")
-		} else if !apierrors.IsNotFound(e) {
-			accessErr = e
-		} else {
-			marker := &corev1.ConfigMap{}
-			if e := r.Get(ctx, types.NamespacedName{Namespace: ledgerKey.Namespace, Name: ledgerKey.Name + "-intent"}, marker); e == nil {
-				accessErr = errors.New("T3 registration history exists but revocation manager is disabled")
-			} else if !apierrors.IsNotFound(e) {
-				accessErr = e
-			}
-		}
+	} else if ledger, marker, e := r.t3History(ctx, w); e != nil {
+		accessErr = e
+	} else if ledger != nil && !t3Revoked(ledger, string(ledger.Data["state"]), string(ledger.Data["environment-id"])) {
+		accessErr = fmt.Errorf("T3 Connect ledger exists but registration manager is disabled; revoke the environment on T3, then annotate Secret %s/%s with %s=<its environment-id>", ledger.Namespace, ledger.Name, t3RevokedAnnotation)
+	} else if ledger == nil && marker != nil && !t3Revoked(marker, marker.Data["state"], marker.Data["environment-id"]) {
+		accessErr = fmt.Errorf("T3 registration history exists but revocation manager is disabled; revoke the environment on T3, then annotate ConfigMap %s/%s with %s=<its environment-id>", marker.Namespace, marker.Name, t3RevokedAnnotation)
 	}
 	s := &corev1.Secret{}
 	e := r.Get(ctx, types.NamespacedName{Namespace: r.Config.Namespace, Name: identity(w)}, s)
@@ -1059,7 +1050,58 @@ func (r *Reconciler) remove(ctx context.Context, w *api.ProjectWorkspace) error 
 			return e
 		}
 	}
+	// Finalize revoked T3 history the same way. Delete the intent marker first, so an
+	// interrupted cleanup leaves a revoked ledger rather than intent without a ledger.
+	ledger, marker, e := r.t3History(ctx, w)
+	if e != nil {
+		return e
+	}
+	if ledger != nil && !t3Revoked(ledger, string(ledger.Data["state"]), string(ledger.Data["environment-id"])) {
+		return nil
+	}
+	if marker != nil && (ledger != nil || t3Revoked(marker, marker.Data["state"], marker.Data["environment-id"])) {
+		if e = r.Delete(ctx, marker); e != nil && !apierrors.IsNotFound(e) {
+			return e
+		}
+	}
+	if ledger != nil {
+		if e = r.Delete(ctx, ledger); e != nil && !apierrors.IsNotFound(e) {
+			return e
+		}
+	}
 	return nil
+}
+
+// An operator records a revocation made directly on T3 by setting this annotation
+// on the ledger Secret, or on the intent ConfigMap when no ledger remains.
+const t3RevokedAnnotation = "projects.agentwork.dev/t3-revoked-externally"
+
+// t3History reads the T3 Connect ledger and intent marker. A missing object is nil.
+func (r *Reconciler) t3History(ctx context.Context, w *api.ProjectWorkspace) (*corev1.Secret, *corev1.ConfigMap, error) {
+	key := types.NamespacedName{Namespace: r.Config.Namespace, Name: "t3-connect-" + strings.ReplaceAll(string(w.UID), "-", "")}
+	ledger := &corev1.Secret{}
+	if e := r.Get(ctx, key, ledger); apierrors.IsNotFound(e) {
+		ledger = nil
+	} else if e != nil {
+		return nil, nil, e
+	} else if ledger.Labels[api.OwnerLabel] != string(w.UID) {
+		return nil, nil, errors.New("T3 registration ledger ownership mismatch")
+	}
+	marker := &corev1.ConfigMap{}
+	if e := r.Get(ctx, types.NamespacedName{Namespace: key.Namespace, Name: key.Name + "-intent"}, marker); apierrors.IsNotFound(e) {
+		marker = nil
+	} else if e != nil {
+		return nil, nil, e
+	} else if marker.Labels[api.OwnerLabel] != string(w.UID) {
+		return nil, nil, errors.New("T3 registration audit ownership mismatch")
+	}
+	return ledger, marker, nil
+}
+
+// t3Revoked accepts the registry's revoked state, or an operator annotation that
+// names the object's own non-empty environment ID.
+func t3Revoked(o metav1.Object, state, environment string) bool {
+	return state == "revoked" || (environment != "" && o.GetAnnotations()[t3RevokedAnnotation] == environment)
 }
 func metadata(w *api.ProjectWorkspace, name string) metav1.ObjectMeta {
 	return metav1.ObjectMeta{Name: name, Namespace: namespace(w), Labels: labels(w)}

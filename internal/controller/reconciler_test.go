@@ -864,3 +864,89 @@ func TestUnknownClientStateFailsClosed(t *testing.T) {
 		t.Fatal("unknown client state allowed cleanup")
 	}
 }
+
+func TestDisabledT3ManagerRemovalRequiresRecordedRevocation(t *testing.T) {
+	const uid = "12345678-1234-1234-1234-123456789012"
+	ledger := func(state string, annotations map[string]string) *corev1.Secret {
+		return &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "t3-connect-12345678123412341234123456789012", Namespace: "control", Labels: map[string]string{api.OwnerLabel: uid}, Annotations: annotations}, Data: map[string][]byte{"workspace": []byte("project"), "account-id": []byte("account"), "environment-id": []byte(uid), "state": []byte(state)}}
+	}
+	intent := func(annotations map[string]string) *corev1.ConfigMap {
+		return &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "t3-connect-12345678123412341234123456789012-intent", Namespace: "control", Labels: map[string]string{api.OwnerLabel: uid}, Annotations: annotations}, Data: map[string]string{"action": "t3-link-requested", "environment-id": uid, "account-id": "account"}}
+	}
+	revoked := map[string]string{t3RevokedAnnotation: uid}
+	unowned := ledger("revoked", nil)
+	unowned.Labels = map[string]string{api.OwnerLabel: "someone-else"}
+	blank := ledger("linked", map[string]string{t3RevokedAnnotation: ""})
+	blank.Data["environment-id"] = nil
+	for _, test := range []struct {
+		name    string
+		objects []client.Object
+		blocks  bool
+	}{
+		{"linked", []client.Object{ledger("linked", nil), intent(nil)}, true},
+		{"linking", []client.Object{ledger("linking", nil), intent(nil)}, true},
+		{"revoked", []client.Object{ledger("revoked", nil), intent(nil)}, false},
+		{"annotation-matching", []client.Object{ledger("linked", revoked), intent(nil)}, false},
+		{"annotation-mismatching", []client.Object{ledger("linked", map[string]string{t3RevokedAnnotation: "87654321-4321-4321-4321-210987654321"}), intent(nil)}, true},
+		{"annotation-without-environment", []client.Object{blank, intent(nil)}, true},
+		{"unowned-ledger", []client.Object{unowned, intent(nil)}, true},
+		{"intent-only", []client.Object{intent(nil)}, true},
+		{"intent-only-annotated", []client.Object{intent(revoked)}, false},
+		{"intent-annotation-mismatching", []client.Object{intent(map[string]string{t3RevokedAnnotation: "other"})}, true},
+		// An interrupted cleanup-verified step deletes the intent first and leaves a revoked ledger.
+		{"revoked-ledger-after-interrupted-cleanup", []client.Object{ledger("revoked", nil)}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			r, w, _ := fixture(t)
+			if e := r.ensure(ctx, w); e != nil {
+				t.Fatal(e)
+			}
+			for _, o := range test.objects {
+				if e := r.Create(ctx, o); e != nil {
+					t.Fatal(e)
+				}
+			}
+			w.Spec.DesiredState = "Removed"
+			w.Generation = 2
+			first := r.remove(ctx, w)
+			if test.blocks {
+				if first == nil || r.remove(ctx, w) == nil {
+					t.Fatal("unrevoked T3 registration allowed cleanup")
+				}
+				if !strings.Contains(first.Error(), t3RevokedAnnotation) && !strings.Contains(first.Error(), "ownership mismatch") {
+					t.Fatalf("error does not name the recovery annotation: %v", first)
+				}
+				var ns corev1.Namespace
+				if e := r.Get(ctx, types.NamespacedName{Name: namespace(w)}, &ns); e != nil {
+					t.Fatal("namespace deleted before T3 revocation was recorded")
+				}
+				for _, o := range test.objects {
+					if e := r.Get(ctx, client.ObjectKeyFromObject(o), o); e != nil {
+						t.Fatalf("T3 history %s deleted while blocked: %v", o.GetName(), e)
+					}
+				}
+				return
+			}
+			if first == nil || !strings.Contains(first.Error(), "waiting for namespace") {
+				t.Fatalf("expected namespace observation, got %v", first)
+			}
+			for _, o := range test.objects {
+				if e := r.Get(ctx, client.ObjectKeyFromObject(o), o); e != nil {
+					t.Fatalf("T3 history %s deleted before cleanup-verified: %v", o.GetName(), e)
+				}
+			}
+			if e := r.remove(ctx, w); e != nil {
+				t.Fatal(e)
+			}
+			for _, o := range test.objects {
+				if e := r.Get(ctx, client.ObjectKeyFromObject(o), o); !apierrors.IsNotFound(e) {
+					t.Fatalf("revoked T3 history %s retained after cleanup-verified: %v", o.GetName(), e)
+				}
+			}
+			if e := r.remove(ctx, w); e != nil {
+				t.Fatal("retry after cleanup-verified failed", e)
+			}
+		})
+	}
+}
