@@ -10,7 +10,7 @@ export interface Project {
   status?: { phase?: string; namespace?: string; observedGeneration?: number; conditions?: Condition[] };
 }
 export interface AuditRecord { time: string; action: string; message?: string }
-export interface Session { actor?: string; oidc?: boolean; sandboxControl?: boolean; t3Connect?: boolean; githubOwner?: string; runRecords?: boolean; handoffs?: boolean; orcaProjects?: boolean }
+export interface Session { actor?: string; oidc?: boolean; sandboxControl?: boolean; t3Connect?: boolean; githubOwner?: string; runRecords?: boolean; handoffs?: boolean; orcaProjects?: boolean; orcaSandbox?: string; orcaNamespace?: string }
 export interface Repository { full_name: string }
 
 export type EgressState = 'Open' | 'Learning' | 'Locked';
@@ -142,9 +142,12 @@ export async function sandboxReports(id: string): Promise<AgentReport[] | null> 
   return body.reports || [];
 }
 
-// Repositories published as projects of the Orca sandbox, through its handoff intake.
-export type OrcaProjectStatus = 'preparing' | 'published' | 'failed';
-export interface OrcaProject { name: string; repo: string; actor: string; requestedAt: string; status: OrcaProjectStatus; step?: string; error?: string; clone?: string; repoId?: string; publishedAt?: string }
+// Projects of the Orca sandbox, through its handoff intake: repositories the
+// console published, and 'registered' ones Orca holds without a console record
+// (those have no actor or request time, and repo is empty when Orca's remote
+// does not name OWNER/NAME).
+export type OrcaProjectStatus = 'preparing' | 'published' | 'failed' | 'registered';
+export interface OrcaProject { name: string; repo: string; actor?: string; requestedAt?: string; status: OrcaProjectStatus; step?: string; error?: string; clone?: string; repoId?: string; publishedAt?: string }
 export const orcaProjects = () => api<OrcaProject[]>('orca-projects').then(list => list || []);
 export const orcaProject = (name: string) => api<OrcaProject>('orca-projects/' + encodeURIComponent(name));
 export const publishOrcaProject = (repo: string) => api<OrcaProject>('orca-projects', 'POST', {repo});

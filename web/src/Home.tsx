@@ -1,11 +1,34 @@
-import {useState} from 'react';
-import {egressControllable, egressExpires, egressState, type ExistingSandbox, type Project} from './api';
+import {useEffect, useState} from 'react';
+import {egressControllable, egressExpires, egressState, orcaProjects, type ExistingSandbox, type OrcaProject, type Project} from './api';
 import {useData} from './data';
-import {navigate, projectHref, sandboxHref} from './router';
+import {existingKind, orcaRuntimeId, projectPreview, type SandboxKind} from './orca';
+import {navigate, orcaHref, projectHref, sandboxHref} from './router';
 import {clock, existingState, projectState, type Status} from './state';
 import {Button, Callout, Card, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tag, ToggleGroup, ToggleItem} from './ui';
 
 const DURATIONS: [string, string][] = [['15', '15 min'], ['60', '1 hour'], ['240', '4 hours'], ['1440', '24 hours']];
+// Each refresh lists Orca's repos in the runtime, so it runs far less often than the sandbox poll.
+const ORCA_REFRESH_MS = 60000;
+
+// The Orca runtime's projects, for its row. A failure leaves the row without them.
+function useOrcaProjects(enabled: boolean) {
+  const [records, setRecords] = useState<OrcaProject[]>([]);
+  useEffect(() => {
+    if (!enabled) return;
+    let live = true;
+    const load = () => orcaProjects().then(list => { if (live) setRecords(list); }, () => undefined);
+    load();
+    const timer = window.setInterval(() => { if (document.visibilityState === 'visible') load(); }, ORCA_REFRESH_MS);
+    return () => { live = false; window.clearInterval(timer); };
+  }, [enabled]);
+  return records;
+}
+
+function OrcaProjectList({records}: {records: OrcaProject[]}) {
+  const {names, more, total} = projectPreview(records);
+  if (!total) return null;
+  return <a className="row-projects" href={orcaHref()} data-testid="orca-project-list">{`${total} Orca project${total === 1 ? '' : 's'}: ${names.join(', ')}${more ? ` +${more} more` : ''}`}</a>;
+}
 
 function StatusTag({state}: {state: Status}) {
   return <Tag size="sm" variant={state.variant} text={state.label} className={state.busy ? 'busy' : undefined} />;
@@ -52,14 +75,14 @@ function EgressPanel({minutes, setMinutes}: {minutes: string; setMinutes: (value
   );
 }
 
-function SandboxRow({sandbox, minutes}: {sandbox: ExistingSandbox; minutes: string}) {
+function SandboxRow({sandbox, minutes, kind, projects}: {sandbox: ExistingSandbox; minutes: string; kind: SandboxKind; projects?: OrcaProject[]}) {
   const {egress, busy} = useData();
   const state = egressState(sandbox), waiting = (sandbox.pending || 0) + (sandbox.approvals || 0);
   const pending = busy.has(sandbox.id);
   const review = sandboxHref(sandbox.id, egressControllable(sandbox) ? 'access' : 'overview');
   return (
     <TableRow data-sandbox={sandbox.id}>
-      <TableCell data-label="Sandbox"><a className="row-title" href={sandboxHref(sandbox.id)}>{sandbox.id}</a><span className="row-sub">{sandbox.namespace} · {sandbox.sandbox}</span></TableCell>
+      <TableCell data-label="Sandbox"><a className="row-title" href={sandboxHref(sandbox.id)}>{sandbox.id}</a><span className="row-kind">{kind}</span><span className="row-sub">{sandbox.namespace} · {sandbox.sandbox}</span>{projects ? <OrcaProjectList records={projects} /> : null}</TableCell>
       <TableCell data-label="Status"><StatusTag state={existingState(sandbox)} /></TableCell>
       <TableCell data-label="Web access"><EgressTag sandbox={sandbox} /></TableCell>
       <TableCell data-label="Review">{waiting ? <a href={review} className="count-link"><span className="count">{waiting}</span> awaiting review</a> : <span className="subtle">None</span>}</TableCell>
@@ -77,7 +100,7 @@ function ProjectRow({project}: {project: Project}) {
   const state = projectState(project), rules = (project.spec.https || []).length;
   return (
     <TableRow data-project={project.metadata.name}>
-      <TableCell data-label="Sandbox"><a className="row-title" href={projectHref(project.metadata.name)}>{project.metadata.name}</a><span className="row-sub">{project.spec.repository}</span></TableCell>
+      <TableCell data-label="Sandbox"><a className="row-title" href={projectHref(project.metadata.name)}>{project.metadata.name}</a><span className="row-kind">Project sandbox</span><span className="row-sub">{project.spec.repository}</span></TableCell>
       <TableCell data-label="Status"><StatusTag state={state} /></TableCell>
       <TableCell data-label="Web access"><span className="subtle">{rules ? `${rules} fixed rule${rules === 1 ? '' : 's'}` : 'Repositories only'}</span></TableCell>
       <TableCell data-label="Review">{state.attention ? <span className="attention">{state.attention}</span> : <span className="subtle">None</span>}</TableCell>
@@ -87,13 +110,15 @@ function ProjectRow({project}: {project: Project}) {
 }
 
 export function Home() {
-  const {loaded, projects, existing} = useData();
+  const {loaded, projects, existing, session} = useData();
   const [minutes, setMinutes] = useState('60');
+  const runtime = orcaRuntimeId(session, existing);
+  const orca = useOrcaProjects(runtime !== undefined);
   const [showRemoved, setShowRemoved] = useState(false);
   const active = projects.filter(p => p.status?.phase !== 'Removed'), removed = projects.filter(p => p.status?.phase === 'Removed');
   // Anything open or needing a decision sorts first.
   const rows = [
-    ...existing.map(s => ({name: s.id, rank: egressState(s) && egressState(s) !== 'Locked' ? 0 : (s.pending || 0) + (s.approvals || 0) ? 1 : 2, node: <SandboxRow key={'s:' + s.id} sandbox={s} minutes={minutes} />})),
+    ...existing.map(s => ({name: s.id, rank: egressState(s) && egressState(s) !== 'Locked' ? 0 : (s.pending || 0) + (s.approvals || 0) ? 1 : 2, node: <SandboxRow key={'s:' + s.id} sandbox={s} minutes={minutes} kind={existingKind(s, runtime)} projects={s.id === runtime ? orca : undefined} />})),
     ...active.map(p => ({name: p.metadata.name, rank: projectState(p).attention ? 1 : 2, node: <ProjectRow key={'p:' + p.metadata.name} project={p} />})),
   ].sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name));
   return (

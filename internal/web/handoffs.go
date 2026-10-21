@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -20,10 +21,16 @@ import (
 // intake publishes repositories as projects of that runtime, which every client
 // paired with it then lists. Every intake request carries Token as a bearer, so
 // the intake does not rely on its network policy alone.
+//
+// Sandbox optionally names the existing sandbox, by its sandbox-control id,
+// that runs the intake. The Sandboxes page lists the runtime's projects under
+// that sandbox. Without it, the page matches the sandbox whose namespace is the
+// intake service's namespace.
 type Handoffs struct {
-	URL    string
-	Token  string
-	Client *http.Client
+	URL     string
+	Token   string
+	Sandbox string
+	Client  *http.Client
 }
 
 const (
@@ -35,6 +42,8 @@ var (
 	handoffName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 	handoffRepo = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]*/[A-Za-z0-9_][A-Za-z0-9_.-]*$`)
 	projectName = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}$`)
+	sandboxID   = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+	dnsLabel    = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 )
 
 // minHandoffToken matches the console's own automation secret minimum.
@@ -58,7 +67,39 @@ func (h Handoffs) Validate() error {
 	if len(h.Token) < minHandoffToken {
 		return fmt.Errorf("handoff intake token must contain at least %d bytes", minHandoffToken)
 	}
+	if h.Sandbox != "" && !sandboxID.MatchString(h.Sandbox) {
+		return fmt.Errorf("handoff sandbox %q must be a sandbox id", h.Sandbox)
+	}
 	return nil
+}
+
+// namespace is the Kubernetes namespace of an in-cluster intake service
+// (SERVICE.NAMESPACE.svc...), or "" for any other host.
+func (h Handoffs) namespace() string {
+	u, err := url.Parse(h.URL)
+	if err != nil {
+		return ""
+	}
+	parts := strings.Split(u.Hostname(), ".")
+	if len(parts) < 3 || parts[2] != "svc" || !dnsLabel.MatchString(parts[1]) {
+		return ""
+	}
+	return parts[1]
+}
+
+// session describes the intake to the console: whether it is there, and which
+// existing sandbox holds the runtime's projects.
+func (h *Handoffs) session() map[string]any {
+	if h == nil {
+		return map[string]any{"handoffs": false, "orcaProjects": false}
+	}
+	out := map[string]any{"handoffs": true, "orcaProjects": true}
+	if h.Sandbox != "" {
+		out["orcaSandbox"] = h.Sandbox
+	} else if ns := h.namespace(); ns != "" {
+		out["orcaNamespace"] = ns
+	}
+	return out
 }
 
 func (h Handoffs) client() *http.Client {

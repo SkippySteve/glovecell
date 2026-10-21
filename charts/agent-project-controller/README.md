@@ -8,4 +8,4 @@ Supply digest-pinned `controllerImage` and `workspaceImage`, plus the Forgejo or
 
 Keep `config.NETWORK_PROVIDER` at `cilium` for the qualified profile. `network-policy` is an unvalidated experiment. The `0.1.0-alpha.1` images do not contain that provider or workspace-image replacement.
 
-To connect an agent runtime's handoff intake, set `config.HANDOFF_URL` and `config.HANDOFF_TOKEN_FILE` together, for example `/control-secrets/handoff-token` with a `handoff-token` key of at least 32 bytes in the existing Secret. The intake must hold the same token. See [handoffs and Orca projects](../../docs/console.md#handoffs-and-orca-projects).
+To connect an agent runtime's handoff intake, set `config.HANDOFF_URL` and `config.HANDOFF_TOKEN_FILE` together, for example `/control-secrets/handoff-token` with a `handoff-token` key of at least 32 bytes in the existing Secret. The intake must hold the same token. Optionally set `config.HANDOFF_SANDBOX` to the existing sandbox that runs the intake, so the Sandboxes page lists its projects under that sandbox. See [handoffs and Orca projects](../../docs/console.md#handoffs-and-orca-projects).

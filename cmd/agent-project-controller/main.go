@@ -68,8 +68,10 @@ func secret(k string) (string, error) {
 func handoffsFromEnv() (*web.Handoffs, error) {
 	intake := os.Getenv("HANDOFF_URL")
 	if intake == "" {
-		if os.Getenv("HANDOFF_TOKEN_FILE") != "" {
-			return nil, errors.New("HANDOFF_TOKEN_FILE requires HANDOFF_URL")
+		for _, k := range []string{"HANDOFF_TOKEN_FILE", "HANDOFF_SANDBOX"} {
+			if os.Getenv(k) != "" {
+				return nil, errors.New(k + " requires HANDOFF_URL")
+			}
 		}
 		return nil, nil
 	}
@@ -77,7 +79,7 @@ func handoffsFromEnv() (*web.Handoffs, error) {
 	if e != nil {
 		return nil, fmt.Errorf("HANDOFF_URL requires HANDOFF_TOKEN_FILE: %w", e)
 	}
-	h := &web.Handoffs{URL: intake, Token: token}
+	h := &web.Handoffs{URL: intake, Token: token, Sandbox: os.Getenv("HANDOFF_SANDBOX")}
 	if e = h.Validate(); e != nil {
 		return nil, e
 	}
