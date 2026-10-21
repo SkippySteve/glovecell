@@ -42,7 +42,7 @@ export function OrcaProjects() {
   return (
     <>
       <nav className="crumbs" aria-label="Breadcrumb"><a href="#/">Sandboxes</a><span aria-hidden="true">/</span><span>Orca projects</span></nav>
-      <div className="page-head"><div><h1>Orca projects</h1><p className="muted">Publish a repository to the Orca sandbox. It appears in every Orca app paired with that sandbox, with no further steps.</p></div></div>
+      <div className="page-head"><div><h1>Orca projects</h1><p className="muted">Publish a repository to the Orca sandbox. It appears in every Orca app paired with that sandbox, with no further steps. Each project is a repository inside that one sandbox.</p></div></div>
       <form onSubmit={submit}>
         <Card variant="sunk" width="full">
           <section className="form-section">
@@ -59,19 +59,19 @@ export function OrcaProjects() {
       </form>
       {error ? <Callout variant="danger" title="Project records unavailable" description={error} /> : null}
       {records === null ? (error ? null : <p className="empty">Loading projects…</p>) : records.length ? (
-        <Table aria-label="Published Orca projects" containerClassName="sandbox-table">
+        <Table aria-label="Orca projects" containerClassName="sandbox-table">
           <TableHeader><TableRow><TableHead>Project</TableHead><TableHead>Status</TableHead><TableHead>Requested</TableHead></TableRow></TableHeader>
           <TableBody>{records.map(p => {
             const state = projectStatus(p);
             return (
               <TableRow key={p.name} data-orca-project={p.name}>
-                <TableCell data-label="Project"><span className="row-title">{p.repo}</span><span className="row-sub">{p.clone || p.name}</span></TableCell>
+                <TableCell data-label="Project"><span className="row-title">{p.repo || p.name}</span><span className="row-sub">{p.clone || p.name}</span></TableCell>
                 <TableCell data-label="Status"><Tag size="sm" variant={state.variant} text={state.label} className={state.busy ? 'busy' : undefined} />{p.error ? <span className="row-sub">{p.error}</span> : null}</TableCell>
-                <TableCell data-label="Requested"><span>{new Date(p.requestedAt).toLocaleString()}</span><span className="row-sub">{p.actor}</span></TableCell>
+                <TableCell data-label="Requested">{p.requestedAt ? <><span>{new Date(p.requestedAt).toLocaleString()}</span><span className="row-sub">{p.actor}</span></> : <span className="subtle">Added in Orca</span>}</TableCell>
               </TableRow>);
           })}</TableBody>
         </Table>
-      ) : <p className="empty">No repositories published yet.</p>}
+      ) : <p className="empty">No projects in Orca yet.</p>}
     </>
   );
 }

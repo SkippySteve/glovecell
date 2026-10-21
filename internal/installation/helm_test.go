@@ -66,6 +66,11 @@ func TestHelmPackage(t *testing.T) {
 	if output, err = render(); err != nil || !bytes.Contains(output, []byte(`SANDBOX_CONTROL_OPERATOR: "operator"`)) {
 		t.Fatal("sandbox integration not rendered", err, string(output))
 	}
+	config["HANDOFF_SANDBOX"] = "runtime"
+	write()
+	if output, err = render(); err == nil {
+		t.Fatal("handoff sandbox accepted without an intake", string(output))
+	}
 	config["HANDOFF_URL"] = "http://handoff-intake.runtime.svc:8791"
 	write()
 	if output, err = render(); err == nil {
@@ -75,6 +80,9 @@ func TestHelmPackage(t *testing.T) {
 	write()
 	if output, err = render(); err != nil || !bytes.Contains(output, []byte(`HANDOFF_TOKEN_FILE: "/control-secrets/handoff-token"`)) {
 		t.Fatal("handoff intake not rendered", err, string(output))
+	}
+	if !bytes.Contains(output, []byte(`HANDOFF_SANDBOX: "runtime"`)) {
+		t.Fatal("handoff sandbox not rendered", string(output))
 	}
 	values["t3Connect"] = map[string]any{"enabled": true}
 	write()

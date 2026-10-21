@@ -120,6 +120,7 @@ such as the Orca sandbox:
 ```yaml
 HANDOFF_URL: http://handoff-intake.runtime.svc.cluster.local:8791
 HANDOFF_TOKEN_FILE: /control-secrets/handoff-token
+HANDOFF_SANDBOX: runtime   # optional
 ```
 
 The console sends the token as `Authorization: Bearer` on every intake request.
@@ -134,6 +135,17 @@ agent starts. Orca pushes the project to every client paired with that runtime,
 so every paired phone and desktop lists it. Those clients have full control of
 the runtime: terminals, files and agent launches for all of its projects. Use a
 separate runtime and pairing when projects need separate trust boundaries.
+
+The page lists the console's published repositories and every other repository
+the runtime holds (status **In Orca**). On **Sandboxes**, each row names its kind:
+**Orca runtime** for the existing sandbox that runs the intake, **Coding sandbox**
+for other existing sandboxes and **Project sandbox** for project environments.
+Orca projects are repositories inside the runtime, so they have their own names.
+The runtime's row lists the first six and a count, linked to **Orca projects**.
+`HANDOFF_SANDBOX` names that sandbox by its sandbox-control id. Without it, the
+console uses the only existing sandbox in the intake service's namespace
+(`SERVICE.NAMESPACE.svc`). If neither matches, no row lists projects. A
+`HANDOFF_SANDBOX` without `HANDOFF_URL` stops the controller from starting.
 
 ### Agent reports
 

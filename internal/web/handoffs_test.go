@@ -277,3 +277,51 @@ func TestOrcaProjectsAbsentWithoutAnIntake(t *testing.T) {
 		t.Fatal(rec.Body.String())
 	}
 }
+
+// The session names the existing sandbox that holds the runtime's projects:
+// the configured id, else the intake service's namespace.
+func TestHandoffSessionNamesTheRuntimeSandbox(t *testing.T) {
+	for _, c := range []struct {
+		handoffs *Handoffs
+		want     []string
+		absent   []string
+	}{
+		{&Handoffs{URL: "http://orca-handoff.agent-workspace-orca-pilot.svc.cluster.local:8791", Token: testIntakeToken, Sandbox: "orca-pilot"},
+			[]string{`"orcaProjects":true`, `"orcaSandbox":"orca-pilot"`}, []string{"orcaNamespace"}},
+		{&Handoffs{URL: "http://orca-handoff.agent-workspace-orca-pilot.svc.cluster.local:8791", Token: testIntakeToken},
+			[]string{`"orcaNamespace":"agent-workspace-orca-pilot"`}, []string{"orcaSandbox"}},
+		{&Handoffs{URL: "http://orca-handoff.runtime.svc:8791", Token: testIntakeToken},
+			[]string{`"orcaNamespace":"runtime"`}, nil},
+		{&Handoffs{URL: "https://intake.example.com", Token: testIntakeToken},
+			[]string{`"orcaProjects":true`}, []string{"orcaSandbox", "orcaNamespace"}},
+		{&Handoffs{URL: "http://10.0.0.7:8791", Token: testIntakeToken},
+			[]string{`"orcaProjects":true`}, []string{"orcaSandbox", "orcaNamespace"}},
+		{nil, []string{`"orcaProjects":false`, `"handoffs":false`}, []string{"orcaSandbox", "orcaNamespace"}},
+	} {
+		s, _, _ := accessFixture(t)
+		s.Handoffs = c.handoffs
+		h, err := s.Handler()
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := handoffCall(h, s.Password, "GET", "/api/v1/session", "").Body.String()
+		for _, want := range c.want {
+			if !strings.Contains(body, want) {
+				t.Errorf("session %s lacks %s", body, want)
+			}
+		}
+		for _, absent := range c.absent {
+			if strings.Contains(body, absent) {
+				t.Errorf("session %s has %s", body, absent)
+			}
+		}
+	}
+}
+
+func TestHandoffSandboxMustBeAnID(t *testing.T) {
+	for _, id := range []string{"Orca", "../x", "orca pilot", "-x", strings.Repeat("a", 64)} {
+		if (Handoffs{URL: "http://intake:8791", Token: testIntakeToken, Sandbox: id}).Validate() == nil {
+			t.Errorf("accepted sandbox %q", id)
+		}
+	}
+}

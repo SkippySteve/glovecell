@@ -113,7 +113,11 @@ func (s *Server) Handler() (http.Handler, error) {
 	})
 	mux.HandleFunc("GET /api/v1/session", func(w http.ResponseWriter, r *http.Request) {
 		actor, _ := r.Context().Value(actorKey{}).(string)
-		writeJSON(w, map[string]any{"actor": actor, "oidc": s.OIDC != nil, "sandboxControl": s.SandboxControl != nil, "t3Connect": s.T3Connect, "githubOwner": s.GitHubOwner, "runRecords": s.RunRecords != nil, "handoffs": s.Handoffs != nil, "orcaProjects": s.Handoffs != nil})
+		session := map[string]any{"actor": actor, "oidc": s.OIDC != nil, "sandboxControl": s.SandboxControl != nil, "t3Connect": s.T3Connect, "githubOwner": s.GitHubOwner, "runRecords": s.RunRecords != nil}
+		for k, v := range s.Handoffs.session() {
+			session[k] = v
+		}
+		writeJSON(w, session)
 	})
 	if s.RunRecords != nil {
 		mux.HandleFunc("GET /api/v1/runs", s.RunRecords.list)
