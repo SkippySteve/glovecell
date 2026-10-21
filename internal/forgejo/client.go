@@ -12,6 +12,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$`)
@@ -117,7 +119,15 @@ type protection struct {
 	RequiredApprovals       int      `json:"required_approvals"`
 }
 
+// protect makes main protection meet the workspace policy before any grant.
+// A missing rule is created. An existing rule that falls short is tightened in
+// place: only its failing settings change, each toward the stricter value, and
+// every other setting is preserved. The result is always read back.
 func (c *Client) protect(ctx context.Context, repo string) error {
+	return c.ensureProtection(ctx, repo, true)
+}
+
+func (c *Client) ensureProtection(ctx context.Context, repo string, repair bool) error {
 	var r struct {
 		DefaultBranch string `json:"default_branch"`
 		Archived      bool   `json:"archived"`
@@ -142,33 +152,51 @@ func (c *Client) protect(ctx context.Context, repo string) error {
 		}
 	}
 	if main == nil {
+		if !repair {
+			return errors.New("main branch protection was not retained; check the repository's Settings > Branches")
+		}
 		p := protection{RuleName: "main", ApplyToAdmins: true, EnableMergeWhitelist: true, MergeWhitelistUsernames: []string{c.Owner}, RequiredApprovals: 1}
 		if e := c.call(ctx, "POST", "/repos/"+repo+"/branch_protections", p, nil, nil); e != nil {
 			return e
 		}
 		// Read back effective server values before granting write access.
-		return c.protect(ctx, repo)
+		return c.ensureProtection(ctx, repo, false)
 	}
-	if main.EnablePush || main.EnableForcePush || !main.ApplyToAdmins || !main.EnableMergeWhitelist || main.RequiredApprovals < 1 || len(main.MergeWhitelistTeams) > 0 || len(main.MergeWhitelistUsernames) != 1 || main.MergeWhitelistUsernames[0] != c.Owner {
-		var unmet []string
-		if main.EnablePush {
-			unmet = append(unmet, "disable direct pushes")
-		}
-		if main.EnableForcePush {
-			unmet = append(unmet, "disable force pushes")
-		}
-		if !main.ApplyToAdmins {
-			unmet = append(unmet, "apply protection to administrators")
-		}
-		if main.RequiredApprovals < 1 {
-			unmet = append(unmet, fmt.Sprintf("require at least 1 approval (currently %d)", main.RequiredApprovals))
-		}
-		if !main.EnableMergeWhitelist || len(main.MergeWhitelistTeams) > 0 || len(main.MergeWhitelistUsernames) != 1 || main.MergeWhitelistUsernames[0] != c.Owner {
-			unmet = append(unmet, "allow merges only by the configured repository owner")
-		}
-		return fmt.Errorf("main branch protection needs operator review: %s. Edit the repository's main protection rule in Settings > Branches; preparation retries automatically", strings.Join(unmet, "; "))
+	var unmet []string
+	patch := map[string]any{}
+	if main.EnablePush {
+		unmet = append(unmet, "disable direct pushes")
+		patch["enable_push"] = false
 	}
-	return nil
+	if main.EnableForcePush {
+		unmet = append(unmet, "disable force pushes")
+		patch["enable_force_push"] = false
+	}
+	if !main.ApplyToAdmins {
+		unmet = append(unmet, "apply protection to administrators")
+		patch["apply_to_admins"] = true
+	}
+	if main.RequiredApprovals < 1 {
+		unmet = append(unmet, fmt.Sprintf("require at least 1 approval (currently %d)", main.RequiredApprovals))
+		patch["required_approvals"] = 1
+	}
+	if !main.EnableMergeWhitelist || len(main.MergeWhitelistTeams) > 0 || len(main.MergeWhitelistUsernames) != 1 || main.MergeWhitelistUsernames[0] != c.Owner {
+		unmet = append(unmet, "allow merges only by the configured repository owner")
+		patch["enable_merge_whitelist"] = true
+		patch["merge_whitelist_usernames"] = []string{c.Owner}
+		patch["merge_whitelist_teams"] = []string{}
+	}
+	if len(unmet) == 0 {
+		return nil
+	}
+	if repair {
+		if e := c.call(ctx, "PATCH", "/repos/"+repo+"/branch_protections/main", patch, nil, nil); e != nil {
+			return fmt.Errorf("main branch protection could not be tightened (%s): %w", strings.Join(unmet, "; "), e)
+		}
+		log.FromContext(ctx).Info("tightened main branch protection", "repository", repo, "changes", unmet)
+		return c.ensureProtection(ctx, repo, false)
+	}
+	return fmt.Errorf("main branch protection needs operator review: %s. Edit the repository's main protection rule in Settings > Branches; preparation retries automatically", strings.Join(unmet, "; "))
 }
 func (c *Client) ensureUser(ctx context.Context, cred Credentials) error {
 	var u struct {

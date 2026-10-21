@@ -16,7 +16,7 @@ Requested-by identity is copied into immutable audit records. Kubernetes clients
 
 ## Main protection
 
-When main protection is absent, the controller creates a rule that forbids direct pushes and restricts reviewed merges to the configured owner. It refuses existing insufficient protection instead of weakening or replacing it. Ambiguous wildcard rules that might overlap main require operator review. Qualification checks actual Git push, force-push and deletion denial and API merge denial.
+When main protection is absent, the controller creates a rule that forbids direct pushes and restricts reviewed merges to the configured owner. An existing `main` rule that falls short is tightened in place: the controller patches only the failing settings, each toward the stricter value (direct and force pushes off, rules applied to administrators, at least one approval, merges allowed only by the configured owner), and keeps every other setting. It never weakens a rule, and it reads the rule back before any grant. If Forgejo rejects or ignores the change, preparation stops with the remaining shortfall for operator review. Ambiguous wildcard rules that might overlap main require operator review. Qualification checks actual Git push, force-push and deletion denial and API merge denial.
 
 Agents can perform operations supported by their Forgejo repository write permission. This is broader than the old broker's branch-ownership model. Protect additional release branches or tags explicitly if they matter. Main protection does not stop an agent from damaging its working branches, creating misleading PRs or disclosing source through permitted writes.
 

@@ -42,11 +42,14 @@ policy or cleanup error appears as an attention panel with the actual message.
 Condition changes are also retained in access history. Repeated retries of the
 same condition do not create duplicate records.
 
-For example, an existing Forgejo `main` rule with zero required approvals produces
-`require at least 1 approval (currently 0)` and directs the operator to Settings
-> Branches. Fix that rule on Forgejo. The controller retries the same request;
-deleting and recreating the project is unnecessary. The dashboard never rewrites
-existing branch protection to make preparation pass.
+An existing Forgejo `main` rule that falls short, for example one that does not
+apply to administrators, is tightened by the controller during preparation; the
+change is logged with the repository and the settings it changed. The controller
+never weakens a rule. When Forgejo rejects or ignores the change, or a wildcard
+rule might overlap `main`, the panel shows the shortfall (for example
+`require at least 1 approval (currently 0)`) and directs the operator to
+Settings > Branches. Fix that rule on Forgejo. The controller retries the same
+request; deleting and recreating the project is unnecessary.
 
 ## Project access
 
