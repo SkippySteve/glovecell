@@ -13,7 +13,7 @@ go test -race -count=1 ./...
 go vet ./...
 ```
 
-Use Go 1.27.2 or later. Helm chart changes also run `APC_HELM_TEST=true go test -count=1 ./internal/installation`. API-server tests need the envtest binaries named in [qualification](docs/qualification.md).
+Use Go 1.27.3 or later. Helm chart changes also run `APC_HELM_TEST=true go test -count=1 ./internal/installation`. API-server tests need the envtest binaries named in [qualification](docs/qualification.md).
 
 ## Changes
 
