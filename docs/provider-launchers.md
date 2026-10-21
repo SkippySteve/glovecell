@@ -1,7 +1,7 @@
 # Subscription provider launchers
 
 The workspace image includes stock Grok Build 1.0.46, Cursor CLI
-2026.10.01-e373342 and Muse Code 1.4.7-R6101.1. T3 uses the Grok and Cursor
+2026.10.19-6bbf2c4 and Muse Code 1.4.7-R6101.1. T3 uses the Grok and Cursor
 launchers through its native integrations. Muse runs in the project terminal.
 These are client installations, not evidence of usable provider accounts.
 

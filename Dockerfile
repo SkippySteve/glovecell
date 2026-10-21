@@ -72,8 +72,8 @@ RUN curl -fsSL https://x.ai/cli/grok-1.0.46-linux-x86_64.zst -o /tmp/grok.zst \
     && mkdir /opt/grok && unzstd -f -o /opt/grok/grok /tmp/grok.zst \
     && chmod 0755 /opt/grok/grok && rm /tmp/grok.zst \
     && rm -rf /var/lib/apt/lists/*
-RUN curl -fsSL https://downloads.cursor.com/lab/2026.10.01-e373342/linux/x64/agent-cli-package.tar.gz -o /tmp/cursor.tar.gz \
-    && echo 'a79726c6e644520e993970be4c45775a6889802b67abe461a677a53219ae28e8  /tmp/cursor.tar.gz' | sha256sum -c - \
+RUN curl -fsSL https://downloads.cursor.com/lab/2026.10.19-6bbf2c4/linux/x64/agent-cli-package.tar.gz -o /tmp/cursor.tar.gz \
+    && echo 'cf80cc18d8b33bf33e762353977ca1868cfc45290c92c0ffdcef83bb8b37b44f  /tmp/cursor.tar.gz' | sha256sum -c - \
     && mkdir /opt/cursor-agent && tar xzf /tmp/cursor.tar.gz -C /opt/cursor-agent --strip-components=1 \
     && rm /tmp/cursor.tar.gz
 RUN curl -fsSL 'https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.7-R6101.1&file=muse-x86-linux' -o /tmp/muse \
