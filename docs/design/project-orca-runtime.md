@@ -2,9 +2,11 @@
 
 Status: proposal, 2026-10-23. Nothing here is implemented. Deployment-specific
 details (host names, listeners, measured capacity, infrastructure file paths)
-are in the operator's infrastructure repository, in the companion note
-[project Orca runtimes](https://git.cluster.aimingupward.com/steve/opnsense-kubernetes-bgp/src/branch/task/orca-pilot/project-orca-design/infra/agent-workplace/docs/project-orca-runtimes.md),
-so this document stays deployment-neutral like the rest of `docs/`.
+are in the companion note `infra/agent-workplace/docs/project-orca-runtimes.md`
+in the operator's infrastructure repository (`steve/opnsense-kubernetes-bgp`,
+pull request 213), so this document stays deployment-neutral like the rest of
+`docs/`. Issue references below are Forgejo issues: `apc#N` is in this
+repository and `infra#N` is in the infrastructure repository.
 
 ## Goal
 
@@ -345,7 +347,7 @@ fallback.**
      **Settings → Remote Orca Servers** opens, so the helper notifies the
      operator to open it.
 3. Phones reach project runtimes through desktop delegation. Whether a phone
-   sees a newly paired runtime without its own pairing is unverified; spike B0
+   sees a newly paired runtime without its own pairing is unverified; spike apc#50
    answers it. If it does not, the fallback applies to phones.
 4. **Fallback:** the sandbox page shows a **Pair a device** card, for an
    OIDC-authenticated operator session only. It has a QR code and a copy
@@ -373,7 +375,7 @@ namespace, like the Git identity.
     runtime entrypoint clears its pairing state at start when the generation
     differs, and only while `orcad` is not running.
   - This needs either an upstream headless revoke or confirmation that clearing
-    the registry while `orcad` is stopped is safe. Spike B0 checks it. The
+    the registry while `orcad` is stopped is safe. Spike apc#50 checks it. The
     infrastructure runbook advises against editing the registry file of a
     running runtime.
   - Until that is confirmed, Pause only stops the pod, and the console says
@@ -406,14 +408,14 @@ namespace, like the Git identity.
   providers.
 - **Codex.** The preferred path is the same gateway injection on the ChatGPT
   backend routes Codex uses. Whether Codex works with only a placeholder
-  depends on how its app-server validates `chatgptAuthTokens`, which spike B0
+  depends on how its app-server validates `chatgptAuthTokens`, which spike apc#50
   checks. The fallback is today's `model-access` path: an access-token-only
   grant that expires within five minutes, renewed by the trusted broker, with
   refresh material rejected (`RejectRefreshMaterial`).
 - **Forgejo.** The runtime gets the project's existing bot identity:
   `write:repository` and `write:issue` on one repository. The same token feeds
   Orca's Gitea provider (`ORCA_GITEA_TOKEN`), and the proxy rules gain the
-  read-only Forgejo API paths that provider needs (spike B0 lists them). The
+  read-only Forgejo API paths that provider needs (spike apc#50 lists them). The
   shared runtime's account token is never mounted.
 - **No Kubernetes API identity.** Project runtimes get no service account token,
   no kubeconfig and no Grafana MCP. Cluster work stays in the operator's
@@ -682,7 +684,7 @@ URL field, the proposed working name, a size and licence note once known, and
     and project metadata to clients paired with it.
   - Orca's model is that clients drive runtimes. Whether a runtime can make a
     paired client act locally (open links, run commands) is unverified and part
-    of spike B0. The controller never creates offers with
+    of spike apc#50. The controller never creates offers with
     `--grant-desktop-control`, so no client may drive a project runtime's own
     desktop session.
   - Per-project runtimes reduce today's blast radius: a hostile project in the
@@ -732,13 +734,14 @@ Each phase ships on its own and leaves the system consistent.
 
 | Phase | Outcome | Issues |
 | --- | --- | --- |
-| A | Paste a public URL, get a Forgejo working fork with Actions off and a normal project sandbox | ISSUE_A1, ISSUE_A2, INFRA_A |
-| B | **New Orca sandbox**: a project runtime with manual pairing through the console card | ISSUE_B0, ISSUE_B1, ISSUE_B2, INFRA_B1, INFRA_B2, INFRA_B3 |
-| C | Automatic desktop pairing, revoke on Pause and Remove, live egress approvals, runtime updates | ISSUE_C1, ISSUE_C2, ISSUE_C3 |
-| D | Application projects move off the shared runtime; it stays the personal runtime | INFRA_D |
+| A | Paste a public URL, get a Forgejo working fork with Actions off and a normal project sandbox | apc#48 default branch, apc#49 import, infra#214 Forgejo settings |
+| B | **New Orca sandbox**: a project runtime with manual pairing through the console card | apc#50 spike, apc#51 Orca project sandboxes, apc#52 model credentials, infra#215 orca-pilot project mode, infra#216 exposure, infra#217 telemetry and audit |
+| C | Automatic desktop pairing, revoke on Pause and Remove, live egress approvals, runtime updates | apc#53 pairing, apc#54 live approvals, apc#55 updates |
+| D | Application projects move off the shared runtime; it stays the personal runtime | infra#218 |
 
-Phase A does not depend on Orca. Phase B depends on spike B0 and the
-infrastructure listener. Phase C depends on B. Phase D depends on B, and is
+Phase A does not depend on Orca. Phase B depends on the spike (apc#50) and the
+infrastructure listener (infra#216). Imported repositories get Orca runtimes
+only after audit coverage (infra#217). Phase C depends on B. Phase D depends on B, and is
 better after C.
 
 ## Unverified
