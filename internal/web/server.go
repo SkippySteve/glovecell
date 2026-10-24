@@ -51,6 +51,7 @@ type Server struct {
 	SandboxControl                     *SandboxControl
 	RunRecords                         *RunRecords
 	Handoffs                           *Handoffs
+	LAN                                *LANGrants
 }
 
 // openUISpinnerStyle allows the one stylesheet OpenUI's Renderer injects on mount
@@ -114,6 +115,10 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.HandleFunc("GET /api/v1/session", func(w http.ResponseWriter, r *http.Request) {
 		actor, _ := r.Context().Value(actorKey{}).(string)
 		session := map[string]any{"actor": actor, "oidc": s.OIDC != nil, "sandboxControl": s.SandboxControl != nil, "t3Connect": s.T3Connect, "githubOwner": s.GitHubOwner, "runRecords": s.RunRecords != nil}
+		if s.LAN != nil {
+			session["lanHosts"] = true
+			session["lanAllowed"] = s.LAN.Config.AllowedStrings()
+		}
 		for k, v := range s.Handoffs.session() {
 			session[k] = v
 		}
@@ -146,6 +151,8 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.HandleFunc("PATCH /api/v1/workspaces/{name}", s.change)
 	mux.HandleFunc("PATCH /api/v1/workspaces/{name}/access", s.changeAccess)
 	mux.HandleFunc("POST /api/v1/workspaces/{name}/repositories", s.enrollRepository)
+	mux.HandleFunc("POST /api/v1/workspaces/{name}/lan-hosts", s.addLANHost)
+	mux.HandleFunc("DELETE /api/v1/workspaces/{name}/lan-hosts/{address}", s.removeLANHost)
 	mux.HandleFunc("GET /api/v1/workspaces/{name}/audit", s.audit)
 	mux.HandleFunc("GET /api/v1/workspaces/{name}/clients", s.clients)
 	if s.SandboxControl != nil {
@@ -209,12 +216,15 @@ func (s *Server) Handler() (http.Handler, error) {
 				return
 			}
 		}
+		method := "oidc"
 		if bearer {
 			subject = "automation-token"
+			method = "bearer"
 		} else if basic {
 			subject = "static-operator"
+			method = "basic"
 		}
-		ctx, cancel := context.WithTimeout(context.WithValue(r.Context(), actorKey{}, subject), 25*time.Second)
+		ctx, cancel := context.WithTimeout(context.WithValue(context.WithValue(r.Context(), actorKey{}, subject), authKey{}, method), 25*time.Second)
 		defer cancel()
 		mux.ServeHTTP(w, r.WithContext(ctx))
 	}), nil

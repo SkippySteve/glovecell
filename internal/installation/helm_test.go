@@ -288,3 +288,46 @@ func TestHelmGitHubHost(t *testing.T) {
 		t.Fatal("forgejo host accepted GitHub App settings")
 	}
 }
+
+func TestHelmLANHostGrants(t *testing.T) {
+	if os.Getenv("APC_HELM_TEST") != "true" {
+		t.Skip("set APC_HELM_TEST=true with Helm installed")
+	}
+	config := map[string]any{"FORGEJO_ORIGIN": "https://git.example.com", "FORGEJO_OWNER": "operator", "PUBLIC_ORIGIN": "https://projects.example.com", "OIDC_ISSUER": "https://identity.example.com/realm", "OIDC_CLIENT_ID": "projects"}
+	values := map[string]any{"controllerImage": "registry.example.com/controller@sha256:" + strings.Repeat("a", 64), "workspaceImage": "registry.example.com/workspace@sha256:" + strings.Repeat("b", 64), "config": config}
+	path := filepath.Join(t.TempDir(), "values.json")
+	render := func() ([]byte, error) {
+		b, _ := json.Marshal(values)
+		if err := os.WriteFile(path, b, 0600); err != nil {
+			t.Fatal(err)
+		}
+		return exec.Command("helm", "template", "qualification", "../../charts/agent-project-controller", "-n", "test-control", "-f", path).CombinedOutput()
+	}
+	output, err := render()
+	if err != nil {
+		t.Fatalf("default: %v: %s", err, output)
+	}
+	if !bytes.Contains(output, []byte(`LAN_GRANT_ALLOWED_CIDRS: ""`)) || bytes.Contains(output, []byte("resources: [nodes]")) {
+		t.Fatal("LAN grants must default to off without node access")
+	}
+	config["LAN_GRANT_ALLOWED_CIDRS"] = "192.168.110.0/24"
+	if _, err := render(); err == nil {
+		t.Fatal("LAN grants without a denylist accepted")
+	}
+	config["LAN_GRANT_DENIED_CIDRS"] = "192.168.105.0/24,192.168.110.1"
+	output, err = render()
+	if err != nil {
+		t.Fatalf("LAN grants: %v: %s", err, output)
+	}
+	for _, want := range []string{`LAN_GRANT_ALLOWED_CIDRS: "192.168.110.0/24"`, `LAN_GRANT_DENIED_CIDRS: "192.168.105.0/24,192.168.110.1"`, "resources: [nodes]", "ciliumnetworkpolicies"} {
+		if !bytes.Contains(output, []byte(want)) {
+			t.Fatalf("missing %s", want)
+		}
+	}
+	config["NETWORK_PROVIDER"] = "network-policy"
+	config["NETWORK_POLICY_ENFORCEMENT_ACKNOWLEDGED"] = "true"
+	config["NETWORK_POLICY_CLUSTER_CIDRS_JSON"] = `["10.0.0.0/8"]`
+	if _, err := render(); err == nil {
+		t.Fatal("LAN grants accepted with the NetworkPolicy provider")
+	}
+}

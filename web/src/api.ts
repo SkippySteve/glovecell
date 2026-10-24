@@ -3,14 +3,16 @@
 export type Method = 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS';
 export interface HTTPSRule { host: string; methods: Method[]; paths: string[] }
 export interface ProjectRepository { name: string; host: string; repository: string; public?: boolean }
+// Direct outbound TCP from the project worker to one IPv4 host on the operator's LAN.
+export interface LANHost { address: string; ports: number[]; note?: string; addedBy?: string; addedAt?: string }
 export interface Condition { type: string; status: string; reason: string; message: string; observedGeneration?: number }
 export interface Project {
   metadata: { name: string; uid?: string; generation?: number; resourceVersion?: string };
-  spec: { repository: string; desiredState: 'Running' | 'Paused' | 'Removed'; https?: HTTPSRule[]; repositories?: ProjectRepository[] };
+  spec: { repository: string; desiredState: 'Running' | 'Paused' | 'Removed'; https?: HTTPSRule[]; repositories?: ProjectRepository[]; lanHosts?: LANHost[] };
   status?: { phase?: string; namespace?: string; observedGeneration?: number; conditions?: Condition[] };
 }
 export interface AuditRecord { time: string; action: string; message?: string }
-export interface Session { actor?: string; oidc?: boolean; sandboxControl?: boolean; t3Connect?: boolean; githubOwner?: string; runRecords?: boolean; handoffs?: boolean; orcaProjects?: boolean; orcaSandbox?: string; orcaNamespace?: string }
+export interface Session { actor?: string; oidc?: boolean; sandboxControl?: boolean; t3Connect?: boolean; githubOwner?: string; runRecords?: boolean; handoffs?: boolean; orcaProjects?: boolean; orcaSandbox?: string; orcaNamespace?: string; lanHosts?: boolean; lanAllowed?: string[] }
 export interface Repository { full_name: string }
 
 export type EgressState = 'Open' | 'Learning' | 'Locked';

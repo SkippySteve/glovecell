@@ -111,9 +111,11 @@ type Reconciler struct {
 	ReaderRoute                  *proxy.ReaderRoute
 	Access                       ProjectAccess
 	client.Client
-	Host                    forgejo.Host
-	Network                 network.Provider
-	Config                  Config
+	Host    forgejo.Host
+	Network network.Provider
+	Config  Config
+	// LAN is the operator's home-LAN grant setting; empty disables grants.
+	LAN                     network.LANConfig
 	GitHubToken             string
 	MuseSubscriptionKeyFile string
 }
@@ -194,6 +196,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ct
 	if e := r.validate(ctx, w); e != nil {
 		if stopErr := r.suspend(ctx, w); stopErr != nil {
 			return ctrl.Result{}, stopErr
+		}
+		// A refused policy grants nothing, including LAN hosts.
+		if lanErr := r.removeLANPolicy(ctx, w); lanErr != nil {
+			return ctrl.Result{}, lanErr
 		}
 		if statusErr := r.status(ctx, w, "Blocked", false, "PolicyRejected", e.Error()); statusErr != nil {
 			return ctrl.Result{}, statusErr
@@ -306,8 +312,10 @@ func (r *Reconciler) validate(ctx context.Context, w *api.ProjectWorkspace) erro
 	if e := r.Get(ctx, types.NamespacedName{Name: r.Config.RuntimeClass}, runtime); e != nil {
 		return errors.New("configured isolation runtime unavailable")
 	}
-	_, e := r.policyConfiguration(w, w.Spec.HTTPS)
-	return e
+	if _, e := r.policyConfiguration(w, w.Spec.HTTPS); e != nil {
+		return e
+	}
+	return r.validateLANHosts(w)
 }
 func (r *Reconciler) audit(ctx context.Context, w *api.ProjectWorkspace, action string) error {
 	return r.auditDetails(ctx, w, action, nil)
@@ -448,6 +456,11 @@ func (r *Reconciler) ensure(ctx context.Context, w *api.ProjectWorkspace) error 
 		return errors.New("project namespace is terminating")
 	}
 	if e = r.ensureRegistrarAccess(ctx, w); e != nil {
+		return e
+	}
+	// LAN grants apply before the rest of the project objects, so removing one
+	// takes effect even while another preparation step is failing.
+	if e = r.applyLANHosts(ctx, w); e != nil {
 		return e
 	}
 	if w.Spec.DesiredState != "Paused" {

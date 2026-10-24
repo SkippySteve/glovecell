@@ -76,6 +76,8 @@ Providers must report their enforcement capabilities. Reject requested policies 
 
 Keep inspection keys outside agent environments, install only the necessary public trust certificates, and redact credentials and sensitive payloads from telemetry. Proxy environment variables alone are not a security boundary.
 
+Optional LAN host grants are the one direct exception: an operator can let one project's worker open TCP to a single IPv4 host and listed ports on the home network, while the project runs. They are off by default. See [LAN hosts](docs/console.md#lan-hosts).
+
 The initial release should document a qualified Cilium plus inspecting-proxy combination. Additional network or proxy providers require the same bypass, revocation and failure-mode qualification.
 
 ## Optional agent integrations

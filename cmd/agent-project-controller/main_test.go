@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/network"
 )
 
 func TestHandoffIntakeConfigurationFailsClosed(t *testing.T) {
@@ -38,6 +40,31 @@ func TestHandoffIntakeConfigurationFailsClosed(t *testing.T) {
 		}
 		if h != nil && h.Token != "intake-token-0123456789abcdef0123456789" {
 			t.Errorf("token not trimmed: %q", h.Token)
+		}
+	}
+}
+
+func TestLANGrantConfigurationFailsClosed(t *testing.T) {
+	cilium := network.Cilium{}
+	native := network.NetworkPolicy{}
+	for _, c := range []struct {
+		allowed, denied string
+		provider        network.Provider
+		ok, on          bool
+	}{
+		{"", "", cilium, true, false},
+		{"", "", native, true, false},
+		{"192.168.110.0/24", "192.168.105.0/24,192.168.110.1", cilium, true, true},
+		{"192.168.110.0/24", "", cilium, false, false},
+		{"192.168.110.0/24", "192.168.105.0/24", native, false, false},
+		{"0.0.0.0/0", "192.168.105.0/24", cilium, false, false},
+		{"192.168.110.2", "192.168.105.0/24", cilium, false, false},
+	} {
+		t.Setenv("LAN_GRANT_ALLOWED_CIDRS", c.allowed)
+		t.Setenv("LAN_GRANT_DENIED_CIDRS", c.denied)
+		lan, err := lanFromEnv(c.provider)
+		if (err == nil) != c.ok || lan.Enabled() != c.on {
+			t.Errorf("%q %q %T: enabled=%v err=%v", c.allowed, c.denied, c.provider, lan.Enabled(), err)
 		}
 	}
 }

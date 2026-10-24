@@ -2,6 +2,7 @@ import {useEffect, useState, type FormEvent} from 'react';
 import {api, type AuditRecord, type Project as ProjectWorkspace} from './api';
 import {useData} from './data';
 import {navigate, projectHref, TABS, type Tab} from './router';
+import {LanHostList, LanHosts} from './LanHosts';
 import {newRule, RuleList, rulesError, toDraft, toRule, type RuleDraft} from './Rules';
 import {pausedForEdits, projectState, settled} from './state';
 import {Button, Callout, Card, CardHeader, Input, Tabs, TabsContent, TabsList, TabsTrigger, Tag} from './ui';
@@ -39,7 +40,7 @@ function Overview({p}: {p: ProjectWorkspace}) {
   const lifecycle = useLifecycle(p);
   const [copied, setCopied] = useState(false);
   const ready = p.status?.phase === 'Ready', command = 'agent-project-controller connect ' + p.metadata.name;
-  const facts: [string, string][] = [['Repository', p.spec.repository], ['Status', projectState(p).label], ['Requested state', p.spec.desiredState], ['Namespace', p.status?.namespace || '—'], ['Outbound rules', String((p.spec.https || []).length)], ['Extra repositories', String((p.spec.repositories || []).length)]];
+  const facts: [string, string][] = [['Repository', p.spec.repository], ['Status', projectState(p).label], ['Requested state', p.spec.desiredState], ['Namespace', p.status?.namespace || '—'], ['Outbound rules', String((p.spec.https || []).length)], ['Extra repositories', String((p.spec.repositories || []).length)], ['LAN hosts', String((p.spec.lanHosts || []).length)]];
   return (
     <div className="stack">
       <Card variant="sunk" width="full">
@@ -50,6 +51,10 @@ function Overview({p}: {p: ProjectWorkspace}) {
       </Card>
       <ClientRegistrations name={p.metadata.name} />
       <dl className="facts">{facts.map(([term, value]) => <div key={term}><dt>{term}</dt><dd>{value}</dd></div>)}</dl>
+      {(p.spec.lanHosts || []).length ? <Card variant="sunk" width="full">
+        <CardHeader title="LAN hosts" subtitle="Computers on your network this sandbox may open TCP connections to. Change them on the Access tab." />
+        <LanHostList p={p} />
+      </Card> : null}
       {p.spec.desiredState !== 'Removed' ? (
         <Card variant="sunk" width="full" className="danger-zone">
           <div><h2>Remove sandbox</h2><p className="muted">Revokes repository access and deletes project storage. Pause instead to keep files and credentials.</p></div>
@@ -153,7 +158,7 @@ function Access({p}: {p: ProjectWorkspace}) {
   };
   return (
     <div className="stack">
-      <Callout variant="info" description="Console projects use fixed HTTPS rules enforced by their own proxy, so changes need the sandbox paused. For instant open and lock, use a sandbox-control sandbox from the Sandboxes list. Private networks, localhost and cloud metadata are always blocked." />
+      <Callout variant="info" description="Console projects use fixed HTTPS rules enforced by their own proxy, so changes need the sandbox paused. For instant open and lock, use a sandbox-control sandbox from the Sandboxes list. Private networks, localhost and cloud metadata are blocked for HTTPS; LAN hosts below are the only direct exception." />
       <form onSubmit={submit} className="access-form">
         <Card variant="sunk" width="full">
           <CardHeader title="Outbound HTTPS" subtitle="Only listed hosts, methods and path prefixes are allowed. A path of / permits the whole host. Registry rules permit downloads, not specific package versions." />
@@ -170,6 +175,7 @@ function Access({p}: {p: ProjectWorkspace}) {
           ) : null}
         </Card>
       </form>
+      <LanHosts p={p} />
     </div>
   );
 }
@@ -202,7 +208,7 @@ export function Project({name, tab}: {name: string; tab: Tab}) {
   const crumbs = <nav className="crumbs" aria-label="Breadcrumb"><a href="#/">Sandboxes</a><span aria-hidden="true">/</span><span>{name}</span></nav>;
   if (!p) return <>{crumbs}<Card variant="sunk" width="full" className="empty-card">{loaded ? <><h2>Sandbox not found</h2><p className="muted">{name} does not exist or was deleted.</p><div><Button variant="secondary" onClick={() => navigate('#/')}>Back to sandboxes</Button></div></> : <p>Loading…</p>}</Card></>;
   const state = projectState(p), ready = p.status?.phase === 'Ready';
-  const counts: Partial<Record<Tab, number>> = {repositories: 1 + (p.spec.repositories || []).length, access: (p.spec.https || []).length};
+  const counts: Partial<Record<Tab, number>> = {repositories: 1 + (p.spec.repositories || []).length, access: (p.spec.https || []).length + (p.spec.lanHosts || []).length};
   return (
     <>
       {crumbs}

@@ -45,6 +45,12 @@ rules:
   - apiGroups: [cilium.io]
     resources: [ciliumnetworkpolicies]
     verbs: [get, list, watch, create, update, patch, delete]
+{{- if index .Values.config "LAN_GRANT_ALLOWED_CIDRS" }}
+  # LAN host grants refuse every node address.
+  - apiGroups: ['']
+    resources: [nodes]
+    verbs: [get, list]
+{{- end }}
   - apiGroups: [apiextensions.k8s.io]
     resources: [customresourcedefinitions]
     resourceNames: [ciliumnetworkpolicies.cilium.io]
