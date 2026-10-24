@@ -85,6 +85,19 @@ func handoffsFromEnv() (*web.Handoffs, error) {
 	}
 	return h, nil
 }
+
+// lanFromEnv reads the optional home-LAN grant setting. Grants need a network
+// provider that can express a single-host TCP allow; otherwise startup fails.
+func lanFromEnv(provider network.Provider) (network.LANConfig, error) {
+	lan, err := network.ParseLANConfig(os.Getenv("LAN_GRANT_ALLOWED_CIDRS"), os.Getenv("LAN_GRANT_DENIED_CIDRS"))
+	if err != nil {
+		return network.LANConfig{}, err
+	}
+	if _, ok := provider.(network.LANPolicy); lan.Enabled() && !ok {
+		return network.LANConfig{}, errors.New("LAN_GRANT_ALLOWED_CIDRS requires NETWORK_PROVIDER=cilium")
+	}
+	return lan, nil
+}
 func positiveID(key string) (int64, error) {
 	value := os.Getenv(key)
 	n, err := strconv.ParseInt(value, 10, 64)
@@ -265,7 +278,11 @@ func run(ctx context.Context) error {
 	if e != nil {
 		return fmt.Errorf("proxy scheduling: %w", e)
 	}
-	reconciler := &controller.Reconciler{Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, GitHost: gitHost, ForgejoOrigin: origin, Owner: owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling, RegistrarNamespace: os.Getenv("REGISTRAR_NAMESPACE")}}
+	lan, e := lanFromEnv(networkProvider)
+	if e != nil {
+		return e
+	}
+	reconciler := &controller.Reconciler{LAN: lan, Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, GitHost: gitHost, ForgejoOrigin: origin, Owner: owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling, RegistrarNamespace: os.Getenv("REGISTRAR_NAMESPACE")}}
 	if os.Getenv("GITHUB_REPOSITORY_TOKEN_FILE") != "" {
 		reconciler.GitHubToken, e = secret("GITHUB_REPOSITORY_TOKEN_FILE")
 		if e != nil {
@@ -320,6 +337,9 @@ func run(ctx context.Context) error {
 	}
 	server := &web.Server{T3Connect: reconciler.Access != nil, Client: direct, Host: host, Namespace: ns, Owner: owner, Password: password, Origin: os.Getenv("PUBLIC_ORIGIN"), GitHost: gitHost, GitOrigin: origin, AllowBasic: os.Getenv("ALLOW_STATIC_LOGIN") == "true"}
 	server.GitHubOwner = reconciler.Config.GitHubOwner
+	if lan.Enabled() {
+		server.LAN = &web.LANGrants{Config: lan, Nodes: network.NodeAddresses}
+	}
 	if os.Getenv("SANDBOX_CONTROL_URL") != "" {
 		server.SandboxControl = &web.SandboxControl{URL: os.Getenv("SANDBOX_CONTROL_URL"), Origin: os.Getenv("SANDBOX_CONTROL_ORIGIN"), Operator: os.Getenv("SANDBOX_CONTROL_OPERATOR")}
 	} else if os.Getenv("SANDBOX_CONTROL_ORIGIN") != "" || os.Getenv("SANDBOX_CONTROL_OPERATOR") != "" {

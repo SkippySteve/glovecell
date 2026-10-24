@@ -22,6 +22,19 @@ type WorkspaceSpec struct {
 	DesiredState string              `json:"desiredState"`
 	HTTPS        []HTTPSRule         `json:"https,omitempty"`
 	Repositories []RepositoryProject `json:"repositories,omitempty"`
+	// LANHosts grants the project's worker direct TCP to single IPv4 hosts on the
+	// operator's LAN. Unlike HTTPS rules they change while the project runs.
+	LANHosts []LANHost `json:"lanHosts,omitempty"`
+}
+
+// LANHost is one operator grant: outbound TCP from the worker to Address on Ports.
+// The controller checks Address against its configured LAN ranges and denylist.
+type LANHost struct {
+	Address string       `json:"address"`
+	Ports   []int32      `json:"ports"`
+	Note    string       `json:"note,omitempty"`
+	AddedBy string       `json:"addedBy,omitempty"`
+	AddedAt *metav1.Time `json:"addedAt,omitempty"`
 }
 
 // RepositoryProject enrolls another checkout in the existing workspace volume.

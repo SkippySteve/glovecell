@@ -44,7 +44,7 @@ Use the runtime class and storage class you put in the values file. Render first
 
 ## Open a project
 
-Sign in to the dashboard, choose one repository, and create a project. Its HTTPS allow list is fixed at creation. A Ready project is entered from a machine with kubeconfig:
+Sign in to the dashboard, choose one repository, and create a project. Its HTTPS allow list is fixed at creation. LAN host grants are not in this release; on current `main` they are off until `LAN_GRANT_ALLOWED_CIDRS` is set. A Ready project is entered from a machine with kubeconfig:
 
 ```sh
 agent-project-controller connect <workspace>

@@ -33,6 +33,12 @@ config:
   # See docs/examples/gvisor-values.yaml.
   DNS_DIRECT_ENDPOINTS: 'false'
   PROXY_GATEWAY_JSON: ''
+  # Per-project LAN host grants (docs/console.md#lan-hosts). Empty turns them off.
+  # Allowed: private IPv4 parents an operator may grant single hosts from.
+  # Denied (required when allowed is set): node, API/service VIP, pod, service
+  # and gateway ranges. Requires NETWORK_PROVIDER=cilium.
+  LAN_GRANT_ALLOWED_CIDRS: ''
+  LAN_GRANT_DENIED_CIDRS: ''
   WORKSPACE_CPU_REQUEST: 500m
   WORKSPACE_MEMORY_REQUEST: 512Mi
   WORKSPACE_CPU_LIMIT: '4'

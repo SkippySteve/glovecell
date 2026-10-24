@@ -102,6 +102,56 @@ Render your overlay, inspect its RBAC and apply it to the qualification cluster.
 
 Before trusting a cluster, run `agent-project-controller preflight` with the same `RUNTIME_CLASS`, `STORAGE_CLASS`, `NETWORK_PROVIDER`, DNS, cluster CIDR, and `PROXY_GATEWAY_JSON` settings the controller will use. The Cilium profile checks the Agent Sandbox CRD, the CiliumNetworkPolicy CRD, and CoreDNS. The experimental NetworkPolicy profile reports `network-policy-dns` and checks that declared exclusions cover CoreDNS, the Kubernetes API address, node addresses, and pod CIDRs. Both profiles check the RuntimeClass and Delete reclaim on the storage class. A passing preflight is not the qualification in [qualification](qualification.md). Applying the CRD is not qualification either.
 
+## LAN host grants
+
+Operators can let one project's worker open TCP connections to single hosts on
+their own network; see [LAN hosts](console.md#lan-hosts). The feature is off by
+default. Two settings enable it:
+
+- `LAN_GRANT_ALLOWED_CIDRS`: IPv4 prefixes, separated by commas or spaces, that
+  grants may come from, for example `192.168.1.0/24` or a client VLAN. Each must
+  be canonical and inside `10.0.0.0/8`, `172.16.0.0/12` or `192.168.0.0/16`.
+  Empty turns grants off.
+- `LAN_GRANT_DENIED_CIDRS`: prefixes or single addresses that are refused even
+  inside the allowed ranges. Required when grants are on. List the node network
+  and node addresses, the Kubernetes API VIP, LoadBalancer and service VIP
+  pools, the pod and service CIDRs, and every router, firewall or gateway
+  address on the allowed networks.
+
+The controller also refuses node addresses it reads from Node objects, so its
+ClusterRole needs `get` and `list` on `nodes`; the chart adds that rule when
+`config.LAN_GRANT_ALLOWED_CIDRS` is set. Grants need `NETWORK_PROVIDER=cilium`;
+startup fails otherwise. Apply the CRD with `spec.lanHosts` before the
+controller image that uses it, or the API server prunes saved grants.
+
+```yaml
+config:
+  LAN_GRANT_ALLOWED_CIDRS: 192.168.1.0/24
+  LAN_GRANT_DENIED_CIDRS: 192.168.1.1,192.168.1.10,192.168.1.11,10.96.0.0/12,10.244.0.0/16
+```
+
+The settings are read at startup. Restart the controller after changing them.
+Narrowing them blocks any project whose grant falls outside, stops its worker
+and removes its policy until an operator removes that grant.
+
+Pod egress usually leaves the node with the node's address. Allow that path on
+the router or firewall between the nodes and each granted host: source the node
+addresses, destination the host and the granted TCP ports. Keep that rule as
+narrow as the grant; the controller does not configure network devices.
+
+For defense in depth, add an admission policy that lets only the controller's
+service account write Cilium policies in project namespaces (namespaces
+labeled `projects.agentwork.dev/workspace-uid`), and that limits policy
+`lan-hosts` to `/32` TCP egress inside the allowed ranges. The reusable chart
+does not install one because it cannot know your ranges.
+
+To roll back, remove every grant in the console, then clear
+`LAN_GRANT_ALLOWED_CIDRS` and restart. Deleting the setting first blocks the
+projects that still hold grants until those grants are removed. An older
+controller ignores `spec.lanHosts` and does not delete existing `lan-hosts`
+policies, so remove the grants before downgrading or delete those policies by
+hand.
+
 ## Client limit
 
 Inspection is an HTTP CONNECT to port 443. The proxy then inspects the negotiated HTTP/2 or HTTP/1.1 request with the same host, method and path rules. WebSocket upgrades and certificate-pinned clients stay blocked. There is no opaque tunnel. Allowing a registry host does not change that limit.

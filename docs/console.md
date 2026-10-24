@@ -72,6 +72,78 @@ CA, namespace and project volume are preserved when updating optional access.
 Interrupted updates retry from the saved policy, accepting only resources matching
 the old or requested policy. Unexpected resource drift remains an error.
 
+## LAN hosts
+
+A project can reach single computers on the operator's own network over plain
+TCP, for example SSH to a dev box or an HTTP API on a device. Open a sandbox's
+**Access** tab and use **LAN hosts**: enter one IPv4 address, the TCP ports
+(each listed, for example `22, 8080`) and an optional note, then **Grant LAN
+host**. Each grant has a **Remove** button. The Overview tab lists the current
+grants with who added them and when.
+
+Grants change while the project runs. There is no pause, restart or
+recreation: the controller rewrites the project's `lan-hosts` policy on its
+next reconcile, normally within seconds. The direction is sandbox to computer
+only. The grant adds an egress rule; nothing on the network can open a
+connection into the sandbox, and the console gains no new route.
+
+Only a signed-in OIDC operator from the allowlist can add or remove a grant.
+The automation bearer secret and static login are refused with 403, even though
+they have operator authority elsewhere. Requests use the console's usual
+same-origin and JSON checks. The feature is off until an administrator sets
+`LAN_GRANT_ALLOWED_CIDRS` (see [installation](installation.md#lan-host-grants)).
+With it off, the form is hidden and existing grants can still be removed.
+
+The controller refuses an address that is:
+
+- not a single canonical IPv4 address: no CIDR, range, hostname or IPv6;
+- outside every configured `LAN_GRANT_ALLOWED_CIDRS` range;
+- inside `LAN_GRANT_DENIED_CIDRS`, where the operator lists node addresses
+  and the node VLAN, the API and service VIPs, the pod and service CIDRs and
+  router or gateway addresses;
+- the address of any cluster node, read from the Node objects at grant and at
+  every reconcile, whether or not the denylist names it;
+- loopback, `0.0.0.0/8`, link-local including cloud metadata `169.254.169.254`,
+  multicast, `240.0.0.0/4` or `255.255.255.255`;
+- the first or last address of its allowed range, or any address ending in `.0`
+  or `.255` (treated as network or broadcast addresses of a home `/24`).
+
+Ports are 1 to 65535, listed one by one, at most 16 per host. Ranges are not
+accepted: a grant is meant for a known service, and an explicit list keeps every
+open port visible in the console, the audit record and the policy. A project
+holds at most 8 hosts, one grant per address. To change a host's ports, remove
+the grant and add it again.
+
+### How it reaches the host
+
+Workers normally reach only their inspecting proxy. A LAN grant is the one
+direct exception: Cilium policy `lan-hosts` in the project namespace allows the
+worker pod TCP to `<address>/32` on the listed ports. The proxy, other projects
+and every other destination are unchanged, so the rest of the project's egress
+stays exactly as restricted as before. The proxy is not involved, because it
+only handles inspected HTTPS.
+
+Raw TCP clients such as `ssh` ignore the proxy variables and connect directly.
+HTTP clients that honour `HTTP_PROXY`, such as `curl`, Python and Node, would
+send the request to the proxy, which refuses private addresses. Bypass it for
+the granted address: `NO_PROXY=192.168.1.20 curl http://192.168.1.20:8080/` or
+`curl --noproxy '*' ...`. The worker has no DNS for LAN names; use the address.
+
+Traffic leaves the node with the node's address. A router or firewall between
+the node network and the granted host must also allow it, from the node
+addresses to that host and port. The controller never changes that device.
+
+Removing a grant deletes its rule. Cilium checks egress policy on each packet the
+worker sends, so open connections to that host are expected to stop as well.
+Pause the project if you need certainty that a session has ended.
+
+Every add and remove writes an immutable audit record with the operator, the
+project, the address, the ports and the time, and the controller writes another
+when it applies the policy. Both appear in **History**. If the operator later
+narrows the ranges or turns the feature off, a project whose grant is now refused
+moves to **Needs attention**, its worker stops and its `lan-hosts` policy is
+deleted. Remove the grant to resume.
+
 ## Include pre-existing sandboxes
 
 The legacy control backend contract is a server-rendered control service with
@@ -163,7 +235,9 @@ reports hide the section.
 ## Rollout
 
 Apply the reviewed CRD from `config/crd` before updating the controller. Helm
-does not update an installed CRD automatically. The new schema permits HTTPS
+does not update an installed CRD automatically. A controller that stores LAN host grants needs
+the CRD with `spec.lanHosts`; with an older CRD the API server prunes the field
+and the console reports that the CRD must be applied. The new schema permits HTTPS
 changes only when both the old and new desired state are Paused; repository
 changes and reopening Removed projects remain forbidden.
 

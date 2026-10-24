@@ -79,6 +79,12 @@
 {{- fail "network-policy cannot enforce gateway SNI; set proxyGateway.disableSNIFilter true" }}
 {{- end }}
 {{- end }}
+{{- if index .Values.config "LAN_GRANT_ALLOWED_CIDRS" }}
+{{- if ne $provider "cilium" }}
+{{- fail "LAN_GRANT_ALLOWED_CIDRS requires NETWORK_PROVIDER=cilium" }}
+{{- end }}
+{{- $_ := required "config.LAN_GRANT_DENIED_CIDRS is required when LAN_GRANT_ALLOWED_CIDRS is set" (index .Values.config "LAN_GRANT_DENIED_CIDRS") }}
+{{- end }}
 {{- if or (index .Values.config "SANDBOX_CONTROL_URL") (index .Values.config "SANDBOX_CONTROL_ORIGIN") (index .Values.config "SANDBOX_CONTROL_OPERATOR") }}
 {{- range $key := list "SANDBOX_CONTROL_URL" "SANDBOX_CONTROL_ORIGIN" "SANDBOX_CONTROL_OPERATOR" }}
 {{- $_ := required (printf "config.%s is required when integrating existing sandbox controls" $key) (index $.Values.config $key) }}

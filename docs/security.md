@@ -44,6 +44,48 @@ The experimental `network-policy` provider keeps that fail-closed boundary only 
 
 Each project has an inspection CA with a one-year lifetime. Leaf certificates renew in the running proxy. Set the annotation `projects.agentwork.dev/ca-generation` to the next integer to mint a new CA, update the worker trust bundle, and restart the proxy and worker. The private key stays in the control ledger and the proxy. The generation cannot skip or go backwards. Removal still requires a new project before access can be granted again.
 
+## LAN host grants
+
+LAN host grants are the only direct worker egress besides the inspecting proxy
+and DNS for the proxy name. They are off unless the operator sets
+`LAN_GRANT_ALLOWED_CIDRS`. A grant is one IPv4 address and an explicit list of
+TCP ports, enforced by CiliumNetworkPolicy `lan-hosts` in the project
+namespace: `toCIDR <address>/32` with those ports, selecting only that
+project's worker pod. It has no ingress section, so it adds no inbound access,
+and Cilium allow rules are additive, so the worker and proxy policies keep
+every other restriction. Traffic to a granted host is not inspected, filtered
+by protocol or recorded beyond Cilium's own flow logs. Anything an agent can do
+over that TCP port, it can do; an SSH grant with a usable key is a shell on that
+host. Grant the narrowest port and use host-side credentials that a project
+should hold.
+
+The allowed ranges must be inside `10.0.0.0/8`, `172.16.0.0/12` or
+`192.168.0.0/16`, so a grant can never become a direct path to the internet
+around the HTTPS proxy. Startup fails when the denylist is empty while grants
+are enabled, and with the experimental NetworkPolicy provider, which has no
+single-host rule here. The controller refuses node addresses, the denylist,
+loopback, link-local and metadata, multicast, reserved and broadcast
+addresses on every grant request and every reconcile. A grant that becomes
+refused, for example after the operator narrows the ranges, blocks the project,
+stops its worker and deletes the policy.
+
+Only OIDC operators change grants; the automation bearer and static login
+cannot. The worker has no Kubernetes credential, and project namespaces hold no
+role that can write Cilium policies. The policy is labeled with its project
+UID; the controller refuses to adopt or delete a `lan-hosts` policy owned by
+another project and overwrites any edit to its own. Deployments should add an
+admission policy so that only the controller's service account can write
+Cilium policies in project namespaces, and only `/32` TCP rules inside the
+allowed ranges. Kubernetes administrators and cluster-wide policies remain
+outside this check.
+
+Removing a grant deletes its rule. Cilium evaluates egress policy per packet
+in the original direction, so established connections are expected to stop;
+this has not been qualified on a cluster. Pause the project when a session must
+end for certain. Every add and remove is an immutable audit record with the
+operator, project, address, ports and time, and the controller records each
+applied policy.
+
 ## Removal and recovery
 
 The controller persists the external identity before any grant. If it crashes after token creation but before saving the token value, the next attempt removes orphaned tokens before issuing another. Deleting the credential ledger manually breaks this recovery guarantee.

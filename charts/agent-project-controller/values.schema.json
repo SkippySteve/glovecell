@@ -373,6 +373,12 @@
         "GIT_HOST": {
           "enum": ["forgejo", "github"]
         },
+        "LAN_GRANT_ALLOWED_CIDRS": {
+          "type": "string"
+        },
+        "LAN_GRANT_DENIED_CIDRS": {
+          "type": "string"
+        },
         "GITHUB_OWNER": {
           "type": "string",
           "minLength": 1
