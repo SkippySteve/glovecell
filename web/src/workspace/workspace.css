@@ -94,7 +94,8 @@
 details.fold { padding: var(--openui-space-m) var(--openui-space-l); display: block; }
 details.fold > summary { cursor: pointer; font-weight: 600; color: var(--openui-text-neutral-secondary); }
 details.fold[open] > summary { margin-bottom: var(--openui-space-m); }
-.not-available { border-style: dashed; }
+.not-available { display: flex; flex-direction: column; gap: 2px; border: 1px dashed var(--openui-border-interactive); border-radius: var(--openui-radius-l); padding: 10px 12px; font: var(--openui-text-body-sm); color: var(--openui-text-neutral-secondary); }
+.not-available strong { color: var(--openui-text-neutral-primary); }
 .decision-list li { justify-content: flex-start; flex-wrap: wrap; }
 .decision-list li .item-main { flex: 1 1 260px; }
 .decision-list li .actions { margin-left: auto; }

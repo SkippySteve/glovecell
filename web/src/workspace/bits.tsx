@@ -1,6 +1,5 @@
 // Small shared pieces of the workspace view.
 import type {ReactNode} from 'react';
-import {Callout} from '../ui';
 import {left, remaining} from './time';
 
 export const Countdown = ({until, now}: {until: number; now: number}) => <span className="countdown">{left(until, now)}</span>;
@@ -21,7 +20,13 @@ export function SectionIntro({title, aside, children}: {title: string; aside?: R
 
 // A part of the mockup with no console API behind it yet.
 export function NotAvailable({what, needs, children}: {what: string; needs: string; children?: ReactNode}) {
-  return <Callout variant="neutral" className="not-available" title={what + ': not available yet'} description={<><span className="block">{needs}</span>{children ? <span className="block">{children}</span> : null}</>} />;
+  return (
+    <div className="not-available" role="note">
+      <strong>{what}: not available yet</strong>
+      <span>{needs}</span>
+      {children ? <span>{children}</span> : null}
+    </div>
+  );
 }
 
 export const plural = (n: number, word: string) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;

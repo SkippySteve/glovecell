@@ -6,6 +6,8 @@ import {decideRequest, loadRequests, requestUrl, type Requests} from '../sources
 import {ecosystemLabel, packageRequests, type PackageRequest} from '../sources/packages';
 import type {SandboxState} from '../useSandbox';
 
+const SHOWN = 10;
+
 function Row({p, action}: {p: PackageRequest; action?: ReactNode}) {
   return (
     <li>
@@ -40,7 +42,7 @@ export function Packages({ws}: {ws: SandboxState}) {
             {!pending.length ? <li className="empty-item">{requests ? 'No blocked package downloads.' : 'Loading…'}</li> : null}
           </ul>
         </Card>
-        {approved.length ? <Card variant="sunk" width="full"><CardHeader title={`Approved downloads (${approved.length})`} /><ul className="items">{approved.map(p => <Row key={p.request.observation} p={p} />)}</ul></Card> : null}
+        {approved.length ? <Card variant="sunk" width="full"><CardHeader title={`Approved downloads (${approved.length})`} subtitle={approved.length > SHOWN ? `The newest ${SHOWN}; all approved requests are on the Internet page.` : undefined} /><ul className="items">{approved.slice(0, SHOWN).map(p => <Row key={p.request.observation} p={p} />)}</ul></Card> : null}
       </> : null}
       <NotAvailable what="Allowed package lists and package-policy blocks" needs="The console has no read API for them yet (sandbox-control would need GET /api/packages).">
         <a href={classicHref(detail.id, 'access')}>Edit package lists or import a package-lock.json on the classic page</a>
