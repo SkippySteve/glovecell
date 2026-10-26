@@ -89,6 +89,7 @@
 .flash { animation: ws-flash 1.6s; }
 @keyframes ws-flash { 0% { box-shadow: 0 0 0 3px var(--openui-interactive-accent-default); } 100% { box-shadow: 0 0 0 0 transparent; } }
 @media (prefers-reduced-motion: reduce) { .flash { animation: none; } }
+.lan-host { scroll-margin-top: 230px; }
 .lan-host:focus { outline: none; }
 .lan-host:focus-visible { outline: 2px solid var(--openui-border-accent-emphasis); }
 details.fold { padding: var(--openui-space-m) var(--openui-space-l); display: block; }
@@ -126,6 +127,7 @@ details.fold[open] > summary { margin-bottom: var(--openui-space-m); }
   .ws-side { display: none; }
   /* A sticky header would cover a third of a phone screen; it scrolls away there. */
   .ws-sticky { position: static; }
+  .lan-host { scroll-margin-top: 64px; }
   .ws-mobile { display: flex; flex-direction: column; gap: var(--openui-space-s); margin-top: var(--openui-space-s); }
   .ws-picker { max-width: 100%; }
   .ws-pills { display: flex; gap: 4px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }

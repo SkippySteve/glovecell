@@ -4,7 +4,7 @@ import {plainText, REASON_LIMIT} from '../../orca';
 import {Button, Callout, Tag, ToggleGroup, ToggleItem} from '../../ui';
 import {Countdown, NotAvailable, plural, SectionIntro, WindowBar} from '../bits';
 import {useConfirm} from '../Confirm';
-import {takeLanPrefill, type LanPrefill} from '../prefill';
+import {clearLanPrefill, peekLanPrefill, type LanPrefill} from '../prefill';
 import {chosenPorts, grantLabel, lanExtend, lanForget, lanOpen, lanRestrict, portChips, windowLabel, type LanHost, type LanView, type OpenMode} from '../sources/lan';
 import {lanEventTitle} from '../sources/history';
 import {ago, clockAt, stamp} from '../time';
@@ -147,7 +147,8 @@ function HostCard({ws, lan, h, now, prefill}: {ws: SandboxState; lan: LanView; h
 
 export function Lan({ws, now}: {ws: SandboxState; now: number}) {
   const lan = ws.lan;
-  const [prefill] = useState(() => takeLanPrefill(ws.id));
+  const [prefill] = useState(() => peekLanPrefill(ws.id));
+  useEffect(() => clearLanPrefill, []);
   if (lan === undefined) return <div className="stack"><SectionIntro title="LAN devices" /><p className="empty">{ws.lanError ? <span className="error-text">{ws.lanError}</span> : 'Loading LAN hosts…'}</p></div>;
   if (lan === null) return (
     <div className="stack">
