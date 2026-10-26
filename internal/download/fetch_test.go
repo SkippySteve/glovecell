@@ -41,8 +41,8 @@ func upstream(t *testing.T, h http.HandlerFunc) *http.Client {
 
 func workspace(t *testing.T) (string, string) {
 	root := t.TempDir()
-	home := filepath.Join(root, "home")
-	if err := os.Mkdir(home, 0o755); err != nil {
+	home := filepath.Join(root, "workspace", "home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return root, home
@@ -95,7 +95,6 @@ func TestFetchWritesAtomicallyAndReportsHash(t *testing.T) {
 	})
 	root, home := workspace(t)
 	j := job("~/downloads/a.bin")
-	j.Home = home
 	j.SHA256 = hex.EncodeToString(sum[:])
 	var out bytes.Buffer
 	if err := Run(context.Background(), j, root, client, &out); err != nil {
@@ -118,13 +117,12 @@ func TestFetchWritesAtomicallyAndReportsHash(t *testing.T) {
 
 func TestFetchUnderWorkspacePath(t *testing.T) {
 	client := upstream(t, func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("x")) })
-	root, home := workspace(t)
+	root, _ := workspace(t)
 	j := job("/workspace/repo/vendor/a.bin")
-	j.Home = home
 	if err := Run(context.Background(), j, root, client, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(root, "repo", "vendor", "a.bin")); err != nil {
+	if _, err := os.Stat(filepath.Join(root, "workspace", "repo", "vendor", "a.bin")); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -158,7 +156,6 @@ func TestFetchRefusesSymlinksAndSpecialFiles(t *testing.T) {
 		"~/linked/sub/a.b": CodeSymlink,
 	} {
 		j := job(dest)
-		j.Home = home
 		j.Overwrite = true
 		err := Run(context.Background(), j, root, client, io.Discard)
 		if code(err) != want {
@@ -177,13 +174,45 @@ func TestFetchHomeItselfSymlinkedIsRefused(t *testing.T) {
 	client := upstream(t, func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("x")) })
 	root := t.TempDir()
 	outside := t.TempDir()
-	if err := os.Symlink(outside, filepath.Join(root, "home")); err != nil {
+	os.Mkdir(filepath.Join(root, "workspace"), 0o755)
+	if err := os.Symlink(outside, filepath.Join(root, "workspace", "home")); err != nil {
 		t.Fatal(err)
 	}
 	j := job("~/a.bin")
-	j.Home = filepath.Join(root, "home")
 	if err := Run(context.Background(), j, root, client, io.Discard); code(err) != CodeSymlink {
 		t.Fatal(err)
+	}
+}
+
+// sandbox-control workspaces keep HOME at /home/agent, outside /workspace.
+func TestFetchHomeOutsideWorkspace(t *testing.T) {
+	client := upstream(t, func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("x")) })
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "home", "agent"), 0o755)
+	os.MkdirAll(filepath.Join(root, "workspace"), 0o755)
+	j := job("~/downloads/a.bin")
+	j.Home = "/home/agent"
+	if err := Run(context.Background(), j, root, client, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "home", "agent", "downloads", "a.bin")); err != nil {
+		t.Fatal(err)
+	}
+	// A missing tree is not created, and a symlinked step towards home is refused.
+	j.Home = "/home/other"
+	if err := Run(context.Background(), j, root, client, io.Discard); code(err) != CodeOutside {
+		t.Fatal(err)
+	}
+	os.Symlink(filepath.Join(root, "workspace"), filepath.Join(root, "home", "link"))
+	j.Home = "/home/link"
+	if err := Run(context.Background(), j, root, client, io.Discard); code(err) != CodeSymlink {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{"/", "home/agent", "/home/agent/../root", "/home//agent"} {
+		j.Home = bad
+		if err := Run(context.Background(), j, root, client, io.Discard); code(err) != CodeInvalid {
+			t.Errorf("home %q: %v", bad, err)
+		}
 	}
 }
 
@@ -193,7 +222,6 @@ func TestFetchOverwriteOnlyWhenTicked(t *testing.T) {
 	path := filepath.Join(home, "a.bin")
 	os.WriteFile(path, []byte("old"), 0o644)
 	j := job("~/a.bin")
-	j.Home = home
 	if err := Run(context.Background(), j, root, client, io.Discard); code(err) != CodeExists {
 		t.Fatal(err)
 	}
@@ -212,7 +240,7 @@ func TestFetchOverwriteOnlyWhenTicked(t *testing.T) {
 
 func TestPublishNeverReplacesAFileThatAppearsDuringTheDownload(t *testing.T) {
 	root, home := workspace(t)
-	dir, name, _, err := openDestination(root, home, "~/late.bin", false)
+	dir, name, _, err := openDestination(root, "", "~/late.bin", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,7 +278,6 @@ func TestFetchSizeCap(t *testing.T) {
 		client := upstream(t, h)
 		root, home := workspace(t)
 		j := job("~/a.bin")
-		j.Home = home
 		j.MaxBytes = 1000
 		if err := Run(context.Background(), j, root, client, io.Discard); code(err) != CodeTooLarge {
 			t.Errorf("%s: %v", name, err)
@@ -266,7 +293,6 @@ func TestFetchChecksumMismatchDeletesTheFile(t *testing.T) {
 	client := upstream(t, func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("tampered")) })
 	root, home := workspace(t)
 	j := job("~/a.bin")
-	j.Home = home
 	j.SHA256 = strings.Repeat("0", 64)
 	var out bytes.Buffer
 	err := Run(context.Background(), j, root, client, &out)
@@ -287,7 +313,6 @@ func TestFetchStopsAtRedirectAndProbeSendsHead(t *testing.T) {
 	})
 	root, home := workspace(t)
 	j := job("~/a.bin")
-	j.Home = home
 	var out bytes.Buffer
 	if err := Run(context.Background(), j, root, client, &out); err != nil {
 		t.Fatal(err)
@@ -314,7 +339,6 @@ func TestFetchStatusErrorAndTruncation(t *testing.T) {
 	client := upstream(t, func(w http.ResponseWriter, r *http.Request) { http.Error(w, "nope", 404) })
 	root, home := workspace(t)
 	j := job("~/a.bin")
-	j.Home = home
 	if err := Run(context.Background(), j, root, client, io.Discard); code(err) != CodeStatus {
 		t.Fatal(err)
 	}
@@ -333,9 +357,8 @@ func TestFetchStatusErrorAndTruncation(t *testing.T) {
 }
 
 func TestRunRefusesMissingTokenAndBadMode(t *testing.T) {
-	root, home := workspace(t)
+	root, _ := workspace(t)
 	j := job("~/a.bin")
-	j.Home = home
 	j.Token = ""
 	if err := Run(context.Background(), j, root, http.DefaultClient, io.Discard); code(err) != CodeInvalid {
 		t.Fatal(err)
