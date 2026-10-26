@@ -259,7 +259,7 @@ func (d *Downloads) reserve(uid, id string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if other, ok := d.busy[uid]; ok {
-		return fmt.Errorf("another check or download (%s) is running in this sandbox", other)
+		return fmt.Errorf("another check, download or upload (%s) is running in this sandbox", other)
 	}
 	if len(d.busy) >= maxBusy {
 		return errors.New("too many downloads are running; try again shortly")

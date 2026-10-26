@@ -72,6 +72,37 @@ const {chromium} = require(process.env.PLAYWRIGHT_MODULE_PATH || 'playwright');
     if (await page.getByText(/secret-/).count()) throw new Error('query string in History');
     await shot('downloads-history');
 
+    // 5. Upload from this computer: Files -> Upload tab, pick a file, confirm,
+    // see progress and the sandbox's SHA-256 next to the browser's.
+    await page.goto(origin + '/#/projects/project/downloads');
+    await page.getByRole('tab', {name: 'Upload from this computer'}).click();
+    await page.getByRole('heading', {name: 'Upload from this computer', exact: true}).waitFor();
+    const bytes = Buffer.alloc(17 << 20);
+    for (let i = 0; i < bytes.length; i++) bytes[i] = i % 251;
+    const want = require('crypto').createHash('sha256').update(bytes).digest('hex');
+    await page.locator('#up-file').setInputFiles({name: 'report.bin', mimeType: 'application/octet-stream', buffer: bytes});
+    const saveAs = page.getByLabel('Save as');
+    if (await saveAs.inputValue() !== '~/uploads/report.bin') throw new Error('upload destination not prefilled: ' + await saveAs.inputValue());
+    await saveAs.fill('~/../x');
+    await page.getByText('The path must not contain empty, . or .. parts.').waitFor();
+    await saveAs.fill('~/uploads/report.bin');
+    await shot('uploads-ready');
+    await page.getByRole('button', {name: 'Upload', exact: true}).click();
+    await confirm.getByText(/no cookies or passwords for other sites are sent/).waitFor();
+    await shot('uploads-confirm');
+    await confirm.getByRole('button', {name: 'Upload', exact: true}).click();
+    await page.locator('[data-upload][data-state="done"]').waitFor({timeout: 60000});
+    if (await page.getByTestId('upload-sandbox-sha').innerText() !== want) throw new Error('sandbox SHA-256 differs from the file');
+    await page.getByText('same file').waitFor();
+    await page.getByRole('list', {name: 'Recent uploads'}).getByText('done · ~/uploads/report.bin').waitFor();
+    await shot('uploads-done');
+    // The same destination again without overwrite: the sandbox refuses before any byte is sent.
+    await page.getByRole('button', {name: 'Upload', exact: true}).click();
+    await confirm.getByRole('button', {name: 'Upload', exact: true}).click();
+    await page.getByText('a file already exists at the destination; tick overwrite to replace it', {exact: true}).waitFor();
+    await page.goto(origin + '/#/projects/project/history');
+    await page.getByText('upload-finished').first().waitFor();
+
     // Narrow screens: the chain wraps instead of overflowing.
     await page.setViewportSize({width: 390, height: 844});
     await page.goto(origin + '/#/projects/project/downloads');

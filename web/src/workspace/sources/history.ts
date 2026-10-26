@@ -13,12 +13,13 @@ import type {LanView} from './lan';
 
 export type HistoryType = 'lan' | 'devlink' | 'policy' | 'report' | 'download';
 export interface HistoryEvent { at: number; type: HistoryType; title: string; detail: string; by: string }
-export const HISTORY_FILTERS: [HistoryType | 'all', string][] = [['all', 'All'], ['lan', 'LAN'], ['devlink', 'Dev links'], ['report', 'Reports'], ['download', 'Downloads'], ['policy', 'Policy & lifecycle']];
+export const HISTORY_FILTERS: [HistoryType | 'all', string][] = [['all', 'All'], ['lan', 'LAN'], ['devlink', 'Dev links'], ['report', 'Reports'], ['download', 'Files'], ['policy', 'Policy & lifecycle']];
 
 const LAN_EVENTS: Record<string, string> = {opened: 'LAN access opened', extended: 'LAN access extended', restricted: 'LAN access restricted', expired: 'LAN access expired', applied: 'LAN rule applied', revoked: 'LAN rule removed', 'ports-learned': 'LAN ports learned', 'ports-forgotten': 'Learned LAN ports forgotten', 'worker-restarted': 'Workspace pod restarted', 'controller-restart': 'Grant ended by a sandbox-control restart', 'orphan-removed': 'Orphaned LAN rule removed'};
 export const lanEventTitle = (event: string) => LAN_EVENTS[event] || 'LAN ' + event.replace(/-/g, ' ');
 
-const DOWNLOAD_EVENTS: Record<string, string> = {'download-chain-checked': 'Download URL checked', 'download-requested': 'Download started', 'download-done': 'Download finished', 'download-failed': 'Download failed', 'download-changed': 'Download stopped: redirect chain changed', 'download-cancelled': 'Download cancelled'};
+const DOWNLOAD_EVENTS: Record<string, string> = {'download-chain-checked': 'Download URL checked', 'download-requested': 'Download started', 'download-done': 'Download finished', 'download-failed': 'Download failed', 'download-changed': 'Download stopped: redirect chain changed', 'download-cancelled': 'Download cancelled',
+  'upload-requested': 'Upload started', 'upload-done': 'Upload finished', 'upload-failed': 'Upload failed', 'upload-cancelled': 'Upload cancelled'};
 
 export function mergeHistory(src: {lan?: LanView | null; devlinks?: DevLink[] | null; revisions?: Revision[]; reports?: AgentReport[] | null; downloads?: DownloadEvent[] | null}): HistoryEvent[] {
   const out: HistoryEvent[] = [];

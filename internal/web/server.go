@@ -255,7 +255,16 @@ func (s *Server) Handler() (http.Handler, error) {
 			subject = "static-operator"
 			method = "basic"
 		}
-		ctx, cancel := context.WithTimeout(context.WithValue(context.WithValue(r.Context(), actorKey{}, subject), authKey{}, method), 25*time.Second)
+		timeout := 25 * time.Second
+		if s.Downloads != nil && (r.Method == "PUT" && uploadDataPath.MatchString(r.URL.Path) || s.SandboxControl != nil && r.Method == "POST" && r.URL.Path == "/sandboxes/upload-data") {
+			// One upload part may take longer than the console's usual request
+			// bounds on a slow link; it gets its own, still bounded, deadlines.
+			timeout = chunkDeadline + uploadFinishWait
+			rc := http.NewResponseController(w)
+			_ = rc.SetReadDeadline(time.Now().Add(chunkDeadline))
+			_ = rc.SetWriteDeadline(time.Now().Add(timeout + 30*time.Second))
+		}
+		ctx, cancel := context.WithTimeout(context.WithValue(context.WithValue(r.Context(), actorKey{}, subject), authKey{}, method), timeout)
 		defer cancel()
 		mux.ServeHTTP(w, r.WithContext(ctx))
 	}), nil

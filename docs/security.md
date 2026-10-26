@@ -146,13 +146,32 @@ through its own inspecting proxy, as the worker's user, and writes it itself.
   prefix in every record and log line; only the operator's own console view
   shows them, masked until "Show query strings" is ticked.
 
+**Uploads** (`agent-project-controller put`) reuse the helper's path rules,
+temporary file and atomic publish. The file comes from the operator's browser
+through the console: it is never fetched by anything in the cluster, so no
+grant, proxy rule or network policy is involved, and whatever credentials the
+operator used to obtain it stay in the browser. The controller streams each
+part straight into the helper's stdin through a 64 KiB buffer; nothing is
+stored in controller memory or on its disk. The helper is told the exact size
+up front (`--size`, checked against `--max-bytes`, and the controller refuses
+anything above the cap before starting it) and keeps nothing unless exactly
+that many bytes arrive: a short stream, a cancel, two idle minutes or
+SIGTERM/SIGHUP/SIGINT remove the temporary file. A broken stdout no longer
+kills the helper (it ignores SIGPIPE), so cleanup still runs. Raw parts are
+accepted only as `PUT` with `application/octet-stream` and `X-Upload-Offset`
+from a same-origin, signed-in OIDC operator; both headers force a CORS
+preflight, so a cross-site page cannot send one. Records and logs carry the
+file name, size, SHA-256, destination and outcome, never contents.
+
 sandbox-control workspaces follow the same rules with sandbox-control as the
 proxy: grants live in its egress proxy, bound to the workspace and its current
 pod UID, and sandbox-control execs the helper (this binary, installed as
 `/usr/local/bin/sandbox-download`) through the Kubernetes WebSocket exec API.
 Its Role grants `pods/exec` only on each enrolled workspace pod by name, and an
 admission policy allows its exec only for that pod's download container with
-the command exactly `[/usr/local/bin/sandbox-download, fetch]`, stdin and no
+the command exactly `[/usr/local/bin/sandbox-download, fetch]` or the upload
+shape `[/usr/local/bin/sandbox-download, put, --home=…, --dest=…, --size=N,
+--max-bytes=N, --sha256=[hex], --overwrite=true|false]` (fixed order), stdin and no
 TTY; attach and port-forward are refused. The helper accepts a home directory
 outside `/workspace` (`/home/agent` there) and walks every directory from `/`
 without following symlinks.

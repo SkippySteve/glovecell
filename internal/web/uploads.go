@@ -200,7 +200,6 @@ func (s *Server) startUpload(w http.ResponseWriter, r *http.Request) {
 	d.mu.Unlock()
 	go func() {
 		defer cancel()
-		defer d.release(t.uid, id)
 		d.runUpload(ctx, s, t, rec, stdinR)
 	}()
 	select {
@@ -296,6 +295,8 @@ func (d *Downloads) runUpload(ctx context.Context, s *Server, t *target, rec *up
 		rec.State, rec.Code, rec.Error = "failed", "exec", "the sandbox helper ended without a result"
 	}
 	d.mu.Unlock()
+	// Free the sandbox for the next operation before anyone sees the result.
+	d.release(t.uid, rec.ID)
 	rec.markReady()
 	close(rec.ended)
 	if err := s.uploadAudit(context.Background(), t.obj, "upload-finished", rec); err != nil {
@@ -393,9 +394,6 @@ func (s *Server) uploadData(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("the next part starts at byte %d of %d", view.Received, view.Size), http.StatusConflict)
 		return
 	}
-	rc := http.NewResponseController(w)
-	_ = rc.SetReadDeadline(time.Now().Add(chunkDeadline))
-	_ = rc.SetWriteDeadline(time.Now().Add(chunkDeadline + uploadFinishWait + 30*time.Second))
 	copied, err := io.CopyBuffer(rec.stdin, io.LimitReader(r.Body, n), make([]byte, 64<<10))
 	d.mu.Lock()
 	rec.Received += copied
