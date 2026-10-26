@@ -117,15 +117,25 @@ export interface ActivityItem { title: string; target: string; time: string; out
 export interface ActivitySource { source: string; scope: string; at: number; error?: string; items: ActivityItem[] }
 export interface Activity { window: {start: string; end: string; minutes: number}; links: {grafana?: string; openlit?: string}; sources: ActivitySource[]; health: {error?: string; cards: {title: string; target: string}[]} }
 
-async function sandboxGet<T>(path: string, params: Record<string, string>): Promise<T> {
+export async function sandboxGet<T>(path: string, params: Record<string, string>): Promise<T> {
   const response = await fetch('/sandboxes' + path + '?' + new URLSearchParams(params), {credentials: 'same-origin', headers: {Accept: 'application/json'}});
   if (!response.ok) throw await failure(response);
   csrf = response.headers.get('X-Sandbox-CSRF') || csrf;
   if (!response.headers.get('Content-Type')?.startsWith('application/json')) throw new Error('This sandbox-control release has no JSON view; open the classic page');
   return response.json() as Promise<T>;
 }
+// Like sandboxGet, but null when this console or sandbox-control release does not
+// serve the view (404 or 405), so a section can say "not available yet".
+export async function sandboxGetOptional<T>(path: string, params: Record<string, string>): Promise<T | null> {
+  const response = await fetch('/sandboxes' + path + '?' + new URLSearchParams(params), {credentials: 'same-origin', headers: {Accept: 'application/json'}});
+  if (response.status === 404 || response.status === 405) return null;
+  if (!response.ok) throw await failure(response);
+  csrf = response.headers.get('X-Sandbox-CSRF') || csrf;
+  if (!response.headers.get('Content-Type')?.startsWith('application/json')) return null;
+  return response.json() as Promise<T>;
+}
 export const sandboxDetail = (id: string) => sandboxGet<SandboxDetail>('/api/workspace', {workspace: id});
-export const sandboxObservations = (id: string, q: string) => sandboxGet<ObservationPage>('/api/egress', {workspace: id, q});
+export const sandboxObservations = (id: string, q: string, limit?: number) => sandboxGet<ObservationPage>('/api/egress', limit ? {workspace: id, q, limit: String(limit)} : {workspace: id, q});
 export const sandboxPreviews = (id: string, expired: boolean) => sandboxGet<{expiredCount: number; requests: Preview[]}>('/api/previews', expired ? {workspace: id, expired: '1'} : {workspace: id});
 export const sandboxDevLinks = (id: string) => sandboxGet<DevLink[]>('/api/devlinks', {workspace: id});
 export const sandboxActivity = (id: string, minutes: number) => sandboxGet<Activity>('/api/activity', {workspace: id, minutes: String(minutes)});

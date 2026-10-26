@@ -1,5 +1,6 @@
 import {useCallback, useEffect, useState} from 'react';
-import {sandboxDevLinks, type DevLink} from '../api';
+import type {DevLink} from '../api';
+import {loadDevLinks} from '../workspace/sources/previews';
 import {useData} from '../data';
 import {Button, Card, Tag, TextArea, ToggleGroup, ToggleItem, type TagVariant} from '../ui';
 import {timeOf, type SandboxContext} from './Sandbox';
@@ -85,7 +86,7 @@ export function DevLinksTab({detail, act}: SandboxContext) {
   const {toast} = useData();
   const [links, setLinks] = useState<DevLink[] | null>(null);
   const load = useCallback(async () => {
-    try { setLinks(await sandboxDevLinks(detail.id)); } catch (e) { toast((e as Error).message, true); }
+    try { setLinks(await loadDevLinks(detail.id)); } catch (e) { toast((e as Error).message, true); }
   }, [detail.id, toast]);
   useEffect(() => { load(); }, [load, detail.devLinkPending]);
   // A scan takes a minute or two; refresh while one runs.

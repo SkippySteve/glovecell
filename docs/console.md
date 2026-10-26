@@ -35,6 +35,41 @@ Dependencies are pinned exactly. The OpenUI theme tokens are generated into
 static CSS because the console's CSP forbids injected styles, and dark mode
 follows the operating system.
 
+### Sandbox workspace view
+
+Opening a sandbox shows one workspace at a time. A sidebar lists every
+workspace (sandbox-control sandboxes and console projects, with counts of what
+waits on you and a **LAN** badge while LAN access is open) and the sections of
+the current one: **Overview**, **Internet**, **LAN devices**, **Packages**,
+**Previews & dev links**, **Credentials**, **History**, plus **Runs** and
+**Settings** for sandbox-control sandboxes. A sticky header shows the workspace
+state, its pod, and every open grant with a countdown: web access (with Lock),
+each LAN grant (with Restrict) and live dev links. On narrow screens the sidebar
+becomes a workspace picker and a row of section links, and the header scrolls
+away.
+
+Routes are `#/sandboxes/<id>/<section>` and `#/projects/<name>/<section>`. The
+earlier tab names (`access`, `devlinks`, `activity`, `repositories`) still land
+on the matching section.
+
+Each section reads its data through one module in
+`web/src/workspace/sources/` (`internet.ts`, `lan.ts`, `packages.ts`,
+`previews.ts`, `credentials.ts`, `history.ts`, `reports.ts`). The sections never
+call the backends directly, so a later backend can replace a module without
+changing the UI. A part of a section with no read API yet says "not available
+yet" and links to the classic page.
+
+The LAN devices section reads sandbox-control's `GET /api/lan` and posts its
+actions to the existing `POST /egress` (`action=lan-open`, `lan-open-all`,
+`lan-open-learned`, `lan-extend`, `lan-restrict`, `lan-forget`, with
+`pod_uid`). **Restrict now**, from the section or the header, and **Stop** ask
+for confirmation first, because both restart or stop the workspace pod and end
+its agent sessions. The console proxies `GET /api/lan` and `GET /api/cluster`
+(read only); cluster grants are still changed on the classic page.
+
+`node scripts/preview.mjs [port] [host]` in `web/` serves the built console
+against invented fixtures, with no backend, for local review.
+
 ## Preparation errors
 
 Each project shows the current Ready condition next to its phase. A preparation,
@@ -53,7 +88,7 @@ request; deleting and recreating the project is unnecessary.
 
 ## Project access
 
-Open a sandbox and select its **Access** tab to inspect its HTTPS grants. Add initial
+Open a sandbox and select **Internet** to inspect its HTTPS grants. Add initial
 destinations when opening a project, or pause an existing project and wait for
 **Paused** before changing them. Each destination specifies an exact lowercase
 hostname, supported methods and literal path prefixes. Path `/` allows the whole
@@ -76,9 +111,9 @@ the old or requested policy. Unexpected resource drift remains an error.
 
 A project can reach single computers on the operator's own network over plain
 TCP, for example SSH to a dev box or an HTTP API on a device. Open a sandbox's
-**Access** tab and use **LAN hosts**: enter one IPv4 address, the TCP ports
+**LAN devices** section and use **LAN hosts**: enter one IPv4 address, the TCP ports
 (each listed, for example `22, 8080`) and an optional note, then **Grant LAN
-host**. Each grant has a **Remove** button. The Overview tab lists the current
+host**. Each grant has a **Remove** button. The Overview section lists the current
 grants with who added them and when.
 
 Grants change while the project runs. There is no pause, restart or
@@ -224,13 +259,15 @@ console uses the only existing sandbox in the intake service's namespace
 
 ### Agent reports
 
-A sandbox's **Activity** tab lists open agent reports from sandbox-control: an
+A sandbox's **Overview** (under **Needs a decision**) and **History** list open agent reports from sandbox-control: an
 agent's own statement that a denied resource stops its task. Kind, resource and
 reason are agent-written. The console shows them as plain text without links,
 and clamps their length. Dismissing a report changes no access; grant access
 through the existing controls. Agents reach their report endpoint through the
 sandbox broker, never through the console. Releases of sandbox-control without
-reports hide the section.
+reports hide the section. A report that names an allowlisted LAN host offers
+**Open LAN access**, which opens the LAN devices section with that host
+preselected; the agent still cannot open anything itself.
 
 ## Rollout
 

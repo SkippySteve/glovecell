@@ -34,7 +34,10 @@ func (c SandboxControl) Validate() error {
 func sandboxRoute(path string, method string) bool {
 	if method == "GET" || method == "HEAD" {
 		switch path {
-		case "/", "/status", "/workspaces", "/history", "/export", "/api/workspace", "/api/egress", "/api/previews", "/api/devlinks", "/api/activity", "/api/reports":
+		// Read-only JSON views for the console's workspace sections. /api/lan and
+		// /api/cluster are reads; their changes still go through the POST list below
+		// (LAN actions on /egress; cluster grants stay on the classic page).
+		case "/", "/status", "/workspaces", "/history", "/export", "/api/workspace", "/api/egress", "/api/previews", "/api/devlinks", "/api/activity", "/api/reports", "/api/lan", "/api/cluster":
 			return true
 		}
 		return strings.HasPrefix(path, "/static/") && !strings.Contains(path, "..") && !strings.Contains(path, "//")
