@@ -143,6 +143,93 @@ function act(w, path, f) {
   throw new Error('not supported in the preview');
 }
 
+// "Download into sandbox" fixtures: invented servers and redirect chains.
+//   github.com/.../releases/download/...  302 -> objects.githubusercontent.com with a fresh signature per request
+//   ...loop...  a redirect loop · ...downgrade...  a redirect to http · ...missing...  404 · anything else  200
+const checks = {}, jobs = {}, downloadAudit = [];
+const rid = () => Math.random().toString(36).slice(2, 8).padEnd(6, '0') + Math.random().toString(36).slice(2, 8).padEnd(6, '0');
+const sha = () => Array.from({length: 64}, () => '0123456789abcdef'[Math.floor(Math.random() * 16)]).join('');
+const redact = u => { try { const x = new URL(u); return x.origin + x.pathname + (x.search ? '?<query sha256:' + sha().slice(0, 16) + '>' : ''); } catch { return u; } };
+function fixtureAnswer(u) {
+  const x = new URL(u);
+  if (x.hostname === 'github.com' && x.pathname.includes('/releases/download/')) return {status: 302, location: `https://objects.githubusercontent.com/github-production-release-asset/${x.pathname.split('/').pop()}?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=${sha()}&X-Amz-Date=${Date.now()}`};
+  if (x.hostname === 'objects.githubusercontent.com') return {status: 200, length: 48 * 1024 * 1024 + 4242, type: 'application/gzip', probe: 'GET'};
+  if (x.pathname.includes('loop')) return {status: 302, location: x.pathname.endsWith('/b') ? x.origin + x.pathname.slice(0, -2) : x.origin + x.pathname + '/b'};
+  if (x.pathname.includes('downgrade')) return {status: 301, location: 'http://' + x.host + x.pathname};
+  if (x.pathname.includes('missing')) return {status: 404};
+  return {status: 200, length: 1258291, type: 'application/octet-stream', probe: 'HEAD'};
+}
+function hop(u, prev) { const x = new URL(u); return {url: u, redacted: redact(u), host: x.hostname, status: 0, crossHost: Boolean(prev && prev !== x.hostname), queryHash: x.search ? sha().slice(0, 16) : '', contentLength: -1, contentType: '', probe: 'HEAD', refused: ''}; }
+function startCheck(name, raw) {
+  let u;
+  try { u = new URL(raw); } catch { throw new Error('URL does not parse'); }
+  if (u.protocol !== 'https:') throw new Error('only https URLs are downloaded; http is refused');
+  const id = rid(), c = {id, workspace: name, input: raw, state: 'checking', hops: [], digest: '', error: '', defaultDestination: '~/downloads/' + (u.pathname.split('/').pop() || 'download'), requestedBy: 'operator (preview)', started: new Date().toISOString(), expires: new Date(Date.now() + 15 * 60000).toISOString()};
+  checks[id] = c;
+  const seen = new Set();
+  let cur = raw, prev = '';
+  const step = () => {
+    const h = hop(cur, prev);
+    if (seen.has(cur)) { h.refused = 'redirect loop: this URL appeared earlier in the chain'; c.hops.push(h); c.state = 'failed'; c.error = 'the redirect chain loops'; return finishCheck(c); }
+    seen.add(cur);
+    const a = fixtureAnswer(cur);
+    h.status = a.status; h.probe = a.probe || 'HEAD';
+    if (a.status === 200) { h.contentLength = a.length; h.contentType = a.type; c.hops.push(h); c.state = 'ready'; c.digest = sha(); return finishCheck(c); }
+    if (a.status >= 300 && a.status < 400) {
+      if (a.location.startsWith('http:')) { h.refused = 'redirect downgrades https to http; refused'; c.hops.push(h); c.state = 'failed'; c.error = 'a redirect was refused: ' + h.refused; return finishCheck(c); }
+      c.hops.push(h); prev = h.host; cur = a.location; return setTimeout(step, 700);
+    }
+    c.hops.push(h); c.state = 'failed'; c.error = `the server answered ${a.status}`; finishCheck(c);
+  };
+  setTimeout(step, 600);
+  return c;
+}
+function finishCheck(c) { downloadAudit.unshift({time: new Date().toISOString(), action: 'download-chain-checked', message: `Download redirect chain checked by operator: ${c.hops.map(h => h.redacted + ' [' + h.status + ']').join(' -> ')} (${c.state})`}); }
+function startJob(name, b) {
+  const c = checks[b.checkId];
+  if (!c || c.state !== 'ready' || c.digest !== b.digest) throw new Error('that redirect chain is no longer approved (changed, expired or not checked); check the URL again');
+  delete checks[b.checkId];
+  const id = rid(), last = c.hops[c.hops.length - 1];
+  const j = {id, workspace: name, checkId: c.id, input: c.input, state: 'starting', hops: c.hops, hop: 0, followed: [], destination: b.destination, overwrite: Boolean(b.overwrite), expectedSha256: b.sha256 || '', acceptQueryChanges: Boolean(b.acceptQueryChanges), maxBytes: 2 * 1024 ** 3, bytes: 0, total: -1, sha256: '', path: '', code: '', error: '', change: null, note: '', requestedBy: 'operator (preview)', started: new Date().toISOString()};
+  jobs[id] = j;
+  downloadAudit.unshift({time: new Date().toISOString(), action: 'download-requested', message: `Download into sandbox requested by operator: ${c.hops[0].redacted} to ${b.destination} (approved chain of ${c.hops.length})`});
+  const end = state => { j.state = state; j.finished = new Date().toISOString(); downloadAudit.unshift({time: j.finished, action: 'download-finished', message: `Download ${state}: ${c.hops[0].redacted} to ${j.destination}${state === 'done' ? ` (${j.bytes} bytes, sha256 ${j.sha256})` : j.error ? ' (' + j.error + ')' : ''}`}); };
+  j.followed.push(c.hops[0].redacted);
+  setTimeout(() => {
+    if (j.state === 'cancelled') return;
+    const signed = c.hops.length > 1 && c.hops[1].host === 'objects.githubusercontent.com';
+    if (signed && !j.acceptQueryChanges) {
+      j.hop = 1; j.error = 'the redirect chain changed since it was checked; review the new chain';
+      j.change = {hop: 1, expected: c.hops[1].redacted, observed: redact(fixtureAnswer(c.hops[0].url).location), queryOnly: true, reason: 'same host and path, different query (for example a fresh signature)'};
+      return end('changed');
+    }
+    if (c.hops.length > 1) { j.hop = c.hops.length - 1; j.followed.push(...c.hops.slice(1).map(h => h.redacted)); }
+    j.state = 'downloading'; j.total = last.contentLength;
+    const t = setInterval(() => {
+      if (j.state !== 'downloading') return clearInterval(t);
+      j.bytes = Math.min(j.total, j.bytes + Math.ceil(j.total / 6));
+      if (j.bytes >= j.total) {
+        clearInterval(t);
+        j.sha256 = j.expectedSha256 || sha(); j.path = j.destination;
+        if (j.expectedSha256 && j.expectedSha256.startsWith('0000')) { j.sha256 = ''; j.code = 'checksum'; j.error = `SHA-256 mismatch: got ${sha()}, expected ${j.expectedSha256}; the file was deleted`; j.bytes = 0; return end('failed'); }
+        end('done');
+      }
+    }, 700);
+  }, 1200);
+  return j;
+}
+function downloads(name, rest, method, b) {
+  if (rest === 'download-checks' && method === 'POST') return [202, startCheck(name, b.url || '')];
+  if (rest.startsWith('download-checks/')) { const c = checks[rest.split('/')[1]]; return c ? [200, c] : [404, {error: 'no such check'}]; }
+  if (rest === 'downloads' && method === 'POST') return [202, startJob(name, b)];
+  if (rest === 'downloads') return [200, Object.values(jobs).filter(j => j.workspace === name).sort((a, b2) => b2.started.localeCompare(a.started))];
+  const [, id, cancel] = rest.split('/');
+  const j = jobs[id];
+  if (!j) return [404, {error: 'no such download'}];
+  if (cancel === 'cancel' && method === 'POST') { if (!j.finished) { j.state = 'cancelled'; j.code = 'cancelled'; j.error = 'download cancelled'; j.finished = new Date().toISOString(); } return [202, {id}]; }
+  return [200, j];
+}
+
 function tick() {
   const now = unix();
   for (const w of Object.values(W)) {
@@ -161,12 +248,17 @@ createServer(async (req, res) => {
   try {
     if (p.startsWith('/api/v1/')) {
       const r = p.slice(8);
-      if (r === 'session') return json(res, 200, {actor: 'operator (preview)', sandboxControl: true, runRecords: true, orcaProjects: true, orcaSandbox: 'orca-runtime', lanHosts: true, lanAllowed: ['192.168.1.0/24']});
+      if (r === 'session') return json(res, 200, {actor: 'operator (preview)', sandboxControl: true, runRecords: true, orcaProjects: true, orcaSandbox: 'orca-runtime', lanHosts: true, lanAllowed: ['192.168.1.0/24'], downloads: true, downloadMaxBytes: 2 * 1024 ** 3});
+      const dl = r.match(/^workspaces\/([^/]+)\/(download-checks.*|downloads.*)$/);
+      if (dl) {
+        const b = req.method === 'POST' ? JSON.parse((await body(req)) || '{}') : {};
+        try { const [status, out] = downloads(decodeURIComponent(dl[1]), dl[2], req.method, b); return json(res, status, out); } catch (e) { return json(res, 409, {error: e.message}); }
+      }
       if (r === 'workspaces') return json(res, 200, [project]);
       if (r === 'repositories') return json(res, 200, [{full_name: 'example/demo-project'}]);
       if (r === 'orca-projects') return json(res, 200, [{name: 'demo-project', repo: 'example/demo-project', status: 'registered', clone: '/workspace/demo-project'}, {name: 'docs', repo: 'example/docs', status: 'published', actor: 'operator', requestedAt: new Date().toISOString()}]);
       if (r === 'runs') return json(res, 200, []);
-      if (r.endsWith('/audit')) return json(res, 200, [{time: new Date((t0 - 3 * DAY) * 1000).toISOString(), action: 'lan-host-granted', message: '192.168.1.31 TCP 22 by operator'}, {time: new Date((t0 - 4 * DAY) * 1000).toISOString(), action: 'created', message: 'example/demo-project'}]);
+      if (r.endsWith('/audit')) return json(res, 200, [...downloadAudit, {time: new Date((t0 - 3 * DAY) * 1000).toISOString(), action: 'lan-host-granted', message: '192.168.1.31 TCP 22 by operator'}, {time: new Date((t0 - 4 * DAY) * 1000).toISOString(), action: 'created', message: 'example/demo-project'}]);
       if (r.endsWith('/clients')) return json(res, 200, {clients: []});
       return json(res, 403, {error: 'the preview does not change console projects'});
     }

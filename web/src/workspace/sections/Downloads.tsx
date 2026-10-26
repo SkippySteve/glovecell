@@ -235,7 +235,7 @@ export function Downloads({source, workspace}: {source: DownloadSource; workspac
       {job ? <JobCard job={job} onCancel={() => source.cancel(job.id).catch((e: Error) => setError(e.message))} onRecheck={recheck} /> : null}
       <section className="card" aria-labelledby="dl-recent-title">
         <div className="card-hd"><h3 id="dl-recent-title">Recent downloads</h3><span className="end subtle-text">Every check and download is also in History</span></div>
-        <ol className="timeline pad" aria-label="Recent downloads">
+        <ol className="timeline pad dl-recent" aria-label="Recent downloads">
           {recent.length ? recent.map(j => (
             <li key={j.id}><time dateTime={j.started ? new Date(j.started).toISOString() : undefined}>{stamp(j.started) || '—'}</time><div><strong>{j.state} · {j.destination}</strong><p className="subtle-text">{[j.hops[0]?.redacted, j.state === 'done' ? formatBytes(j.bytes) + ' · sha256 ' + j.sha256.slice(0, 16) + '…' : j.error, j.requestedBy].filter(Boolean).join(' · ')}</p></div></li>
           )) : <li className="timeline-empty"><p>No downloads since the controller started.</p></li>}

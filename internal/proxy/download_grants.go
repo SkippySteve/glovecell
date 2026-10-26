@@ -283,8 +283,14 @@ func (s *Server) serveGrant(parent context.Context, conn net.Conn, raw net.Conn,
 	_ = raw.SetDeadline(time.Now().Add(timeout + 30*time.Second))
 	transport := s.GrantTransport
 	result := GrantStatus{ContentLength: -1}
+	recorded := false
+	// Record before answering when no body follows, so the controller (which
+	// asks after the helper exits) always reads the final status and Location.
+	record := func() { s.grants.finish(e, result); recorded = true }
 	defer func() {
-		s.grants.finish(e, result)
+		if !recorded {
+			s.grants.finish(e, result)
+		}
 		u, _ := url.Parse("https://" + host + e.uri)
 		slog.Info("download grant used", "grant", e.ID, "mode", e.Mode, "host", host, "path", u.EscapedPath(), "query_sha256", download.QueryHash(u), "method", result.Method, "status", result.Status, "bytes", result.Bytes, "failure", result.Failure)
 	}()
@@ -300,6 +306,7 @@ func (s *Server) serveGrant(parent context.Context, conn net.Conn, raw net.Conn,
 	}
 	if err != nil {
 		result = GrantStatus{Method: method, ContentLength: -1, Failure: "upstream " + failureKind(err)}
+		record()
 		writeError(conn, 502, "upstream unavailable")
 		return
 	}
@@ -308,11 +315,13 @@ func (s *Server) serveGrant(parent context.Context, conn net.Conn, raw net.Conn,
 	reply := &http.Response{StatusCode: res.StatusCode, ProtoMajor: 1, ProtoMinor: 1, Header: http.Header{}, Close: true, Body: http.NoBody, ContentLength: 0}
 	if e.Mode == "probe" || res.StatusCode != http.StatusOK {
 		// Probes and non-200 answers never carry a body into the sandbox.
+		record()
 		_ = reply.Write(conn)
 		return
 	}
 	if res.ContentLength > e.MaxBytes {
 		result.Failure = "size limit"
+		record()
 		writeError(conn, http.StatusRequestEntityTooLarge, "download exceeds its size limit")
 		return
 	}

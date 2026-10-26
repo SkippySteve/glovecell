@@ -119,7 +119,9 @@
 .dl-job.changed, .dl-job.failed { border-color: var(--openui-border-danger); }
 .dl-confirm-hosts { margin: 6px 0; padding-left: 18px; overflow-wrap: anywhere; word-break: break-all; font: var(--openui-text-body-sm); }
 .dl-followed ol { margin: 6px 0 0; padding-left: 18px; overflow-wrap: anywhere; word-break: break-all; font: var(--openui-text-body-sm); }
-@media (max-width: 860px) { .dl-hop { grid-template-columns: 1fr; gap: 2px; } .dl-result { grid-template-columns: 1fr; } }
+.dl-recent li > div { min-width: 0; }
+.dl-recent p, .dl-recent strong { overflow-wrap: anywhere; }
+@media (max-width: 860px) { .dl-hop { grid-template-columns: 1fr; gap: 2px; } .dl-result { grid-template-columns: 1fr; } .dl-recent li { grid-template-columns: 1fr; gap: 2px; } }
 .lan-host { scroll-margin-top: 230px; }
 .lan-host:focus { outline: none; }
 .lan-host:focus-visible { outline: 2px solid var(--openui-border-accent-emphasis); }

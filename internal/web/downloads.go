@@ -788,18 +788,25 @@ func helperMessage(e download.Event) string {
 	return e.Error
 }
 
+// proxyStatus reads the proxy's record of a grant, waiting briefly while a
+// used grant is still being finished.
 func (d *Downloads) proxyStatus(t *target, id string) (proxy.GrantStatus, error) {
 	c, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	raw, err := d.proxyCommand(c, t, proxy.GrantCommand{Op: "status", ID: id})
-	var st proxy.GrantStatus
-	if err == nil {
-		err = json.Unmarshal(raw, &st)
+	for attempt := 0; ; attempt++ {
+		raw, err := d.proxyCommand(c, t, proxy.GrantCommand{Op: "status", ID: id})
+		var st proxy.GrantStatus
+		if err == nil {
+			err = json.Unmarshal(raw, &st)
+		}
+		if err != nil {
+			return proxy.GrantStatus{ContentLength: -1}, err
+		}
+		if !st.Used || st.Done || attempt >= 4 {
+			return st, nil
+		}
+		time.Sleep(250 * time.Millisecond)
 	}
-	if err != nil {
-		return proxy.GrantStatus{ContentLength: -1}, err
-	}
-	return st, nil
 }
 
 func (d *Downloads) proxyCommand(ctx context.Context, t *target, cmd proxy.GrantCommand) ([]byte, error) {
