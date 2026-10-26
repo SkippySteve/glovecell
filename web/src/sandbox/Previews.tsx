@@ -1,5 +1,6 @@
 import {useCallback, useEffect, useState} from 'react';
-import {sandboxPreviews, type Preview} from '../api';
+import type {Preview} from '../api';
+import {loadPreviews} from '../workspace/sources/previews';
 import {useData} from '../data';
 import {Button, Card, Tag, TextArea, type TagVariant} from '../ui';
 import {timeOf, type SandboxContext} from './Sandbox';
@@ -53,7 +54,7 @@ export function PreviewsTab({detail, act}: SandboxContext) {
   const [expired, setExpired] = useState(false);
   const [data, setData] = useState<{expiredCount: number; requests: Preview[]} | null>(null);
   const load = useCallback(async () => {
-    try { setData(await sandboxPreviews(detail.id, expired)); } catch (e) { toast((e as Error).message, true); }
+    try { setData(await loadPreviews(detail.id, expired)); } catch (e) { toast((e as Error).message, true); }
   }, [detail.id, expired, toast]);
   useEffect(() => { load(); }, [load, detail.previewPending]);
   return (
