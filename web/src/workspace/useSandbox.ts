@@ -69,9 +69,9 @@ export function useSandbox(id: string): SandboxState {
     try {
       await sandboxAction(path, id, fields);
       toast(id + ': ' + done);
-      await Promise.all([reload(), reloadLan(), reloadList()]);
+      await Promise.all([reload(), reloadLan(), reloadDevLinks(), reloadReports(), reloadList()]);
       return true;
     } catch (e) { toast((e as Error).message, true); return false; }
-  }, [id, reload, reloadLan, reloadList, toast]);
+  }, [id, reload, reloadLan, reloadDevLinks, reloadReports, reloadList, toast]);
   return {id, detail, error, lan, lanError, devlinks, reports, reload, reloadLan, reloadDevLinks, reloadReports, act};
 }
