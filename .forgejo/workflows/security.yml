@@ -55,6 +55,10 @@ jobs:
           if-no-files-found: warn
   image:
     runs-on: ubuntu-latest
+    # promote.py asks Forgejo for an Actions ID token per pushed image; it proves
+    # the digest came from this workflow on main, which is what lets the
+    # monorepo's promote-merger merge the promotion without Steve.
+    enable-openid-connect: true
     strategy:
       fail-fast: false
       matrix:
@@ -89,13 +93,14 @@ jobs:
           name: security-reports-image-${{ matrix.target }}
           path: reports/
           if-no-files-found: warn
-      # Promotion: only the runtime image, only from main, only after its gate.
+      # Promotion: only from main, only after the gate and the CI checks.
       # The steps come from the monorepo so both repos promote the same way:
-      # push by digest as image-publisher, then open promote/project-controller
-      # once CI checks pass. Steve merges it; Flux deploys after the publish PR.
-      # The workspace image is promoted too (promote/project-workspace), and the
-      # runtime image doubles as the project proxy (promote/project-proxy): the
-      # download helper and the proxy's one-time grants live in those images.
+      # push by digest as image-publisher, then add the pin to the one rolling
+      # promotion PR for this repository (promote/agent-project-controller).
+      # Both matrix legs (runtime: controller and proxy; workspace) land in the
+      # same PR and the same commit, so one Deployment rollout moves all three.
+      # promote-merger in the monorepo merges it when promote-guard passes
+      # (docs/one-merge-delivery.md there); Flux applies it from main.
       - name: Fetch the promotion scripts
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
