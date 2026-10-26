@@ -146,6 +146,17 @@ through its own inspecting proxy, as the worker's user, and writes it itself.
   prefix in every record and log line; only the operator's own console view
   shows them, masked until "Show query strings" is ticked.
 
+sandbox-control workspaces follow the same rules with sandbox-control as the
+proxy: grants live in its egress proxy, bound to the workspace and its current
+pod UID, and sandbox-control execs the helper (this binary, installed as
+`/usr/local/bin/sandbox-download`) through the Kubernetes WebSocket exec API.
+Its Role grants `pods/exec` only on each enrolled workspace pod by name, and an
+admission policy allows its exec only for that pod's download container with
+the command exactly `[/usr/local/bin/sandbox-download, fetch]`, stdin and no
+TTY; attach and port-forward are refused. The helper accepts a home directory
+outside `/workspace` (`/home/agent` there) and walks every directory from `/`
+without following symlinks.
+
 Limits: the agent in the sandbox can see the file, and the token while the
 helper runs if it can read that process's memory. A sandbox process that
 races the helper with a stolen token can at most fetch the same approved URL

@@ -122,6 +122,22 @@ func TestExistingSandboxesShareAuthenticationAndKeepCSRFFence(t *testing.T) {
 			t.Fatal("section read not forwarded", path, rec.Code)
 		}
 	}
+	// Download into sandbox: reads, and posts that keep the origin and CSRF fences.
+	for _, path := range []string{"/sandboxes/api/downloads?workspace=shared-pilot", "/sandboxes/api/download-check?workspace=shared-pilot&id=x", "/sandboxes/api/download?workspace=shared-pilot&id=x"} {
+		before = calls
+		if rec = request("GET", path, "", "", true); calls != before+1 {
+			t.Fatal("download read not forwarded", path, rec.Code)
+		}
+	}
+	for _, path := range []string{"/sandboxes/download-check", "/sandboxes/download", "/sandboxes/download-cancel"} {
+		before = calls
+		if rec = request("POST", path, "https://evil.example", "csrf=fixture-csrf", true); rec.Code != 403 || calls != before {
+			t.Fatal("cross-origin download action forwarded", path, rec.Code)
+		}
+		if rec = request("POST", path, s.Origin, "csrf=wrong", true); rec.Code != 403 {
+			t.Fatal("download action CSRF bypassed", path, rec.Code)
+		}
+	}
 	before = calls
 	if rec = request("POST", "/sandboxes/cluster-access", s.Origin, "csrf=fixture-csrf", true); rec.Code != 404 || calls != before {
 		t.Fatal("cluster grant change forwarded", rec.Code)

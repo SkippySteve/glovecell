@@ -37,7 +37,9 @@ func sandboxRoute(path string, method string) bool {
 		// Read-only JSON views for the console's workspace sections. /api/lan and
 		// /api/cluster are reads; their changes still go through the POST list below
 		// (LAN actions on /egress; cluster grants stay on the classic page).
-		case "/", "/status", "/workspaces", "/history", "/export", "/api/workspace", "/api/egress", "/api/previews", "/api/devlinks", "/api/activity", "/api/reports", "/api/lan", "/api/cluster":
+		case "/", "/status", "/workspaces", "/history", "/export", "/api/workspace", "/api/egress", "/api/previews", "/api/devlinks", "/api/activity", "/api/reports", "/api/lan", "/api/cluster",
+			// Download into sandbox: list and poll (sandbox-control download_jobs.go).
+			"/api/downloads", "/api/download-check", "/api/download":
 			return true
 		}
 		return strings.HasPrefix(path, "/static/") && !strings.Contains(path, "..") && !strings.Contains(path, "//")
@@ -46,7 +48,8 @@ func sandboxRoute(path string, method string) bool {
 		return false
 	}
 	switch path {
-	case "/egress", "/access", "/policy", "/packages", "/packages-import", "/allow-request", "/catalog", "/lifecycle", "/rollback", "/profile", "/decision", "/devlink-decision", "/services", "/dismiss-report":
+	case "/egress", "/access", "/policy", "/packages", "/packages-import", "/allow-request", "/catalog", "/lifecycle", "/rollback", "/profile", "/decision", "/devlink-decision", "/services", "/dismiss-report",
+		"/download-check", "/download", "/download-cancel":
 		return true
 	}
 	return false

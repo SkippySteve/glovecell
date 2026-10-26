@@ -219,8 +219,16 @@ check is accepted (the file came from an approved URL) and noted on the
 result. Redirect hops are checked with HEAD; a server that refuses HEAD (400,
 403, 405, 501) is asked with a GET that the proxy closes after the headers.
 
-The section is unavailable for sandbox-control workspaces: sandbox-control has
-no way to run the download helper inside them yet.
+sandbox-control workspaces that sandbox-control enrolls for downloads (catalog
+`DownloadContainer`, on its inspected egress proxy) show the same section. The
+console reaches sandbox-control through the `/sandboxes` mount: `GET
+/api/downloads`, `/api/download-check`, `/api/download` and `POST
+/download-check`, `/download`, `/download-cancel`, with sandbox-control's own
+origin and double-submit CSRF checks. sandbox-control serves the one-time
+grants from its egress proxy and runs the helper as `/usr/local/bin/sandbox-download
+fetch` in the workspace container; its checks and downloads appear in the
+workspace's History. Other sandbox-control workspaces say downloads are not
+enabled.
 
 See [security](security.md#downloads-into-a-sandbox) for how the one-time
 permission, the proxy and the file writing are protected.

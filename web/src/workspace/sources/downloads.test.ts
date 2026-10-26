@@ -1,6 +1,7 @@
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import {parse, projectHref} from '../../router';
-import {checkDestination, checkSha256, checkUrl, final, formatBytes, hostsOf, jobSummary, maskQuery, normalSha256, progressPercent, projectDownloads, sandboxDownloads, splitUrl, statusLabel, toCheck, toJob, tooLarge} from './downloads';
+import {mergeHistory} from './history';
+import {checkDestination, checkSha256, checkUrl, final, formatBytes, hostsOf, jobSummary, loadDownloadHistory, maskQuery, normalSha256, progressPercent, projectDownloads, sandboxDownloads, splitUrl, statusLabel, toCheck, toJob, tooLarge} from './downloads';
 
 // A check body as the console backend serves it (web/downloads.go Check).
 const checkBody = {
@@ -111,13 +112,38 @@ describe('sources', () => {
     expect(calls[1].body).toEqual({checkId: 'abc123abc123', digest: 'd'.repeat(64), destination: '~/downloads/tool.tgz', overwrite: false, acceptQueryChanges: true});
   });
 
-  it('is unavailable until the controller enables it, and for sandbox-control workspaces', async () => {
+  it('is unavailable until the controller enables it', () => {
     expect(projectDownloads('tools', {}).available).toBe(false);
-    const s = sandboxDownloads();
-    expect(s.available).toBe(false);
-    expect(s.reason).toMatch(/sandbox-control/);
-    await expect(s.check('https://x.example.com/a')).rejects.toThrow();
-    expect(await s.list()).toEqual([]);
+  });
+
+  it('sandbox-control source: availability, form posts with CSRF, and history', async () => {
+    const calls: {url: string; method: string; body: string}[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit = {}) => {
+      calls.push({url, method: init.method || 'GET', body: String(init.body || '')});
+      const json = (v: unknown, h: Record<string, string> = {}) => new Response(JSON.stringify(v), {status: 200, headers: {'Content-Type': 'application/json', ...h}});
+      if (url.startsWith('/sandboxes/workspaces')) return json([], {'X-Sandbox-CSRF': 'tok'});
+      if (url.startsWith('/sandboxes/api/downloads')) return json({enabled: true, reason: '', maxBytes: 1073741824, downloads: [{id: 'j1', state: 'done'}], history: [{at: '2026-10-26T10:00:00Z', action: 'download-done', id: 'j1', by: 'akadmin', detail: 'x to ~/a'}]});
+      if (url.startsWith('/sandboxes/download-check')) return json(checkBody);
+      return json({id: 'j2', state: 'starting'});
+    }));
+    const src = sandboxDownloads('orca-pilot');
+    expect(await src.status!()).toEqual({available: true, reason: '', maxBytes: 1073741824});
+    expect(src.maxBytes).toBe(1073741824);
+    const c = await src.check('https://github.com/o/r/releases/download/v1/tool.tgz');
+    await src.start(c, {destination: '~/downloads/tool.tgz', sha256: '', overwrite: true, acceptQueryChanges: false});
+    const posts = calls.filter(x => x.method === 'POST');
+    expect(posts.map(p => p.url)).toEqual(['/sandboxes/download-check', '/sandboxes/download']);
+    const form = new URLSearchParams(posts[1].body);
+    expect(Object.fromEntries(form)).toMatchObject({workspace: 'orca-pilot', csrf: 'tok', check: 'abc123abc123', digest: 'd'.repeat(64), destination: '~/downloads/tool.tgz', overwrite: 'on', accept_query: ''});
+    expect((await src.list())[0].state).toBe('done');
+    const history = await loadDownloadHistory('orca-pilot');
+    expect(history?.[0]).toMatchObject({action: 'download-done', by: 'akadmin'});
+    expect(mergeHistory({downloads: history})[0]).toMatchObject({type: 'download', title: 'Download finished'});
+  });
+
+  it('sandbox-control source reports an older release as unavailable', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('not found', {status: 404})));
+    expect((await sandboxDownloads('herdr').status!()).available).toBe(false);
   });
 
   it('routes the Downloads section', () => {

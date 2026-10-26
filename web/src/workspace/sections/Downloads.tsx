@@ -5,7 +5,7 @@ import {useCallback, useEffect, useRef, useState} from 'react';
 import {Button, Callout, Tag} from '../../ui';
 import {NotAvailable, SectionIntro} from '../bits';
 import {useConfirm} from '../Confirm';
-import {checkDestination, checkSha256, checkUrl, final, formatBytes, hostsOf, jobSummary, maskQuery, normalSha256, progressPercent, splitUrl, statusLabel, TERMINAL, tooLarge, type DownloadCheck, type DownloadHop, type DownloadJob, type DownloadSource} from '../sources/downloads';
+import {checkDestination, checkSha256, checkUrl, final, formatBytes, hostsOf, jobSummary, maskQuery, normalSha256, progressPercent, splitUrl, statusLabel, TERMINAL, tooLarge, type DownloadAvailability, type DownloadCheck, type DownloadHop, type DownloadJob, type DownloadSource} from '../sources/downloads';
 import {stamp} from '../time';
 
 const CHECK_POLL_MS = 700;
@@ -95,8 +95,17 @@ export function Downloads({source, workspace}: {source: DownloadSource; workspac
   const [recent, setRecent] = useState<DownloadJob[]>([]);
   const [busy, setBusy] = useState(false);
   const lastDefault = useRef('');
+  // Sources that answer availability asynchronously (sandbox-control) start unknown.
+  const [avail, setAvail] = useState<DownloadAvailability | null>(source.status ? null : {available: source.available, reason: source.reason, maxBytes: source.maxBytes});
+  useEffect(() => {
+    if (!source.status) return;
+    let live = true;
+    source.status().then(a => { if (live) setAvail(a); }, (e: Error) => { if (live) setAvail({available: false, reason: e.message, maxBytes: 0}); });
+    return () => { live = false; };
+  }, [source]);
+  const maxBytes = avail?.maxBytes || source.maxBytes;
 
-  const refreshRecent = useCallback(() => { if (source.available) source.list().then(setRecent, () => undefined); }, [source]);
+  const refreshRecent = useCallback(() => { if (avail?.available) source.list().then(setRecent, () => undefined); }, [source, avail?.available]);
   useEffect(refreshRecent, [refreshRecent]);
 
   // Poll a running check, then prefill the destination from the URL's file name.
@@ -118,10 +127,11 @@ export function Downloads({source, workspace}: {source: DownloadSource; workspac
     return () => window.clearTimeout(t);
   }, [job, source, refreshRecent]);
 
-  if (!source.available) return (
+  if (!avail) return <div className="stack"><SectionIntro title="Downloads" /><p className="empty">Loading…</p></div>;
+  if (!avail.available) return (
     <div className="stack">
       <SectionIntro title="Downloads">Download a file from the internet into {workspace}.</SectionIntro>
-      <NotAvailable what="Download into sandbox" needs={source.reason} />
+      <NotAvailable what="Download into sandbox" needs={avail.reason} />
     </div>
   );
 
@@ -130,7 +140,7 @@ export function Downloads({source, workspace}: {source: DownloadSource; workspac
   const shaError = checkSha256(sha);
   const running = (check?.state === 'checking') || Boolean(job && !TERMINAL.includes(job.state));
   const ready = check?.state === 'ready';
-  const large = check && ready && tooLarge(check, source.maxBytes);
+  const large = check && ready && tooLarge(check, maxBytes);
 
   const runCheck = async (target: string, keepAccept = false) => {
     setError(''); setBusy(true);
@@ -149,7 +159,7 @@ export function Downloads({source, workspace}: {source: DownloadSource; workspac
       <p>The sandbox fetches the file through its own proxy, with a one-time permission for each of these {check.hops.length} exact URL{check.hops.length === 1 ? '' : 's'} (valid 10 minutes, used once):</p>
       <ul className="dl-confirm-hosts">{check.hops.map((h, i) => <li key={i}><code>{h.redacted}</code>{h.crossHost ? <strong> · new host</strong> : null}</li>)}</ul>
       {hosts.length > 1 ? <p className="warn-box">The file comes from <strong>{hosts[hosts.length - 1]}</strong>, not {hosts[0]}.</p> : null}
-      <p>Saved as <code>{destination}</code>{overwrite ? <strong> (replacing an existing file)</strong> : ' (refused if a file is already there)'}. At most {formatBytes(source.maxBytes)}.{normalSha256(sha) ? ' The file is deleted unless its SHA-256 matches.' : ''}</p>
+      <p>Saved as <code>{destination}</code>{overwrite ? <strong> (replacing an existing file)</strong> : ' (refused if a file is already there)'}. At most {formatBytes(maxBytes)}.{normalSha256(sha) ? ' The file is deleted unless its SHA-256 matches.' : ''}</p>
       {acceptQuery ? <p className="subtle-text">Query strings may change on the same host and path (signed links).</p> : null}
     </>, 'Download');
     if (!ok) return;
@@ -179,7 +189,7 @@ export function Downloads({source, workspace}: {source: DownloadSource; workspac
 
   return (
     <div className="stack" data-testid="downloads">
-      <SectionIntro title="Downloads" aside={`https only · at most ${formatBytes(source.maxBytes)}`}>
+      <SectionIntro title="Downloads" aside={`https only · at most ${formatBytes(maxBytes)}`}>
         Download a file from the internet into {workspace}. First check the URL: the sandbox asks the server through its own proxy and shows every redirect. Then approve exactly that chain; the sandbox downloads the file itself, with a one-time permission per URL.
       </SectionIntro>
       {error ? <Callout variant="danger" description={error} /> : null}
@@ -203,7 +213,7 @@ export function Downloads({source, workspace}: {source: DownloadSource; workspac
           <div className="card-bd">
             <Chain check={check} show={show} />
             {check.state === 'failed' ? <p className="error-text" role="alert">{check.error || 'The chain cannot be downloaded.'}</p> : null}
-            {large ? <p className="error-text" role="alert">The server announces {formatBytes(final(check)!.contentLength)}; the limit is {formatBytes(source.maxBytes)}.</p> : null}
+            {large ? <p className="error-text" role="alert">The server announces {formatBytes(final(check)!.contentLength)}; the limit is {formatBytes(maxBytes)}.</p> : null}
             {hostsOf(check.hops).length > 1 && check.state !== 'checking' ? <p className="warn-box">This download crosses hosts: {hostsOf(check.hops).join(' → ')}. Approving it approves these exact URLs only.</p> : null}
             {reapprove && ready ? <p className="hint">This is the new chain. {acceptQuery ? 'Query-only changes on these hosts and paths will be accepted during the download.' : ''}</p> : null}
           </div>

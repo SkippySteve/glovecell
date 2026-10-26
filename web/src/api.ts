@@ -164,6 +164,16 @@ export const orcaProjects = () => api<OrcaProject[]>('orca-projects').then(list 
 export const orcaProject = (name: string) => api<OrcaProject>('orca-projects/' + encodeURIComponent(name));
 export const publishOrcaProject = (repo: string) => api<OrcaProject>('orca-projects', 'POST', {repo});
 
+// Posts a sandbox-control form action that answers with its own JSON body.
+export async function sandboxPostJSON<T>(path: string, id: string, fields: Record<string, string>): Promise<T> {
+  if (!csrf) await existingSandboxes();
+  const form = new URLSearchParams({workspace: id, csrf, ...fields});
+  const response = await fetch('/sandboxes' + path, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json'}, body: form, redirect: 'manual'});
+  if (response.type === 'opaqueredirect' || response.status === 404) throw new Error('This sandbox-control release does not support downloads yet');
+  if (!response.ok) throw await failure(response);
+  return response.json() as Promise<T>;
+}
+
 // Posts a sandbox-control form action and returns the refreshed summary.
 export async function sandboxAction(path: string, id: string, fields: Record<string, string | string[]>): Promise<ExistingSandbox> {
   if (!csrf) await existingSandboxes();

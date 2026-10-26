@@ -31,7 +31,6 @@ import {useNow} from './time';
 import {useSandbox, type SandboxState} from './useSandbox';
 
 type Ref = {kind: 'sandbox'; id: string} | {kind: 'project'; name: string};
-const SANDBOX_DOWNLOADS = sandboxDownloads();
 const SIDEBAR_LAN_MS = 30000;
 
 // Sections each kind of workspace lists. Project sandboxes have no packages or
@@ -166,6 +165,7 @@ export function SandboxWorkspace({id, section}: {id: string; section: Section}) 
   const now = useNow();
   const [working, setWorking] = useState(false);
   const lanOpen = useLanCounts(existing.map(s => s.id));
+  const downloads = useMemo(() => sandboxDownloads(id), [id]);
   useEffect(() => { document.title = id + ' · ' + (SECTIONS.find(([k]) => k === section)?.[1] || '') + ' · Sandboxes'; }, [id, section]);
   const runtime = orcaRuntimeId(session, existing) === id;
   const kind = existing.find(s => s.id === id);
@@ -208,7 +208,7 @@ export function SandboxWorkspace({id, section}: {id: string; section: Section}) 
     : section === 'internet' ? <Internet ws={ws} now={now} />
     : section === 'lan' ? <Lan key={id} ws={ws} now={now} />
     : section === 'packages' ? <Packages ws={ws} />
-    : section === 'downloads' ? <Downloads key={id} source={SANDBOX_DOWNLOADS} workspace={id} />
+    : section === 'downloads' ? <Downloads key={id} source={downloads} workspace={id} />
     : section === 'previews' ? <Previews {...ctx} />
     : section === 'credentials' ? <Credentials ws={ws} now={now} />
     : section === 'history' ? <History ws={ws} ctx={ctx} />

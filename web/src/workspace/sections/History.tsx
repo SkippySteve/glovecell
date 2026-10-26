@@ -1,8 +1,9 @@
-import {useMemo, useState} from 'react';
+import {useEffect, useMemo, useState} from 'react';
 import {ActivityTab} from '../../sandbox/Activity';
 import type {SandboxContext} from '../../sandbox/Sandbox';
 import {Button} from '../../ui';
 import {NotAvailable, SectionIntro} from '../bits';
+import {loadDownloadHistory, type DownloadEvent} from '../sources/downloads';
 import {HISTORY_FILTERS, mergeHistory, type HistoryType} from '../sources/history';
 import {paginate} from '../sources/internet';
 import {stamp} from '../time';
@@ -13,7 +14,9 @@ const PER_PAGE = 8;
 export function History({ws, ctx}: {ws: SandboxState; ctx: SandboxContext}) {
   const [filter, setFilter] = useState<HistoryType | 'all'>('all');
   const [page, setPage] = useState(0);
-  const events = useMemo(() => mergeHistory({lan: ws.lan, devlinks: ws.devlinks, revisions: ws.detail?.revisions, reports: ws.reports}), [ws.lan, ws.devlinks, ws.detail?.revisions, ws.reports]);
+  const [downloads, setDownloads] = useState<DownloadEvent[] | null>(null);
+  useEffect(() => { let live = true; loadDownloadHistory(ws.id).then(d => { if (live) setDownloads(d); }, () => undefined); return () => { live = false; }; }, [ws.id]);
+  const events = useMemo(() => mergeHistory({lan: ws.lan, devlinks: ws.devlinks, revisions: ws.detail?.revisions, reports: ws.reports, downloads}), [ws.lan, ws.devlinks, ws.detail?.revisions, ws.reports, downloads]);
   const shown = paginate(events.filter(e => filter === 'all' || e.type === filter), page, PER_PAGE);
   return (
     <div className="stack">
