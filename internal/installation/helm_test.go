@@ -292,6 +292,43 @@ func TestHelmGitHubHost(t *testing.T) {
 	}
 }
 
+func TestHelmDownloads(t *testing.T) {
+	if os.Getenv("APC_HELM_TEST") != "true" {
+		t.Skip("set APC_HELM_TEST=true with Helm installed")
+	}
+	config := map[string]any{"FORGEJO_ORIGIN": "https://git.example.com", "FORGEJO_OWNER": "operator", "PUBLIC_ORIGIN": "https://projects.example.com", "OIDC_ISSUER": "https://identity.example.com/realm", "OIDC_CLIENT_ID": "projects"}
+	values := map[string]any{"controllerImage": "registry.example.com/controller@sha256:" + strings.Repeat("a", 64), "workspaceImage": "registry.example.com/workspace@sha256:" + strings.Repeat("b", 64), "config": config}
+	path := filepath.Join(t.TempDir(), "values.json")
+	render := func() ([]byte, error) {
+		b, _ := json.Marshal(values)
+		if err := os.WriteFile(path, b, 0600); err != nil {
+			t.Fatal(err)
+		}
+		return exec.Command("helm", "template", "qualification", "../../charts/agent-project-controller", "-n", "test-control", "-f", path).CombinedOutput()
+	}
+	output, err := render()
+	if err != nil || !bytes.Contains(output, []byte(`DOWNLOADS_ENABLED: "false"`)) {
+		t.Fatalf("downloads must default to off: %v: %s", err, output)
+	}
+	config["DOWNLOADS_ENABLED"] = "true"
+	config["DOWNLOAD_MAX_BYTES"] = "1073741824"
+	config["DOWNLOAD_TIMEOUT"] = "20m"
+	if output, err = render(); err != nil || !bytes.Contains(output, []byte(`DOWNLOAD_MAX_BYTES: "1073741824"`)) {
+		t.Fatalf("downloads on: %v: %s", err, output)
+	}
+	config["DOWNLOAD_MAX_BYTES"] = "2GiB"
+	if _, err := render(); err == nil {
+		t.Fatal("a non-numeric size limit was accepted")
+	}
+	config["DOWNLOAD_MAX_BYTES"] = ""
+	config["NETWORK_PROVIDER"] = "network-policy"
+	config["NETWORK_POLICY_ENFORCEMENT_ACKNOWLEDGED"] = "true"
+	config["NETWORK_POLICY_CLUSTER_CIDRS_JSON"] = `["10.0.0.0/8"]`
+	if _, err := render(); err == nil {
+		t.Fatal("downloads accepted with the NetworkPolicy provider")
+	}
+}
+
 func TestHelmLANHostGrants(t *testing.T) {
 	if os.Getenv("APC_HELM_TEST") != "true" {
 		t.Skip("set APC_HELM_TEST=true with Helm installed")

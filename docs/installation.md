@@ -152,6 +152,36 @@ controller ignores `spec.lanHosts` and does not delete existing `lan-hosts`
 policies, so remove the grants before downgrading or delete those policies by
 hand.
 
+## Downloads
+
+"Download into sandbox" lets an OIDC operator put a file from an https URL
+into a project sandbox; see [console](console.md#download-into-sandbox) and
+[security](security.md#downloads-into-a-sandbox). It is off by default.
+
+- `DOWNLOADS_ENABLED`: `true` turns it on. It requires `NETWORK_PROVIDER=cilium`
+  (startup and the chart fail otherwise).
+- `DOWNLOAD_MAX_BYTES`: the per-file limit in bytes, at most 16 GiB. Empty
+  means 2 GiB.
+- `DOWNLOAD_TIMEOUT`: the time one fetch may take, from `1m` to `2h`. Empty
+  means `30m`.
+
+The controller needs `pods/exec` in project namespaces (the
+`WORKER_EXEC_CLUSTER_ROLE` binding the chart already creates per project) and
+its existing rights to write CiliumNetworkPolicies there. Both the proxy image
+and the workspace image must contain this release's `agent-project-controller`
+(the `download-grant` and `fetch` commands). A project running older images
+reports that it "predates downloads" until it restarts on the new images.
+
+For defense in depth, admit `download-*` Cilium policies in project namespaces
+only when they select the project's proxy pod, allow only DNS and `toFQDNs`
+`matchName` rules on port 443, and carry the expiry annotation.
+
+To roll back, set `DOWNLOADS_ENABLED=false` and restart. In-flight downloads
+stop (the helper removes its temporary file when the exec stream ends); the
+proxy's grants expire within 10 minutes and the next controller deletes
+leftover `download-*` policies only while the feature is on, so delete those by
+label `projects.agentwork.dev/download` if you turn it off.
+
 ## Client limit
 
 Inspection is an HTTP CONNECT to port 443. The proxy then inspects the negotiated HTTP/2 or HTTP/1.1 request with the same host, method and path rules. WebSocket upgrades and certificate-pinned clients stay blocked. There is no opaque tunnel. Allowing a registry host does not change that limit.

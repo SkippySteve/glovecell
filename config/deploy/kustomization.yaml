@@ -40,3 +40,5 @@ configMapGenerator:
       # Per-project LAN host grants: empty is off. See docs/installation.md.
       - LAN_GRANT_ALLOWED_CIDRS=
       - LAN_GRANT_DENIED_CIDRS=
+      # "Download into sandbox" for project sandboxes: off unless true. See docs/installation.md.
+      - DOWNLOADS_ENABLED=false

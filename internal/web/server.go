@@ -52,6 +52,8 @@ type Server struct {
 	RunRecords                         *RunRecords
 	Handoffs                           *Handoffs
 	LAN                                *LANGrants
+	// Downloads enables "Download into sandbox" for project sandboxes.
+	Downloads *Downloads
 }
 
 // openUISpinnerStyle allows the one stylesheet OpenUI's Renderer injects on mount
@@ -78,6 +80,11 @@ func (s *Server) Handler() (http.Handler, error) {
 	}
 	if s.RunRecords != nil {
 		if e := s.RunRecords.Validate(); e != nil {
+			return nil, e
+		}
+	}
+	if s.Downloads != nil {
+		if e := s.Downloads.Validate(); e != nil {
 			return nil, e
 		}
 	}
@@ -119,6 +126,10 @@ func (s *Server) Handler() (http.Handler, error) {
 			session["lanHosts"] = true
 			session["lanAllowed"] = s.LAN.Config.AllowedStrings()
 		}
+		if s.Downloads != nil {
+			session["downloads"] = true
+			session["downloadMaxBytes"] = s.Downloads.MaxBytes
+		}
 		for k, v := range s.Handoffs.session() {
 			session[k] = v
 		}
@@ -155,6 +166,14 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.HandleFunc("DELETE /api/v1/workspaces/{name}/lan-hosts/{address}", s.removeLANHost)
 	mux.HandleFunc("GET /api/v1/workspaces/{name}/audit", s.audit)
 	mux.HandleFunc("GET /api/v1/workspaces/{name}/clients", s.clients)
+	if s.Downloads != nil {
+		mux.HandleFunc("POST /api/v1/workspaces/{name}/download-checks", s.startDownloadCheck)
+		mux.HandleFunc("GET /api/v1/workspaces/{name}/download-checks/{id}", s.getDownloadCheck)
+		mux.HandleFunc("POST /api/v1/workspaces/{name}/downloads", s.startDownload)
+		mux.HandleFunc("GET /api/v1/workspaces/{name}/downloads", s.listDownloads)
+		mux.HandleFunc("GET /api/v1/workspaces/{name}/downloads/{id}", s.getDownload)
+		mux.HandleFunc("POST /api/v1/workspaces/{name}/downloads/{id}/cancel", s.cancelDownload)
+	}
 	if s.SandboxControl != nil {
 		mux.Handle("/sandboxes/", s.SandboxControl.Handler(s.Origin))
 		mux.HandleFunc("GET /sandboxes", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/sandboxes/", http.StatusSeeOther) })

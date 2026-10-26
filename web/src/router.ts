@@ -2,9 +2,9 @@ import {useEffect, useState} from 'react';
 
 // Sidebar sections of the sandbox workspace view (Option B). Runs and Settings
 // keep pages the console already had; the rest follow the approved mockup.
-export type Section = 'overview' | 'internet' | 'lan' | 'packages' | 'previews' | 'credentials' | 'history' | 'runs' | 'settings';
+export type Section = 'overview' | 'internet' | 'lan' | 'packages' | 'downloads' | 'previews' | 'credentials' | 'history' | 'runs' | 'settings';
 export const SECTIONS: [Section, string][] = [
-  ['overview', 'Overview'], ['internet', 'Internet'], ['lan', 'LAN devices'], ['packages', 'Packages'],
+  ['overview', 'Overview'], ['internet', 'Internet'], ['lan', 'LAN devices'], ['packages', 'Packages'], ['downloads', 'Downloads'],
   ['previews', 'Previews & dev links'], ['credentials', 'Credentials'], ['history', 'History'], ['runs', 'Runs'], ['settings', 'Settings'],
 ];
 // Earlier tab names, so bookmarks and links from older pages still land.
