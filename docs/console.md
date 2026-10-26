@@ -41,7 +41,7 @@ Opening a sandbox shows one workspace at a time. A sidebar lists every
 workspace (sandbox-control sandboxes and console projects, with counts of what
 waits on you and a **LAN** badge while LAN access is open) and the sections of
 the current one: **Overview**, **Internet**, **LAN devices**, **Packages**,
-**Previews & dev links**, **Credentials**, **History**, plus **Runs** and
+**Downloads**, **Previews & dev links**, **Credentials**, **History**, plus **Runs** and
 **Settings** for sandbox-control sandboxes. A sticky header shows the workspace
 state, its pod, and every open grant with a countdown: web access (with Lock),
 each LAN grant (with Restrict) and live dev links. On narrow screens the sidebar
@@ -54,7 +54,7 @@ on the matching section.
 
 Each section reads its data through one module in
 `web/src/workspace/sources/` (`internet.ts`, `lan.ts`, `packages.ts`,
-`previews.ts`, `credentials.ts`, `history.ts`, `reports.ts`). The sections never
+`previews.ts`, `credentials.ts`, `history.ts`, `reports.ts`, `downloads.ts`). The sections never
 call the backends directly, so a later backend can replace a module without
 changing the UI. A part of a section with no read API yet says "not available
 yet" and links to the classic page.
@@ -178,6 +178,52 @@ when it applies the policy. Both appear in **History**. If the operator later
 narrows the ranges or turns the feature off, a project whose grant is now refused
 moves to **Needs attention**, its worker stops and its `lan-hosts` policy is
 deleted. Remove the grant to resume.
+
+## Download into sandbox
+
+Put a file from the internet into a running project sandbox without opening
+a shell there. Open the sandbox, choose **Downloads** (or **Download into
+sandbox** in the header) and:
+
+1. **Check the URL.** Enter an `https://` URL and choose **Check**. The
+   sandbox asks the server through its own proxy (a HEAD request; nothing is
+   downloaded) and the console lists every hop: the URL you entered, each
+   redirect with its status code, and the final file's size and type when the
+   server announces them. A hop on a different host is highlighted and tagged
+   **new host**. Query strings are masked (`?X-Amz-Signature=•••`) until you
+   tick **Show query strings**; signed download links carry tokens there.
+2. **Save into the sandbox.** The destination defaults to
+   `~/downloads/<file name>`. It must be under `~/` (the sandbox home,
+   `/workspace/home`) or `/workspace/`. Optionally paste the expected SHA-256
+   and tick **Overwrite if the file exists**. **Download** opens a confirmation
+   listing the exact URLs you approve.
+3. The download runs in the sandbox, as the sandbox user, with progress. When
+   it finishes the console shows the path, size and SHA-256. Every check, start
+   and outcome is also in **History**.
+
+Only the approved chain is followed. If the server redirects somewhere else at
+download time, the download stops before requesting the new URL and shows the
+difference. Signed links (GitHub release assets, S3 and other object stores)
+often get a fresh signature on each request: the same host and path with a
+different query. For that case **Check the new chain** re-runs the check and
+offers **Approve new chain and download**, which also ticks **Accept a changed
+query string on the same host and path**. A changed host or path is never
+accepted without a new check.
+
+Limits: https only (http, IP addresses, ports other than 443 and cluster or
+local names are refused); at most 9 redirects and no loops or downgrades to
+http; 2 GiB per file and 30 minutes per fetch by default (see
+[installation](installation.md#downloads)); one check or download at a time
+per sandbox. A server that answers directly where it redirected during the
+check is accepted (the file came from an approved URL) and noted on the
+result. Redirect hops are checked with HEAD; a server that refuses HEAD (400,
+403, 405, 501) is asked with a GET that the proxy closes after the headers.
+
+The section is unavailable for sandbox-control workspaces: sandbox-control has
+no way to run the download helper inside them yet.
+
+See [security](security.md#downloads-into-a-sandbox) for how the one-time
+permission, the proxy and the file writing are protected.
 
 ## Include pre-existing sandboxes
 

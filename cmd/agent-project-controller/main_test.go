@@ -44,6 +44,37 @@ func TestHandoffIntakeConfigurationFailsClosed(t *testing.T) {
 	}
 }
 
+func TestDownloadConfigurationFailsClosed(t *testing.T) {
+	cilium := network.Cilium{}
+	native := network.NetworkPolicy{}
+	for _, c := range []struct {
+		enabled, max, timeout string
+		provider              network.Provider
+		ok, on                bool
+	}{
+		{"", "", "", cilium, true, false},
+		{"false", "", "", native, true, false},
+		{"true", "", "", cilium, true, true},
+		{"true", "1073741824", "20m", cilium, true, true},
+		{"true", "", "", native, false, false},
+		{"", "1073741824", "", cilium, false, false},
+		{"true", "0", "", cilium, false, false},
+		{"true", "2GiB", "", cilium, false, false},
+		{"true", "99999999999999", "", cilium, false, false},
+		{"true", "", "10s", cilium, false, false},
+		{"true", "", "5h", cilium, false, false},
+		{"yes", "", "", cilium, true, false},
+	} {
+		t.Setenv("DOWNLOADS_ENABLED", c.enabled)
+		t.Setenv("DOWNLOAD_MAX_BYTES", c.max)
+		t.Setenv("DOWNLOAD_TIMEOUT", c.timeout)
+		d, err := downloadsFromEnv(c.provider, nil)
+		if (err == nil) != c.ok || (d != nil) != c.on {
+			t.Errorf("%+v: on=%v err=%v", c, d != nil, err)
+		}
+	}
+}
+
 func TestLANGrantConfigurationFailsClosed(t *testing.T) {
 	cilium := network.Cilium{}
 	native := network.NetworkPolicy{}

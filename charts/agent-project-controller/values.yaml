@@ -39,6 +39,12 @@ config:
   # and gateway ranges. Requires NETWORK_PROVIDER=cilium.
   LAN_GRANT_ALLOWED_CIDRS: ''
   LAN_GRANT_DENIED_CIDRS: ''
+  # "Download into sandbox" for project sandboxes (docs/console.md#download-into-sandbox).
+  # Off unless 'true'. Needs NETWORK_PROVIDER=cilium and the worker exec role.
+  # Empty limit and timeout mean 2 GiB and 30m.
+  DOWNLOADS_ENABLED: 'false'
+  DOWNLOAD_MAX_BYTES: ''
+  DOWNLOAD_TIMEOUT: ''
   WORKSPACE_CPU_REQUEST: 500m
   WORKSPACE_MEMORY_REQUEST: 512Mi
   WORKSPACE_CPU_LIMIT: '4'

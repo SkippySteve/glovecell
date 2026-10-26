@@ -86,6 +86,72 @@ end for certain. Every add and remove is an immutable audit record with the
 operator, project, address, ports and time, and the controller records each
 applied policy.
 
+## Downloads into a sandbox
+
+"Download into sandbox" is off unless `DOWNLOADS_ENABLED=true`. It never
+moves bytes over the controller's network path. The worker fetches the file
+through its own inspecting proxy, as the worker's user, and writes it itself.
+
+- **One-time, exact grants.** For each URL of an approved redirect chain the
+  controller adds a grant to the project proxy: the exact URL (host, escaped
+  path and raw query), a mode (`probe` sends HEAD, `fetch` sends GET), the
+  SHA-256 of a random 32-byte token, an expiry of 10 minutes and, for fetches,
+  a byte limit and timeout. The first request that presents the token consumes
+  the grant, whatever happens next. A request for another URL, method or host,
+  with another token, or after expiry is refused and does not consume it.
+  Grants live only in proxy memory: a proxy restart drops them.
+- **The proxy builds the request.** A granted request has no body, and the
+  proxy sends only its own `User-Agent`, `Accept` and `Accept-Encoding:
+  identity` headers. Worker headers, cookies and the token never reach the
+  destination, and no project credential (GitHub, Muse, provider tokens) is
+  attached. Granted hosts resolve only to public addresses; the private-host
+  exception for configured hosts does not apply. HTTP/2 grant requests are
+  refused. Probes never return a body to the worker; a GET used when a server
+  refuses HEAD is closed after its headers.
+- **Delivery of grants.** The controller execs `agent-project-controller
+  download-grant` in the proxy pod; it talks to `127.0.0.1:3129`, which only
+  processes in that pod reach. The worker's token travels on the exec stream of
+  `agent-project-controller fetch`, never in arguments or the environment.
+  Exec stays inside the project's `apc-<uid>` namespace; downloads add no RBAC.
+- **Network.** For the duration of one check or download, CiliumNetworkPolicy
+  `download-<id>` lets the project's **proxy** pod resolve and reach the exact
+  host names of the chain on port 443 (no patterns, no CIDRs). The worker
+  policy is unchanged. The proxy still refuses every request without a live
+  grant, so the policy alone opens nothing. Policies carry an expiry
+  annotation; the controller deletes them when the operation ends and sweeps
+  any left over once a minute.
+- **Redirects.** A check follows at most 9 redirects (10 URLs) and refuses
+  loops, https-to-http downgrades, IP literals, other ports and cluster or
+  local names. The Location comes from the proxy's own record, never from the
+  worker. A download follows exactly the approved chain; any difference stops
+  it before the new URL is requested. Accepting a query-only change on the
+  same host and path is an explicit operator choice per download.
+- **Writing the file.** The helper writes only below `/workspace` (the home
+  directory is `/workspace/home`). It opens every directory from that root
+  with `O_NOFOLLOW` and checks it is a directory, so a symlink planted anywhere
+  on the path fails the download rather than redirecting it. (gVisor follows a
+  final symlink when `O_DIRECTORY|O_NOFOLLOW` are combined, so the helper does
+  not use `O_DIRECTORY`.) It refuses an existing symlink, device, FIFO, socket
+  or directory at the destination, and an existing file unless overwrite was
+  ticked. It writes a temporary file in the same directory, enforces the size
+  limit (proxy and helper both count), verifies the optional SHA-256, and
+  publishes with a hard link (or `renameat2(RENAME_NOREPLACE)`) so that
+  without overwrite it never replaces a file, even one created mid-download.
+  On any failure, mismatch or cancellation the temporary file is removed.
+- **Who and records.** Only a signed-in OIDC operator can check, start or
+  cancel; the automation bearer and static login get 403. The console's
+  same-origin and JSON checks apply. Each check, request and outcome is an
+  immutable audit record (History) with the actor, the chain, the
+  destination, size and SHA-256. Query strings are replaced by a SHA-256
+  prefix in every record and log line; only the operator's own console view
+  shows them, masked until "Show query strings" is ticked.
+
+Limits: the agent in the sandbox can see the file, and the token while the
+helper runs if it can read that process's memory. A sandbox process that
+races the helper with a stolen token can at most fetch the same approved URL
+with the proxy's fixed headers. The file is whatever the server sends;
+the SHA-256 field is the integrity check.
+
 ## Removal and recovery
 
 The controller persists the external identity before any grant. If it crashes after token creation but before saving the token value, the next attempt removes orphaned tokens before issuing another. Deleting the credential ledger manually breaks this recovery guarantee.
