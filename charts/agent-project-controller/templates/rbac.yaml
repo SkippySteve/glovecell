@@ -17,11 +17,6 @@ rules:
   - apiGroups: ['']
     resources: [pods]
     verbs: [get, list, watch, delete]
-{{- if .Values.t3Connect.enabled }}
-  - apiGroups: ['']
-    resources: [pods/exec]
-    verbs: [create]
-{{- end }}
   - apiGroups: ['']
     resources: [persistentvolumes]
     verbs: [get, list, watch]
@@ -65,6 +60,24 @@ rules:
   - apiGroups: [rbac.authorization.k8s.io]
     resources: [roles, rolebindings]
     verbs: [get, list, watch, create, update, patch, delete]
+{{- if include "apc.workerExec" . }}
+  # No cluster-wide exec grant: the controller binds the role below in each
+  # project namespace it creates (WORKER_EXEC_CLUSTER_ROLE).
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterroles]
+    resourceNames: [{{ include "apc.workerExecRole" . }}]
+    verbs: [bind]
+---
+# Exec into project workers. Bound only by RoleBindings in project namespaces.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "apc.workerExecRole" . }}
+rules:
+  - apiGroups: ['']
+    resources: [pods/exec]
+    verbs: [create]
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

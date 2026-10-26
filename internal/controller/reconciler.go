@@ -55,6 +55,11 @@ type Config struct {
 	StorageSize                                                                 string
 	WorkerResources, ProxyResources                                             ResourceProfile
 	WorkerScheduling, ProxyScheduling                                           Scheduling
+
+	// WorkerExecClusterRole, when set, is bound to the controller's own
+	// ServiceAccount (ControllerServiceAccount in Namespace) in each project
+	// namespace, so pods/exec never needs a cluster-wide grant.
+	WorkerExecClusterRole, ControllerServiceAccount string
 }
 
 func (c Config) Validate() error {
@@ -67,6 +72,9 @@ func (c Config) Validate() error {
 		return errors.New("control namespace, repository owner, runtime class and storage class required")
 	}
 	if err := validateRegistrarNamespace(c.RegistrarNamespace, c.Namespace); err != nil {
+		return err
+	}
+	if err := validateWorkerExec(c.WorkerExecClusterRole, c.ControllerServiceAccount); err != nil {
 		return err
 	}
 	if q, e := resource.ParseQuantity(c.StorageSize); e != nil || q.Sign() <= 0 {
@@ -454,6 +462,11 @@ func (r *Reconciler) ensure(ctx context.Context, w *api.ProjectWorkspace) error 
 	}
 	if !ns.DeletionTimestamp.IsZero() {
 		return errors.New("project namespace is terminating")
+	}
+	// The controller's own exec grant comes first: granting the registrar
+	// pods/exec passes the RBAC escalation check only if the controller holds it.
+	if e = r.ensureWorkerExecAccess(ctx, w); e != nil {
+		return e
 	}
 	if e = r.ensureRegistrarAccess(ctx, w); e != nil {
 		return e
