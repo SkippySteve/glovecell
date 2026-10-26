@@ -60,6 +60,11 @@ type Config struct {
 	// ServiceAccount (ControllerServiceAccount in Namespace) in each project
 	// namespace, so pods/exec never needs a cluster-wide grant.
 	WorkerExecClusterRole, ControllerServiceAccount string
+
+	// ProjectAccessClusterRole, when set, is bound to the controller's own
+	// ServiceAccount in each project namespace, so project Secrets and
+	// deleting the project namespace never need a cluster-wide grant.
+	ProjectAccessClusterRole string
 }
 
 func (c Config) Validate() error {
@@ -75,6 +80,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := validateWorkerExec(c.WorkerExecClusterRole, c.ControllerServiceAccount); err != nil {
+		return err
+	}
+	if err := validateProjectAccess(c.ProjectAccessClusterRole, c.ControllerServiceAccount); err != nil {
 		return err
 	}
 	if q, e := resource.ParseQuantity(c.StorageSize); e != nil || q.Sign() <= 0 {
@@ -463,8 +471,13 @@ func (r *Reconciler) ensure(ctx context.Context, w *api.ProjectWorkspace) error 
 	if !ns.DeletionTimestamp.IsZero() {
 		return errors.New("project namespace is terminating")
 	}
-	// The controller's own exec grant comes first: granting the registrar
-	// pods/exec passes the RBAC escalation check only if the controller holds it.
+	// The controller's own grants in this namespace come first: its project
+	// Secrets (read below by modelAccess and objects) need the access binding,
+	// and granting the registrar pods/exec passes the RBAC escalation check
+	// only if the controller holds it.
+	if e = r.ensureProjectAccess(ctx, w); e != nil {
+		return e
+	}
 	if e = r.ensureWorkerExecAccess(ctx, w); e != nil {
 		return e
 	}
@@ -1047,6 +1060,12 @@ func (r *Reconciler) remove(ctx context.Context, w *api.ProjectWorkspace) error 
 			return e
 		}
 		if ns.DeletionTimestamp.IsZero() {
+			// Deleting the namespace is authorized by the project access
+			// binding; a project last reconciled by an older controller may
+			// not have it yet.
+			if e = r.ensureProjectAccess(ctx, w); e != nil {
+				return e
+			}
 			if e = r.Delete(ctx, ns); e != nil {
 				return e
 			}

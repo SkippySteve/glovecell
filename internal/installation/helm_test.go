@@ -57,6 +57,14 @@ func TestHelmPackage(t *testing.T) {
 	if bytes.Contains(output, []byte("pods/exec")) || bytes.Contains(output, []byte("WORKER_EXEC_CLUSTER_ROLE")) {
 		t.Fatal("default chart grants exec without T3 Connect or a control client")
 	}
+	for _, want := range []string{"name: test-control-qualification-project-access", "resourceNames: [test-control-qualification-project-access]", "PROJECT_ACCESS_CLUSTER_ROLE: \"test-control-qualification-project-access\"", "name: controller-secrets"} {
+		if !bytes.Contains(output, []byte(want)) {
+			t.Fatal("project access setting missing", want)
+		}
+	}
+	if n := bytes.Count(output, []byte("resources: [secrets]")); n != 2 {
+		t.Fatalf("Secrets granted in %d rules; want the project access ClusterRole and the control namespace Role", n)
+	}
 	config := values["config"].(map[string]any)
 	config["SANDBOX_CONTROL_URL"] = "http://sandbox-control.sandbox-system.svc:8080"
 	write()

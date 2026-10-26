@@ -11,8 +11,15 @@ rules:
   - apiGroups: [projects.agentwork.dev]
     resources: [projectworkspaces, projectworkspaces/status, projectworkspaces/finalizers]
     verbs: [get, list, watch, create, update, patch, delete]
+  # No cluster-wide Secrets and no cluster-wide namespace delete: Secrets come
+  # from Role controller-secrets (control namespace) and the project access
+  # ClusterRole bound in each project namespace, which also lets the
+  # controller delete that namespace (PROJECT_ACCESS_CLUSTER_ROLE).
   - apiGroups: ['']
-    resources: [namespaces, secrets, configmaps, persistentvolumeclaims, services, serviceaccounts]
+    resources: [namespaces]
+    verbs: [get, list, watch, create]
+  - apiGroups: ['']
+    resources: [configmaps, persistentvolumeclaims, services, serviceaccounts]
     verbs: [get, list, watch, create, update, patch, delete]
   - apiGroups: ['']
     resources: [pods]
@@ -59,6 +66,47 @@ rules:
     resources: [clusterroles]
     resourceNames: [agent-project-controller-worker-exec]
     verbs: [bind]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterroles]
+    resourceNames: [agent-project-controller-project-access]
+    verbs: [bind]
+---
+# A project's Secrets and its namespace object. Bound only by RoleBindings in
+# project namespaces, never a ClusterRoleBinding. A RoleBinding in namespace
+# apc-<uid> granting `namespaces` applies to the namespace object apc-<uid>.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: agent-project-controller-project-access
+rules:
+  - apiGroups: ['']
+    resources: [secrets]
+    verbs: [get, create, update, patch]
+  - apiGroups: ['']
+    resources: [namespaces]
+    verbs: [get, delete]
+---
+# Credential ledgers in the control namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: controller-secrets
+rules:
+  - apiGroups: ['']
+    resources: [secrets]
+    verbs: [get, list, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: controller-secrets
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: controller-secrets
+subjects:
+  - kind: ServiceAccount
+    name: controller
 ---
 # Exec into project workers (T3 Connect, registrar). Bound only by
 # RoleBindings in project namespaces, never a ClusterRoleBinding.
