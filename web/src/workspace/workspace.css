@@ -100,6 +100,10 @@ details.fold[open] > summary { margin-bottom: var(--openui-space-m); }
 .decision-list li .actions { margin-left: auto; }
 .link-button.primary-link { background: var(--openui-interactive-accent-default); border-color: var(--openui-interactive-accent-default); color: var(--openui-text-white); }
 
+/* The theme's accent text is near-white on light surfaces; keep links legible. */
+.ws-content a:not(.link-button):not(.tile), .ws-head a:not(.link-button) { color: var(--openui-text-info-primary); }
+.card .items li > .item-main { flex: 1 1 auto; }
+
 /* Overview tiles */
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--openui-space-m); }
 .tile { display: flex; flex-direction: column; gap: 6px; padding: var(--openui-space-m) var(--openui-space-l); border: 1px solid var(--openui-border-default); border-radius: var(--openui-radius-xl, 12px); background: var(--openui-foreground); color: inherit; text-decoration: none; }
@@ -119,6 +123,8 @@ details.fold[open] > summary { margin-bottom: var(--openui-space-m); }
 @media (max-width: 860px) {
   .ws-shell { grid-template-columns: minmax(0, 1fr); }
   .ws-side { display: none; }
+  /* A sticky header would cover a third of a phone screen; it scrolls away there. */
+  .ws-sticky { position: static; }
   .ws-mobile { display: flex; flex-direction: column; gap: var(--openui-space-s); margin-top: var(--openui-space-s); }
   .ws-picker { max-width: 100%; }
   .ws-pills { display: flex; gap: 4px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }

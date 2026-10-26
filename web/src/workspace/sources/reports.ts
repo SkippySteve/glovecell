@@ -2,9 +2,15 @@
 // Today: sandbox-control GET /api/reports and POST /dismiss-report. Report text
 // is written by the agent and untrusted; the UI renders it as plain text.
 import {sandboxReports, type AgentReport} from '../../api';
+import {plainText} from '../../orca';
 import type {LanView} from './lan';
 
 export type {AgentReport};
+// Report times are RFC 3339 from sandbox-control; anything else is shown as text.
+export function reportTime(value: string): string {
+  const t = Date.parse(value);
+  return Number.isFinite(t) && /^\d{4}-\d{2}-\d{2}T/.test(value) ? new Date(t).toLocaleString([], {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'}) : plainText(value, 40);
+}
 export const loadReports = (workspace: string) => sandboxReports(workspace);
 export const dismissReport = (r: AgentReport) => ({path: '/dismiss-report', fields: {report: String(r.id), tab: 'activity'}});
 

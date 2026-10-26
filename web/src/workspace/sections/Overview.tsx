@@ -8,7 +8,7 @@ import {plural} from '../bits';
 import {setLanPrefill} from '../prefill';
 import {decideRequest, loadRequests, requestUrl, webAccess, type Requests} from '../sources/internet';
 import {liveLinks, pendingLinks} from '../sources/previews';
-import {dismissReport, reportLanHost, type AgentReport} from '../sources/reports';
+import {dismissReport, reportLanHost, reportTime, type AgentReport} from '../sources/reports';
 import type {SandboxState} from '../useSandbox';
 import {clockAt, left} from '../time';
 import type {SandboxDetail} from '../../api';
@@ -24,7 +24,7 @@ function ReportRow({ws, report}: {ws: SandboxState; report: AgentReport}) {
       <Tag size="sm" variant="danger" text="Agent report" />
       <div className="item-main">
         <strong>{reportKind(report.kind)}: <code>{plainText(report.resource, RESOURCE_LIMIT)}</code></strong>
-        <span className="subtle-text">Agent's reason (unverified): {reason || '—'} · {plural(report.count, 'report')}, latest {plainText(report.last, 40)}</span>
+        <span className="subtle-text">Agent's reason (unverified): {reason || '—'} · {plural(report.count, 'report')}, latest {reportTime(report.last)}</span>
         {lan ? <span>{lan.open ? <>LAN access to <code>{lan.address}</code> is open.</> : <>Names allowlisted LAN host <code>{lan.address}</code>.</>}</span> : null}
       </div>
       <div className="actions">

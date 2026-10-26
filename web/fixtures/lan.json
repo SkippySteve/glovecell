@@ -1,0 +1,51 @@
+{
+  "workspace": "coding-a",
+  "enabled": true,
+  "reason": "",
+  "error": "",
+  "running": true,
+  "podUid": "3f1c0d2e-0000-4000-8000-000000000001",
+  "windows": [900, 3600, 14400],
+  "limits": {"grantsPerWorkspace": 8, "portsPerGrant": 32},
+  "hosts": [
+    {
+      "address": "192.168.1.50",
+      "listed": true,
+      "all": true,
+      "ports": [],
+      "grant": null,
+      "learned": [
+        {"port": 1337, "verdict": "used", "firstSeen": "2030-01-01T10:00:00Z", "lastSeen": "2030-01-02T10:00:00Z", "count": 14},
+        {"port": 50000, "verdict": "used", "firstSeen": "2030-01-02T09:00:00Z", "lastSeen": "2030-01-02T10:00:00Z", "count": 6},
+        {"port": 50013, "verdict": "refused", "firstSeen": "2030-01-02T09:30:00Z", "lastSeen": "2030-01-02T09:31:00Z", "count": 3}
+      ],
+      "learnedGrant": [1337, 50000, 50013],
+      "suggestedAllowLine": ""
+    },
+    {
+      "address": "192.168.1.60",
+      "listed": true,
+      "all": false,
+      "ports": [22, 2122],
+      "grant": {"mode": "ports", "ports": [22], "openedBy": "operator", "openedAt": "2030-01-02T11:00:00Z", "deadline": "2030-01-02T12:00:00Z", "state": "Open", "reason": ""},
+      "learned": [{"port": 8080, "verdict": "refused", "firstSeen": "2030-01-02T11:05:00Z", "lastSeen": "2030-01-02T11:06:00Z", "count": 2}],
+      "learnedGrant": [],
+      "suggestedAllowLine": "192.168.1.60: 22, 2122, 8080"
+    },
+    {
+      "address": "192.168.1.70",
+      "listed": false,
+      "all": false,
+      "ports": [],
+      "grant": {"mode": "all", "ports": [], "openedBy": "operator", "openedAt": "2030-01-02T11:30:00Z", "deadline": "2030-01-02T11:45:00Z", "state": "Restricting", "reason": "unlisted"},
+      "learned": [],
+      "learnedGrant": [],
+      "suggestedAllowLine": ""
+    }
+  ],
+  "history": [
+    {"at": "2030-01-02T11:30:00Z", "event": "opened", "host": "192.168.1.70", "ports": "all", "by": "operator", "deadline": "2030-01-02T11:45:00Z", "detail": ""},
+    {"at": "2030-01-02T11:00:00Z", "event": "opened", "host": "192.168.1.60", "ports": "22", "by": "operator", "deadline": "2030-01-02T12:00:00Z", "detail": ""},
+    {"at": "2030-01-01T09:00:00Z", "event": "expired", "host": "192.168.1.50", "ports": "all", "by": "sandbox-control", "deadline": "", "detail": "rule removed; the workspace pod restarts"}
+  ]
+}
