@@ -41,6 +41,9 @@ func TestBrowserDashboard(t *testing.T) {
 	pendingObs := map[string]bool{"files.example.com": true, "tracker.example.com": true}
 	approvedObs := map[string]bool{"registry.example.com": true}
 	previewState := "Pending"
+	// One allowlisted LAN host for the LAN devices section (sandbox-control /api/lan).
+	var lanGrant map[string]any
+	lanHistory := []map[string]any{}
 	devLinkState := "Pending"
 	var nativeActions []string
 	observations := func(set map[string]bool) []map[string]any {
@@ -112,6 +115,20 @@ func TestBrowserDashboard(t *testing.T) {
 					}
 				case "/egress clear-unapproved":
 					pendingObs = map[string]bool{}
+				case "/egress lan-open":
+					if r.Form.Get("lan.address") != "192.168.50.20" || strings.Join(r.Form["lan.port"], ",") != "22" || r.Form.Get("duration") != "3600" || r.Form.Get("pod_uid") != "pod-"+id || lanGrant != nil {
+						fail(400, "unexpected LAN grant")
+						return
+					}
+					lanGrant = map[string]any{"mode": "ports", "ports": []int{22}, "openedBy": "operator", "openedAt": "2030-03-17T17:00:00Z", "deadline": "2030-03-17T18:00:00Z", "state": "Open", "reason": ""}
+					lanHistory = append([]map[string]any{{"at": "2030-03-17T17:00:00Z", "event": "opened", "host": "192.168.50.20", "ports": "22", "by": "operator", "deadline": "2030-03-17T18:00:00Z", "detail": ""}}, lanHistory...)
+				case "/egress lan-restrict":
+					if lanGrant == nil || r.Form.Get("lan.address") != "192.168.50.20" {
+						fail(400, "This LAN host is not open")
+						return
+					}
+					lanGrant["state"], lanGrant["reason"] = "Restricting", "restricted"
+					lanHistory = append([]map[string]any{{"at": "2030-03-17T17:01:00Z", "event": "restricted", "host": "192.168.50.20", "ports": "", "by": "operator", "deadline": "", "detail": "restricted now; the workspace pod restarts"}}, lanHistory...)
 				case "/lifecycle ":
 					mode[id] = r.Form.Get("mode")
 				case "/decision ":
@@ -160,6 +177,14 @@ func TestBrowserDashboard(t *testing.T) {
 					"revisions":    []map[string]any{{"id": 7, "status": "Active", "actor": "operator", "at": 1900000000}, {"id": 6, "status": "Active", "actor": "operator", "at": 1899000000}}}
 			case "/api/egress":
 				body = map[string]any{"filter": r.URL.Query().Get("q"), "pending": map[string]any{"total": len(pendingObs), "items": observations(pendingObs)}, "approved": map[string]any{"total": len(approvedObs), "items": observations(approvedObs)}}
+			case "/api/lan":
+				var grant any
+				if lanGrant != nil && id == "shared-pilot" {
+					grant = lanGrant
+				}
+				body = map[string]any{"workspace": id, "enabled": true, "reason": "", "error": "", "running": mode[id] == "Running", "podUid": "pod-" + id, "windows": []int{900, 3600, 14400},
+					"limits": map[string]int{"grantsPerWorkspace": 8, "portsPerGrant": 32}, "history": lanHistory,
+					"hosts": []map[string]any{{"address": "192.168.50.20", "listed": true, "all": false, "ports": []int{22, 2122}, "grant": grant, "learned": []any{}, "learnedGrant": []int{}, "suggestedAllowLine": ""}}}
 			case "/api/previews":
 				body = map[string]any{"expiredCount": 0, "requests": []map[string]any{{"id": "p1", "state": previewState, "proposedName": "docs-site", "proposedRulesText": "GET,HEAD prefix:/", "rulesText": "", "lan": false, "tailscale": false, "gapAcknowledged": false, "seen": 1900000000.0, "first": 1899999000.0, "count": 3,
 					"listener": map[string]any{"project": "workspace", "worktree": "main", "port": 8080, "pid": 41, "address": "0.0.0.0", "loopback": false}, "urls": map[string]string{"lan": "https://preview-p1.example.com", "tailnet": "https://preview-p1-ts.example.com"}}}}
@@ -225,7 +250,7 @@ func TestBrowserDashboard(t *testing.T) {
 	if egressChanges.Load() != 7 || egress["shared-pilot"] != "Locked" || egress["orca"] != "Open" || minutes["orca"] != "240" {
 		t.Fatalf("instant egress changes did not reach sandbox control: %d %v %v", egressChanges.Load(), egress, minutes)
 	}
-	want := []string{"/egress learning-open", "/egress learning-lock", "/egress approve-endpoint", "/egress clear-unapproved", "/decision", "/devlink-decision", "/lifecycle", "/lifecycle", "/rollback"}
+	want := []string{"/egress learning-open", "/egress learning-lock", "/egress approve-endpoint", "/egress clear-unapproved", "/egress lan-open", "/egress lan-restrict", "/decision", "/devlink-decision", "/lifecycle", "/lifecycle", "/rollback"}
 	if strings.Join(nativeActions[len(nativeActions)-len(want):], ",") != strings.Join(want, ",") {
 		t.Fatalf("native sandbox actions: %v", nativeActions)
 	}

@@ -84,7 +84,7 @@ function Sidebar({current, section, badges, lanOpen}: {current: string; section:
       </nav>
       {me ? (
         <nav aria-labelledby="ws-side-sections">
-          <h2 className="ws-side-label" id="ws-side-sections">{me.label}</h2>
+          <h2 className="ws-side-label" id="ws-side-sections"><span className="visually-hidden">Sections of </span>{me.label}</h2>
           <ul>{sectionsFor(me.ref.kind, Boolean(session.runRecords)).map(([key, label]) => {
             const b = badges[key];
             return <li key={key}><a href={me.href(key)} aria-current={key === section ? 'page' : undefined} className="ws-side-item" data-section={key}>

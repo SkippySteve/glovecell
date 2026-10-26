@@ -114,6 +114,18 @@ func TestExistingSandboxesShareAuthenticationAndKeepCSRFFence(t *testing.T) {
 	if rec = request("GET", "/sandboxes/api/reports?workspace=shared-pilot", "", "", true); rec.Code != 200 || calls != before+1 {
 		t.Fatal("agent reports not forwarded", rec.Code)
 	}
+	// The workspace sections read LAN hosts and cluster grants; both stay read-only
+	// through the console: no POST route for cluster grants is forwarded.
+	for _, path := range []string{"/sandboxes/api/lan?workspace=shared-pilot", "/sandboxes/api/cluster?workspace=shared-pilot"} {
+		before = calls
+		if rec = request("GET", path, "", "", true); rec.Code != 200 || calls != before+1 {
+			t.Fatal("section read not forwarded", path, rec.Code)
+		}
+	}
+	before = calls
+	if rec = request("POST", "/sandboxes/cluster-access", s.Origin, "csrf=fixture-csrf", true); rec.Code != 404 || calls != before {
+		t.Fatal("cluster grant change forwarded", rec.Code)
+	}
 	before = calls
 	if rec = request("POST", "/sandboxes/dismiss-report", "https://evil.example", "csrf=fixture-csrf&report=1", true); rec.Code != 403 || calls != before {
 		t.Fatal("cross-origin dismissal forwarded", rec.Code)

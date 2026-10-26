@@ -94,7 +94,7 @@ export function Overview({ws, runtime, now}: {ws: SandboxState; runtime: boolean
           {!decisions ? <li className="empty-item">Nothing is waiting on you in this sandbox.</li> : null}
         </ul>
       </Card>
-      <nav className="tiles" aria-label="Sections">
+      <nav className="tiles" aria-label="Section summaries">
         <Tile href={href('internet')} label="Internet" badge={detail.egressCounts?.pending}
           value={web ? 'Web ' + web.phase.toLowerCase() : 'Fixed rules'}
           sub={!web ? 'Policy rules from sandbox-control' : web.phase === 'Locked' ? `${plural(detail.egressCounts?.approved || 0, 'approved request')} · ${detail.egressCounts?.pending || 0} waiting` : `until ${clockAt(web.expires)} · ${left(web.expires, now)} left`} />
