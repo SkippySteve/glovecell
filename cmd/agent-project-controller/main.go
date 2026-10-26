@@ -244,6 +244,10 @@ func run(ctx context.Context) error {
 		case "fetch":
 			// Run by the controller inside a project worker for "Download into sandbox".
 			return download.RunHelper(os.Stdin, os.Stdout)
+		case "put":
+			// Run by the controller inside a project worker for "Upload into sandbox";
+			// the file arrives on stdin.
+			return download.RunPut(os.Args[2:], os.Stdin, os.Stdout)
 		case "download-grant":
 			// Run by the controller inside the project proxy pod.
 			return proxy.GrantCLI(ctx, os.Stdin, os.Stdout)

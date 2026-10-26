@@ -245,7 +245,7 @@ func TestPublishNeverReplacesAFileThatAppearsDuringTheDownload(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer unix.Close(dir)
-	tmp, f, err := createTemp(dir, name)
+	tmp, f, err := createTemp(dir, name, ".apc-download-")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -249,7 +249,7 @@ func fetch(ctx context.Context, job Job, u *url.URL, base string, client *http.C
 	if res.ContentLength > job.MaxBytes {
 		return fail(CodeTooLarge, "file is %d bytes; the limit is %d", res.ContentLength, job.MaxBytes)
 	}
-	tmp, f, err := createTemp(dir, name)
+	tmp, f, err := createTemp(dir, name, ".apc-download-")
 	if err != nil {
 		return err
 	}
@@ -422,14 +422,14 @@ func checkTarget(dir int, name string, overwrite bool) error {
 	return fail(CodeNotRegular, "the destination exists and is not a regular file; refused")
 }
 
-func createTemp(dir int, name string) (string, *os.File, error) {
+func createTemp(dir int, name, tag string) (string, *os.File, error) {
 	b := make([]byte, 6)
 	_, _ = rand.Read(b)
 	base := name
 	if len(base) > 200 {
 		base = base[:200]
 	}
-	tmp := "." + base + ".apc-download-" + hex.EncodeToString(b)
+	tmp := "." + base + tag + hex.EncodeToString(b)
 	fd, err := unix.Openat(dir, tmp, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o644)
 	if err != nil {
 		return "", nil, fail(CodeWrite, "cannot create a temporary file next to the destination")
