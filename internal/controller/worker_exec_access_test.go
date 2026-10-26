@@ -165,7 +165,12 @@ func TestWorkerExecConfigValidation(t *testing.T) {
 	base := Config{Namespace: "control", Owner: "steve", Image: "example.com/worker@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", RuntimeClass: "gvisor", StorageClass: "delete", StorageSize: "1Gi"}
 	for _, bad := range []Config{
 		func() Config { c := base; c.WorkerExecClusterRole = "Not A Role"; return c }(),
-		func() Config { c := base; c.WorkerExecClusterRole = testExecRole; c.ControllerServiceAccount = "bad/account"; return c }(),
+		func() Config {
+			c := base
+			c.WorkerExecClusterRole = testExecRole
+			c.ControllerServiceAccount = "bad/account"
+			return c
+		}(),
 	} {
 		if err := bad.Validate(); err == nil {
 			t.Fatalf("accepted %+v", bad)

@@ -50,15 +50,16 @@ var sandboxGVK = schema.GroupVersionKind{Group: "agents.x-k8s.io", Version: "v1b
 type Config struct {
 	Namespace, GitHost, ForgejoOrigin, Owner, Image, RuntimeClass, StorageClass string
 	RegistrarNamespace                                                          string
-	// WorkerExecClusterRole, when set, is bound to the controller's own
-	// ServiceAccount (ControllerServiceAccount in Namespace) in each project
-	// namespace, so pods/exec never needs a cluster-wide grant.
-	WorkerExecClusterRole, ControllerServiceAccount string
 	GitHubOwner                                                                 string
 	ProxyImage                                                                  string
 	StorageSize                                                                 string
 	WorkerResources, ProxyResources                                             ResourceProfile
 	WorkerScheduling, ProxyScheduling                                           Scheduling
+
+	// WorkerExecClusterRole, when set, is bound to the controller's own
+	// ServiceAccount (ControllerServiceAccount in Namespace) in each project
+	// namespace, so pods/exec never needs a cluster-wide grant.
+	WorkerExecClusterRole, ControllerServiceAccount string
 }
 
 func (c Config) Validate() error {
