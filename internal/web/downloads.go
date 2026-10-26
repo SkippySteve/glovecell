@@ -335,7 +335,12 @@ func (s *Server) startDownloadCheck(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, d.checkView(rec))
 }
 
+// Reads are OIDC-only too: checks and downloads carry full URLs, whose query
+// strings can hold signed-link tokens.
 func (s *Server) getDownloadCheck(w http.ResponseWriter, r *http.Request) {
+	if _, ok := downloadOperator(w, r); !ok {
+		return
+	}
 	d := s.Downloads
 	d.mu.Lock()
 	rec, ok := d.checks[r.PathValue("id")]
@@ -431,6 +436,9 @@ func (s *Server) startDownload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listDownloads(w http.ResponseWriter, r *http.Request) {
+	if _, ok := downloadOperator(w, r); !ok {
+		return
+	}
 	d := s.Downloads
 	d.mu.Lock()
 	out := []Job{}
@@ -445,6 +453,9 @@ func (s *Server) listDownloads(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getDownload(w http.ResponseWriter, r *http.Request) {
+	if _, ok := downloadOperator(w, r); !ok {
+		return
+	}
 	d := s.Downloads
 	d.mu.Lock()
 	j, ok := d.jobs[r.PathValue("id")]

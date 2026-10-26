@@ -470,6 +470,12 @@ func TestDownloadRequestValidationAndAuth(t *testing.T) {
 	if rec := e.do("POST", "/api/v1/workspaces/project/download-checks", `{"url":"https://files.example.com/a.bin"}`, bearer); rec.Code != 403 {
 		t.Fatalf("automation bearer started a check: %d", rec.Code)
 	}
+	// Reads carry full URLs (signed-link tokens), so they are OIDC-only as well.
+	for _, path := range []string{"/api/v1/workspaces/project/download-checks/" + c.ID, "/api/v1/workspaces/project/downloads"} {
+		if rec := e.do("GET", path, "", bearer); rec.Code != 403 {
+			t.Fatalf("automation bearer read %s: %d", path, rec.Code)
+		}
+	}
 	// The original approval still works after all the refused attempts.
 	if j := e.download(t, c, ""); j.State != "done" {
 		t.Fatalf("%+v", j)
