@@ -1,7 +1,7 @@
 // The sandbox workspace view (Option B): a sidebar of workspaces and sections,
 // a sticky header with the workspace state and every open grant, and one short
 // page per section. Section data comes only through ./sources modules.
-import {useEffect, useState, type ReactNode} from 'react';
+import {useEffect, useMemo, useState, type ReactNode} from 'react';
 import type {ExistingSandbox, Project} from '../api';
 import {useData} from '../data';
 import {SandboxRuns} from '../factory/SandboxRuns';
@@ -16,6 +16,8 @@ import {Button, Callout, Card, Tag} from '../ui';
 import {Countdown, NotAvailable, SectionIntro} from './bits';
 import {useConfirm} from './Confirm';
 import {Credentials} from './sections/Credentials';
+import {Downloads} from './sections/Downloads';
+import {projectDownloads, sandboxDownloads} from './sources/downloads';
 import {History} from './sections/History';
 import {Internet} from './sections/Internet';
 import {Lan, useRestrict} from './sections/Lan';
@@ -29,6 +31,7 @@ import {useNow} from './time';
 import {useSandbox, type SandboxState} from './useSandbox';
 
 type Ref = {kind: 'sandbox'; id: string} | {kind: 'project'; name: string};
+const SANDBOX_DOWNLOADS = sandboxDownloads();
 const SIDEBAR_LAN_MS = 30000;
 
 // Sections each kind of workspace lists. Project sandboxes have no packages or
@@ -205,6 +208,7 @@ export function SandboxWorkspace({id, section}: {id: string; section: Section}) 
     : section === 'internet' ? <Internet ws={ws} now={now} />
     : section === 'lan' ? <Lan key={id} ws={ws} now={now} />
     : section === 'packages' ? <Packages ws={ws} />
+    : section === 'downloads' ? <Downloads key={id} source={SANDBOX_DOWNLOADS} workspace={id} />
     : section === 'previews' ? <Previews {...ctx} />
     : section === 'credentials' ? <Credentials ws={ws} now={now} />
     : section === 'history' ? <History ws={ws} ctx={ctx} />
@@ -222,6 +226,8 @@ export function SandboxWorkspace({id, section}: {id: string; section: Section}) 
 export function ProjectWorkspace({name, section}: {name: string; section: Section}) {
   const {loaded, projects, existing, session} = useData();
   const lanOpen = useLanCounts(existing.map(s => s.id));
+  // One stable source per project, so the section's effects do not refire on every render.
+  const downloads = useMemo(() => projectDownloads(name, {downloads: session.downloads, downloadMaxBytes: session.downloadMaxBytes}), [name, session.downloads, session.downloadMaxBytes]);
   const p = projects.find(item => item.metadata.name === name);
   useEffect(() => { document.title = name + ' · Sandboxes'; }, [name]);
   if (!p) return (
@@ -238,6 +244,7 @@ export function ProjectWorkspace({name, section}: {name: string; section: Sectio
         <Tag size="sm" variant={state.variant} text={state.label} />
         <span className="subtle-text">Project sandbox · {p.spec.repository}{p.status?.namespace ? ' · ' + p.status.namespace : ''}</span>
         <span className="actions end">
+          {ready && session.downloads && section !== 'downloads' ? <a className="link-button" href={projectHref(p.metadata.name, 'downloads')}>Download into sandbox</a> : null}
           {ready && session.t3Connect ? <a className="link-button" href="https://app.t3.codes" target="_blank" rel="noopener noreferrer">Open T3 Connect ↗</a> : null}
           <LifecycleButton p={p} primary={ready} size="small" />
         </span>
@@ -251,6 +258,7 @@ export function ProjectWorkspace({name, section}: {name: string; section: Sectio
   const body = section === 'internet' ? <ProjectInternet key={p.metadata.name} p={p} />
     : section === 'lan' ? <div className="stack"><SectionIntro title="LAN devices">Project sandboxes use the project's static LAN hosts: direct TCP to one IPv4 address and explicit ports, kept until removed. Outbound only.</SectionIntro><LanHosts p={p} /></div>
     : section === 'packages' ? <div className="stack"><SectionIntro title="Packages" /><NotAvailable what="Package approvals" needs="Project sandboxes have no package approval list; registry rules on the Internet page allow downloads." /></div>
+    : section === 'downloads' ? <Downloads key={p.metadata.name} source={downloads} workspace={p.metadata.name} />
     : section === 'previews' ? <div className="stack"><SectionIntro title="Previews & dev links" /><NotAvailable what="Previews and dev links" needs="Project sandboxes do not publish previews or dev links yet." /></div>
     : section === 'credentials' ? <div className="stack"><SectionIntro title="Credentials">Repositories this sandbox can push task branches to. Secret values are never shown.</SectionIntro><ProjectRepositories p={p} /></div>
     : section === 'history' ? <div className="stack"><SectionIntro title="History" /><ProjectHistory p={p} /></div>

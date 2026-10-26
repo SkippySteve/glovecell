@@ -12,7 +12,7 @@ export interface Project {
   status?: { phase?: string; namespace?: string; observedGeneration?: number; conditions?: Condition[] };
 }
 export interface AuditRecord { time: string; action: string; message?: string }
-export interface Session { actor?: string; oidc?: boolean; sandboxControl?: boolean; t3Connect?: boolean; githubOwner?: string; runRecords?: boolean; handoffs?: boolean; orcaProjects?: boolean; orcaSandbox?: string; orcaNamespace?: string; lanHosts?: boolean; lanAllowed?: string[] }
+export interface Session { actor?: string; oidc?: boolean; sandboxControl?: boolean; t3Connect?: boolean; githubOwner?: string; runRecords?: boolean; handoffs?: boolean; orcaProjects?: boolean; orcaSandbox?: string; orcaNamespace?: string; lanHosts?: boolean; lanAllowed?: string[]; downloads?: boolean; downloadMaxBytes?: number }
 export interface Repository { full_name: string }
 
 export type EgressState = 'Open' | 'Learning' | 'Locked';
