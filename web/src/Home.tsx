@@ -79,7 +79,7 @@ function SandboxRow({sandbox, minutes, kind, projects}: {sandbox: ExistingSandbo
   const {egress, busy} = useData();
   const state = egressState(sandbox), waiting = (sandbox.pending || 0) + (sandbox.approvals || 0);
   const pending = busy.has(sandbox.id);
-  const review = sandboxHref(sandbox.id, egressControllable(sandbox) ? 'access' : 'overview');
+  const review = sandboxHref(sandbox.id, egressControllable(sandbox) ? 'internet' : 'overview');
   return (
     <TableRow data-sandbox={sandbox.id}>
       <TableCell data-label="Sandbox"><a className="row-title" href={sandboxHref(sandbox.id)}>{sandbox.id}</a><span className="row-kind">{kind}</span><span className="row-sub">{sandbox.namespace} · {sandbox.sandbox}</span>{projects ? <OrcaProjectList records={projects} /> : null}</TableCell>
@@ -104,7 +104,7 @@ function ProjectRow({project}: {project: Project}) {
       <TableCell data-label="Status"><StatusTag state={state} /></TableCell>
       <TableCell data-label="Web access"><span className="subtle">{rules ? `${rules} fixed rule${rules === 1 ? '' : 's'}` : 'Repositories only'}</span></TableCell>
       <TableCell data-label="Review">{state.attention ? <span className="attention">{state.attention}</span> : <span className="subtle">None</span>}</TableCell>
-      <TableCell data-label="" align="right" className="row-actions"><Button size="small" variant="tertiary" onClick={() => navigate(projectHref(project.metadata.name, 'access'))}>Rules</Button></TableCell>
+      <TableCell data-label="" align="right" className="row-actions"><Button size="small" variant="tertiary" onClick={() => navigate(projectHref(project.metadata.name, 'internet'))}>Rules</Button></TableCell>
     </TableRow>
   );
 }

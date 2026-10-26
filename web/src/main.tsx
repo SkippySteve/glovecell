@@ -4,13 +4,14 @@ import '@openuidev/react-ui/components.css';
 import './theme.css';
 import './console.css';
 import './factory/factory.css';
+import './workspace/workspace.css';
 import {DataProvider, useData} from './data';
 import {runHref} from './factory/href';
 import {Home} from './Home';
 import {NewSandbox} from './NewSandbox';
 import {OrcaProjects} from './OrcaProjects';
-import {Project} from './Project';
-import {Sandbox} from './sandbox/Sandbox';
+import {ConfirmProvider} from './workspace/Confirm';
+import {ProjectWorkspace, SandboxWorkspace} from './workspace/Workspace';
 import {orcaHref, useRoute} from './router';
 import {Button, Callout} from './ui';
 
@@ -46,8 +47,8 @@ function App() {
   return (
     <>
       <Bar />
-      <main id="view" className="page" tabIndex={-1}>
-        {route.view === 'new' ? <NewSandbox /> : route.view === 'orca' ? <OrcaProjects /> : route.view === 'project' ? <Project name={route.name} tab={route.tab} /> : route.view === 'sandbox' ? <Sandbox id={route.id} tab={route.tab} />
+      <main id="view" className={route.view === 'project' || route.view === 'sandbox' ? 'page workspace-page' : 'page'} tabIndex={-1}>
+        {route.view === 'new' ? <NewSandbox /> : route.view === 'orca' ? <OrcaProjects /> : route.view === 'project' ? <ProjectWorkspace name={route.name} section={route.section} /> : route.view === 'sandbox' ? <SandboxWorkspace id={route.id} section={route.section} />
           : route.view === 'runs' || route.view === 'run' ? <Suspense fallback={<p className="empty">Loading…</p>}>{route.view === 'run' ? <RunReport id={route.id} /> : <RunList />}</Suspense> : <Home />}
       </main>
       <Toasts />
@@ -55,4 +56,4 @@ function App() {
   );
 }
 
-createRoot(document.getElementById('root')!).render(<StrictMode><DataProvider><App /></DataProvider></StrictMode>);
+createRoot(document.getElementById('root')!).render(<StrictMode><DataProvider><ConfirmProvider><App /></ConfirmProvider></DataProvider></StrictMode>);

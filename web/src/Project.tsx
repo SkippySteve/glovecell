@@ -1,11 +1,10 @@
 import {useEffect, useState, type FormEvent} from 'react';
 import {api, type AuditRecord, type Project as ProjectWorkspace} from './api';
 import {useData} from './data';
-import {navigate, projectHref, TABS, type Tab} from './router';
-import {LanHostList, LanHosts} from './LanHosts';
+import {LanHostList} from './LanHosts';
 import {newRule, RuleList, rulesError, toDraft, toRule, type RuleDraft} from './Rules';
 import {pausedForEdits, projectState, settled} from './state';
-import {Button, Callout, Card, CardHeader, Input, Tabs, TabsContent, TabsList, TabsTrigger, Tag} from './ui';
+import {Button, Callout, Card, CardHeader, Input, Tag} from './ui';
 
 // Edits survive polling and tab switches until saved or discarded.
 const drafts = new Map<string, {rules: RuleDraft[]; resourceVersion?: string}>();
@@ -26,7 +25,7 @@ function useLifecycle(p: ProjectWorkspace) {
   }};
 }
 
-function LifecycleButton({p, primary = false, size = 'medium'}: {p: ProjectWorkspace; primary?: boolean; size?: 'small' | 'medium'}) {
+export function LifecycleButton({p, primary = false, size = 'medium'}: {p: ProjectWorkspace; primary?: boolean; size?: 'small' | 'medium'}) {
   const lifecycle = useLifecycle(p);
   if (p.spec.desiredState === 'Removed') return null;
   const resume = p.spec.desiredState === 'Paused';
@@ -35,7 +34,7 @@ function LifecycleButton({p, primary = false, size = 'medium'}: {p: ProjectWorks
     onClick={() => lifecycle.set(resume ? 'Running' : 'Paused')}>{resume ? 'Resume' : 'Pause'}</Button>;
 }
 
-function Overview({p}: {p: ProjectWorkspace}) {
+export function ProjectOverview({p}: {p: ProjectWorkspace}) {
   const {session, toast} = useData();
   const lifecycle = useLifecycle(p);
   const [copied, setCopied] = useState(false);
@@ -52,7 +51,7 @@ function Overview({p}: {p: ProjectWorkspace}) {
       <ClientRegistrations name={p.metadata.name} />
       <dl className="facts">{facts.map(([term, value]) => <div key={term}><dt>{term}</dt><dd>{value}</dd></div>)}</dl>
       {(p.spec.lanHosts || []).length ? <Card variant="sunk" width="full">
-        <CardHeader title="LAN hosts" subtitle="Computers on your network this sandbox may open TCP connections to. Change them on the Access tab." />
+        <CardHeader title="LAN hosts" subtitle="Computers on your network this sandbox may open TCP connections to. Change them under LAN devices." />
         <LanHostList p={p} />
       </Card> : null}
       {p.spec.desiredState !== 'Removed' ? (
@@ -89,7 +88,7 @@ function ClientRegistrations({name}: {name: string}) {
   </Card>;
 }
 
-function Repositories({p}: {p: ProjectWorkspace}) {
+export function ProjectRepositories({p}: {p: ProjectWorkspace}) {
   const {session, reload, toast} = useData();
   const [name, setName] = useState(''), [host, setHost] = useState('forgejo'), [repository, setRepository] = useState(''), [saving, setSaving] = useState(false);
   const hostLabel = (h: string, isPublic?: boolean) => h === 'github' ? (isPublic ? 'Public GitHub' : 'Private GitHub') : 'Forgejo';
@@ -135,7 +134,7 @@ function Repositories({p}: {p: ProjectWorkspace}) {
   );
 }
 
-function Access({p}: {p: ProjectWorkspace}) {
+export function ProjectInternet({p}: {p: ProjectWorkspace}) {
   const {reload, toast} = useData();
   const name = p.metadata.name, canEdit = pausedForEdits(p);
   const [state, setState] = useState(() => drafts.get(name) || {rules: (p.spec.https || []).map(toDraft), resourceVersion: undefined});
@@ -158,7 +157,7 @@ function Access({p}: {p: ProjectWorkspace}) {
   };
   return (
     <div className="stack">
-      <Callout variant="info" description="Console projects use fixed HTTPS rules enforced by their own proxy, so changes need the sandbox paused. For instant open and lock, use a sandbox-control sandbox from the Sandboxes list. Private networks, localhost and cloud metadata are blocked for HTTPS; LAN hosts below are the only direct exception." />
+      <Callout variant="info" description="Console projects use fixed HTTPS rules enforced by their own proxy, so changes need the sandbox paused. For instant open and lock, use a sandbox-control sandbox from the Sandboxes list. Private networks, localhost and cloud metadata are blocked for HTTPS; LAN devices are the only direct exception." />
       <form onSubmit={submit} className="access-form">
         <Card variant="sunk" width="full">
           <CardHeader title="Outbound HTTPS" subtitle="Only listed hosts, methods and path prefixes are allowed. A path of / permits the whole host. Registry rules permit downloads, not specific package versions." />
@@ -175,12 +174,11 @@ function Access({p}: {p: ProjectWorkspace}) {
           ) : null}
         </Card>
       </form>
-      <LanHosts p={p} />
     </div>
   );
 }
 
-function History({p}: {p: ProjectWorkspace}) {
+export function ProjectHistory({p}: {p: ProjectWorkspace}) {
   const {toast} = useData();
   const [records, setRecords] = useState<AuditRecord[] | null>(null);
   useEffect(() => {
@@ -198,38 +196,5 @@ function History({p}: {p: ProjectWorkspace}) {
         )) : <li className="timeline-empty"><p>No audit records yet.</p></li>}
       </ol>
     </Card>
-  );
-}
-
-export function Project({name, tab}: {name: string; tab: Tab}) {
-  const {loaded, projects, session} = useData();
-  const p = projects.find(item => item.metadata.name === name);
-  useEffect(() => { document.title = name + ' · Sandboxes'; }, [name]);
-  const crumbs = <nav className="crumbs" aria-label="Breadcrumb"><a href="#/">Sandboxes</a><span aria-hidden="true">/</span><span>{name}</span></nav>;
-  if (!p) return <>{crumbs}<Card variant="sunk" width="full" className="empty-card">{loaded ? <><h2>Sandbox not found</h2><p className="muted">{name} does not exist or was deleted.</p><div><Button variant="secondary" onClick={() => navigate('#/')}>Back to sandboxes</Button></div></> : <p>Loading…</p>}</Card></>;
-  const state = projectState(p), ready = p.status?.phase === 'Ready';
-  const counts: Partial<Record<Tab, number>> = {repositories: 1 + (p.spec.repositories || []).length, access: (p.spec.https || []).length + (p.spec.lanHosts || []).length};
-  return (
-    <>
-      {crumbs}
-      <header className="detail-head" data-project={p.metadata.name}>
-        <div><div className="title-row"><h1>{p.metadata.name}</h1><Tag size="sm" variant={state.variant} text={state.label} /></div><p className="muted">{p.spec.repository}{p.status?.namespace ? ' · ' + p.status.namespace : ''}</p></div>
-        <div className="actions">
-          {ready && session.t3Connect ? <a className="link-button" href="https://app.t3.codes" target="_blank" rel="noopener noreferrer">Open T3 Connect ↗</a> : null}
-          <LifecycleButton p={p} primary={ready} />
-        </div>
-      </header>
-      {state.attention ? <Callout variant="warning" title={state.attention} description={<><span className="block">{state.message}</span><span className="block subtle">The controller retries automatically. Correct the setting described above; keep this sandbox request.</span></>} />
-        : state.message ? <Callout variant="info" description={state.message} /> : null}
-      <Tabs value={tab} onValueChange={value => navigate(projectHref(name, value as Tab))} className="detail-tabs">
-        <TabsList aria-label="Sandbox sections">
-          {TABS.map(([key, label]) => <TabsTrigger key={key} value={key} text={counts[key] ? `${label} ${counts[key]}` : label} />)}
-        </TabsList>
-        <TabsContent value="overview"><Overview p={p} /></TabsContent>
-        <TabsContent value="repositories"><Repositories p={p} /></TabsContent>
-        <TabsContent value="access"><Access key={p.metadata.name} p={p} /></TabsContent>
-        <TabsContent value="history"><History p={p} /></TabsContent>
-      </Tabs>
-    </>
   );
 }
