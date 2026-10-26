@@ -54,6 +54,9 @@ func TestHelmPackage(t *testing.T) {
 	if bytes.Contains(output, []byte("kind: HTTPRoute")) {
 		t.Fatal("default chart requires a gateway")
 	}
+	if bytes.Contains(output, []byte("pods/exec")) || bytes.Contains(output, []byte("WORKER_EXEC_CLUSTER_ROLE")) {
+		t.Fatal("default chart grants exec without T3 Connect or a control client")
+	}
 	config := values["config"].(map[string]any)
 	config["SANDBOX_CONTROL_URL"] = "http://sandbox-control.sandbox-system.svc:8080"
 	write()
@@ -95,7 +98,7 @@ func TestHelmPackage(t *testing.T) {
 	if output, err = render(); err != nil {
 		t.Fatal("T3/Tailscale render", err, string(output))
 	}
-	for _, want := range []string{"resources: [pods/exec]", "claimName: \"t3-account\"", "ingressClassName: tailscale", "projects-private", "T3_CONNECT_ENABLED: \"true\""} {
+	for _, want := range []string{"resources: [pods/exec]", "name: test-control-qualification-worker-exec", "resourceNames: [test-control-qualification-worker-exec]", "WORKER_EXEC_CLUSTER_ROLE: \"test-control-qualification-worker-exec\"", "claimName: \"t3-account\"", "ingressClassName: tailscale", "projects-private", "T3_CONNECT_ENABLED: \"true\""} {
 		if !bytes.Contains(output, []byte(want)) {
 			t.Fatal("T3/Tailscale setting missing", want)
 		}

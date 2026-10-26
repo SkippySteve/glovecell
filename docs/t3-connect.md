@@ -19,7 +19,9 @@ t3Connect:
   relayURL: https://relay.t3.codes
 ```
 
-The chart mounts the claim only in the controller at `/var/lib/apc/t3-connect`. It also grants the controller `pods/exec`, adds writable temporary storage, and requires an HTTPS relay origin. Project storage is independent. Allow enough controller memory for the controller and one cloudflared process per active project.
+The chart mounts the claim only in the controller at `/var/lib/apc/t3-connect`. It also lets the controller exec into project workers, adds writable temporary storage, and requires an HTTPS relay origin. Project storage is independent. Allow enough controller memory for the controller and one cloudflared process per active project.
+
+The controller never holds `pods/exec` cluster-wide. The chart installs ClusterRole `<namespace>-<release>-worker-exec` (only `pods/exec` create), lets the controller `bind` that one role, and sets `WORKER_EXEC_CLUSTER_ROLE`. For each project the controller creates RoleBinding `agent-project-controller-exec` in the project namespace for its own ServiceAccount, so it can exec only into namespaces it created. Clusters that want a hard boundary as well can add an admission policy that refuses exec and Role/RoleBinding writes by the controller outside project namespaces.
 
 Authorize the account using the stock CLI in the controller pod:
 
