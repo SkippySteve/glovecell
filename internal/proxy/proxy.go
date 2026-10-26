@@ -28,6 +28,7 @@ import (
 	"time"
 
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/download"
 	"golang.org/x/net/http2"
 )
 
@@ -140,9 +141,12 @@ type Server struct {
 	GitHubToken         func() (string, error)
 	MuseSubscriptionKey func() (string, error)
 	ProviderGrants      func() ([]byte, error)
-	slots               chan struct{}
-	mu                  sync.Mutex
-	certs               map[string]tls.Certificate
+	// GrantTransport carries one-time download grants (download_grants.go).
+	GrantTransport *http.Transport
+	grants         *grantBook
+	slots          chan struct{}
+	mu             sync.Mutex
+	certs          map[string]tls.Certificate
 }
 
 func New(c Config, cert, key []byte) (*Server, error) {
@@ -161,6 +165,8 @@ func New(c Config, cert, key []byte) (*Server, error) {
 		return nil, errors.New("valid inspection CA required")
 	}
 	s := &Server{Config: c, CA: ca, Key: pair.PrivateKey, slots: make(chan struct{}, 32), certs: map[string]tls.Certificate{}, ReaderTransport: readerTransport()}
+	s.grants = newGrantBook()
+	s.GrantTransport = newGrantTransport(s.dialPublic)
 	s.Transport = &http.Transport{Proxy: nil, DialContext: s.dial, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 30 * time.Second, IdleConnTimeout: 30 * time.Second, MaxIdleConns: 32, ForceAttemptHTTP2: false}
 	return s, nil
 }
@@ -312,7 +318,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			found = true
 		}
 	}
-	if !found {
+	if !found && !s.grants.hostLive(host) {
 		http.Error(w, "destination denied", 403)
 		return
 	}
@@ -361,6 +367,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		req, e := readRequest(reader)
 		if e != nil {
 			writeError(conn, 431, "invalid or oversized request headers")
+			return
+		}
+		// A one-time download grant is served on its own path: exact URL, fixed
+		// method and headers, no project credentials. A request that presents
+		// a grant token never falls through to the project's rules.
+		if req.Header.Get(download.TokenHeader) != "" {
+			req.Body.Close()
+			grant, why := s.grants.claim(host, req)
+			if grant == nil {
+				slog.Warn("download grant refused", "host", host, "reason", why)
+				writeError(conn, 403, "download grant refused: "+why)
+				return
+			}
+			s.serveGrant(r.Context(), conn, raw, host, grant)
 			return
 		}
 		// Reject alternate authorities, escaped paths and protocol upgrades. HTTP/2 is inspected on its own path.
@@ -437,6 +457,10 @@ func (s *Server) serveHTTP2(ctx context.Context, conn net.Conn, host string) {
 		Context:    ctx,
 		BaseConfig: &http.Server{MaxHeaderBytes: 32 << 10, ReadHeaderTimeout: 10 * time.Second},
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			if req.Header.Get(download.TokenHeader) != "" {
+				http.Error(w, "download grants are served over HTTP/1.1 only", http.StatusForbidden)
+				return
+			}
 			traceRequestRoute(host, req)
 			if requestDenied(s.Config, host, req) {
 				traceRequestStatus(host, req, 403)
@@ -534,7 +558,13 @@ func Run(ctx context.Context) error {
 	s.MuseSubscriptionKey = gatewayMuseSubscriptionKey
 	s.ProviderGrants = gatewayProviderGrants
 	server := &http.Server{Addr: ":3128", Handler: s, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 32 << 10}
-	go func() { <-ctx.Done(); _ = server.Close() }()
+	control := &http.Server{Addr: ControlAddress, Handler: s.ControlHandler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, MaxHeaderBytes: 8 << 10}
+	go func() {
+		if err := control.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Warn("download grant control listener stopped; downloads are unavailable", "error", err.Error())
+		}
+	}()
+	go func() { <-ctx.Done(); _ = server.Close(); _ = control.Close() }()
 	e = server.ListenAndServe()
 	if errors.Is(e, http.ErrServerClosed) {
 		return nil

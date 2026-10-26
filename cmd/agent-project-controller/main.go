@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/bootstrap"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/connect"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/controller"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/download"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/forgejo"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/githubhost"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/network"
@@ -31,6 +33,7 @@ import (
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/web"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -97,6 +100,41 @@ func lanFromEnv(provider network.Provider) (network.LANConfig, error) {
 		return network.LANConfig{}, errors.New("LAN_GRANT_ALLOWED_CIDRS requires NETWORK_PROVIDER=cilium")
 	}
 	return lan, nil
+}
+
+// downloadsFromEnv reads the optional "Download into sandbox" setting. It is
+// off unless DOWNLOADS_ENABLED=true, and needs the Cilium provider, whose
+// per-download proxy policy names exact hosts.
+func downloadsFromEnv(provider network.Provider, config *rest.Config) (*web.Downloads, error) {
+	if os.Getenv("DOWNLOADS_ENABLED") != "true" {
+		if os.Getenv("DOWNLOAD_MAX_BYTES") != "" || os.Getenv("DOWNLOAD_TIMEOUT") != "" {
+			return nil, errors.New("DOWNLOAD_MAX_BYTES and DOWNLOAD_TIMEOUT require DOWNLOADS_ENABLED=true")
+		}
+		return nil, nil
+	}
+	policy, ok := provider.(network.DownloadPolicy)
+	if !ok {
+		return nil, errors.New("DOWNLOADS_ENABLED requires NETWORK_PROVIDER=cilium")
+	}
+	d := &web.Downloads{Policy: policy, MaxBytes: download.DefaultMaxBytes, Timeout: download.DefaultTimeout}
+	if v := os.Getenv("DOWNLOAD_MAX_BYTES"); v != "" {
+		n, err := positiveID("DOWNLOAD_MAX_BYTES")
+		if err != nil || n > download.MaxMaxBytes {
+			return nil, fmt.Errorf("DOWNLOAD_MAX_BYTES must be a byte count up to %d", download.MaxMaxBytes)
+		}
+		d.MaxBytes = n
+	}
+	if v := os.Getenv("DOWNLOAD_TIMEOUT"); v != "" {
+		t, err := time.ParseDuration(v)
+		if err != nil || t < time.Minute || t > download.MaxTimeout {
+			return nil, fmt.Errorf("DOWNLOAD_TIMEOUT must be a duration between 1m and %s", download.MaxTimeout)
+		}
+		d.Timeout = t
+	}
+	d.Exec = func(ctx context.Context, namespace, pod, container string, command []string, stdin io.Reader, stdout, stderr io.Writer) error {
+		return connect.ExecInContainer(ctx, config, namespace, pod, container, command, stdin, stdout, stderr, false)
+	}
+	return d, nil
 }
 func positiveID(key string) (int64, error) {
 	value := os.Getenv(key)
@@ -203,6 +241,12 @@ func run(ctx context.Context) error {
 			return reader.Run(ctx)
 		case "proxy":
 			return proxy.Run(ctx)
+		case "fetch":
+			// Run by the controller inside a project worker for "Download into sandbox".
+			return download.RunHelper(os.Stdin, os.Stdout)
+		case "download-grant":
+			// Run by the controller inside the project proxy pod.
+			return proxy.GrantCLI(ctx, os.Stdin, os.Stdout)
 		case "preflight":
 			return preflight.Run(ctx)
 		case "connect":
@@ -358,6 +402,9 @@ func run(ctx context.Context) error {
 	} else if os.Getenv("RUN_RECORDS_SOURCES") != "" {
 		return errors.New("RUN_RECORDS_SOURCES requires RUN_RECORDS_DIR")
 	}
+	if server.Downloads, e = downloadsFromEnv(networkProvider, config); e != nil {
+		return e
+	}
 	// Optional handoff intake of an agent runtime, such as the Orca sandbox.
 	if server.Handoffs, e = handoffsFromEnv(); e != nil {
 		return e
@@ -378,6 +425,7 @@ func run(ctx context.Context) error {
 	}
 	httpServer := &http.Server{Addr: env("LISTEN_ADDR", "127.0.0.1:8080"), Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
 	failures := make(chan error, 2)
+	go server.RunDownloadSweeper(ctx)
 	go func() { failures <- manager.Start(ctx) }()
 	go func() {
 		err := httpServer.ListenAndServe()

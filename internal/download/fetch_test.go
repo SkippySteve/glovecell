@@ -235,7 +235,10 @@ func TestPublishNeverReplacesAFileThatAppearsDuringTheDownload(t *testing.T) {
 func TestFetchSizeCap(t *testing.T) {
 	big := bytes.Repeat([]byte("z"), 2048)
 	for name, h := range map[string]http.HandlerFunc{
-		"declared": func(w http.ResponseWriter, r *http.Request) { w.Header().Set("Content-Length", strconv.Itoa(len(big))); w.Write(big) },
+		"declared": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Length", strconv.Itoa(len(big)))
+			w.Write(big)
+		},
 		"chunked": func(w http.ResponseWriter, r *http.Request) {
 			w.(http.Flusher).Flush()
 			for i := 0; i < 8; i++ {
