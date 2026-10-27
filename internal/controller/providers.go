@@ -174,9 +174,12 @@ func (r *Reconciler) applyProviders(ctx context.Context, w *api.ProjectWorkspace
 	if r.ProviderLeases == nil {
 		return &brokeredState{}, nil
 	}
-	leases, err := r.leases(ctx)
-	if err != nil && len(names) > 0 {
-		slog.WarnContext(ctx, "brokered provider leases unavailable; opted-in providers stay disabled", "workspace_uid", string(w.UID), "status", err.Error())
+	var leases map[string]brokeredGrant
+	if len(names) > 0 {
+		var err error
+		if leases, err = r.leases(ctx); err != nil {
+			slog.WarnContext(ctx, "brokered provider leases unavailable; opted-in providers stay disabled", "workspace_uid", string(w.UID), "status", err.Error())
+		}
 	}
 	entries := map[string]json.RawMessage{}
 	for _, name := range names {
