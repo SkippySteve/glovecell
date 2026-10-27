@@ -85,7 +85,7 @@ func TestDeployRBACHasNoClusterWideExec(t *testing.T) {
 		t.Fatalf("ClusterRoleBinding %s makes project access cluster-wide", b)
 	}
 	access := roles[projectAccess]
-	if len(access.Rules) != 2 || !sameRule(access.Rules[0], "secrets", "get", "create", "update", "patch") || !sameRule(access.Rules[1], "namespaces", "get", "delete") {
+	if len(access.Rules) != 2 || !sameRule(access.Rules[0], "secrets", "get", "create", "update", "patch", "delete") || !sameRule(access.Rules[1], "namespaces", "get", "delete") {
 		t.Fatalf("project access ClusterRole must grant exactly project Secrets and the namespace object: %+v", access.Rules)
 	}
 	exec := roles[workerExec]

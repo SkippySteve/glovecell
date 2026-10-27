@@ -101,7 +101,7 @@ metadata:
 rules:
   - apiGroups: ['']
     resources: [secrets]
-    verbs: [get, create, update, patch]
+    verbs: [get, create, update, patch, delete]
   - apiGroups: ['']
     resources: [namespaces]
     verbs: [get, delete]
