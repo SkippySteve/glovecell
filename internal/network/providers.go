@@ -10,6 +10,10 @@ import (
 // project opted into (spec.providers). The controller owns it.
 const ProviderPolicyName = "providers"
 
+// ProviderPolicyLabel marks that policy for audits and admission. It is not
+// LANPolicyLabel, which admission reserves for LAN host policies.
+const ProviderPolicyLabel = "projects.agentwork.dev/providers"
+
 // ProviderPolicy is implemented by network providers that can let a project's
 // proxy pod (never the worker) reach named hosts on port 443 while the project
 // runs, without changing its fixed proxy and worker policies.
@@ -37,7 +41,7 @@ func (c Cilium) ProviderObject(ns, uid string, hosts []string) *unstructured.Uns
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "cilium.io/v2", "kind": "CiliumNetworkPolicy",
 		"metadata": map[string]any{"name": ProviderPolicyName, "namespace": ns,
-			"labels": map[string]any{api.OwnerLabel: uid, LANPolicyLabel: ProviderPolicyName}},
+			"labels": map[string]any{api.OwnerLabel: uid, ProviderPolicyLabel: ProviderPolicyName}},
 		"spec": map[string]any{
 			"endpointSelector": map[string]any{"matchLabels": map[string]any{"projects.agentwork.dev/role": "proxy", api.OwnerLabel: uid}},
 			"egress":           []any{dns, tls},

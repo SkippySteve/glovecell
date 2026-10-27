@@ -83,6 +83,9 @@ func providerHostsOf(t *testing.T, r *Reconciler, w *api.ProjectWorkspace) []str
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, lan := u.GetLabels()[network.LANPolicyLabel]; lan || u.GetLabels()[network.ProviderPolicyLabel] != network.ProviderPolicyName {
+		t.Fatal("provider policy must not carry the LAN policy label that LAN admission matches", u.GetLabels())
+	}
 	selector, _, _ := unstructured.NestedStringMap(u.Object, "spec", "endpointSelector", "matchLabels")
 	if selector["projects.agentwork.dev/role"] != "proxy" || selector[api.OwnerLabel] != string(w.UID) {
 		t.Fatalf("provider policy selects %v, not only this project's proxy", selector)

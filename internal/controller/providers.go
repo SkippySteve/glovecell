@@ -380,7 +380,7 @@ func (r *Reconciler) syncProviderPolicy(ctx context.Context, w *api.ProjectWorks
 		return true, narrowed, nil
 	}
 	want := policy.ProviderObject(ns, string(w.UID), hosts)
-	if same(current.Object["spec"], want.Object["spec"]) && current.GetLabels()[network.LANPolicyLabel] == network.ProviderPolicyName {
+	if same(current.Object["spec"], want.Object["spec"]) && current.GetLabels()[network.ProviderPolicyLabel] == network.ProviderPolicyName {
 		return false, false, nil
 	}
 	merged := maps.Clone(current.GetLabels())
