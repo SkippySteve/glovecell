@@ -54,6 +54,9 @@ func (r *Reconciler) policyConfiguration(w *api.ProjectWorkspace, https []api.HT
 		if reserved[rule.Host] {
 			return proxy.Config{}, errors.New("repository access is controller-managed; HTTPS rules cannot override Git-host permissions")
 		}
+		if rule.Source != "" {
+			return proxy.Config{}, errors.New("a project's HTTPS rules cannot carry a source label; reference rules come from the controller")
+		}
 	}
 	cfg := proxy.Config{Rules: append(append([]api.HTTPSRule{}, rules...), https...), PrivateHosts: private, PrivateGitHubRepositories: privateGitHub}
 	cfg.IndependentCodex = r.IndependentCodexWorkspaceUID != "" && r.IndependentCodexWorkspaceUID == string(w.UID)
@@ -72,6 +75,8 @@ func (r *Reconciler) policyConfiguration(w *api.ProjectWorkspace, https []api.HT
 		cfg.Reader = r.ReaderRoute
 		cfg.Rules = append(cfg.Rules, api.HTTPSRule{Host: r.ReaderRoute.Host, Methods: []string{"GET", "HEAD"}, Paths: []string{"/k8s"}}, api.HTTPSRule{Host: r.ReaderRoute.Host, Methods: []string{"POST"}, Paths: []string{"/mcp"}})
 	}
+	// The deployment's reference rules come last (reference_rules.go).
+	cfg = r.withReference(cfg)
 	return cfg, proxy.Validate(cfg)
 }
 
@@ -160,15 +165,8 @@ func (r *Reconciler) updateAccessPolicy(ctx context.Context, w *api.ProjectWorks
 	if !gone {
 		return errors.New("waiting for worker and proxy processes to stop before applying access")
 	}
-	hosts := func(cfg proxy.Config) []string {
-		var names []string
-		for _, rule := range cfg.Rules {
-			names = append(names, rule.Host)
-		}
-		return names
-	}
-	oldObjects := r.Network.Objects(namespace(w), string(w.UID), hosts(old))
-	newObjects := r.Network.Objects(namespace(w), string(w.UID), hosts(desired))
+	oldObjects := r.Network.Objects(namespace(w), string(w.UID), policyHosts(old))
+	newObjects := r.Network.Objects(namespace(w), string(w.UID), policyHosts(desired))
 	if len(oldObjects) != len(newObjects) {
 		return errors.New("network provider changed during access update")
 	}

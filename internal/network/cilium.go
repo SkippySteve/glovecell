@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -92,10 +93,18 @@ func (c Cilium) Objects(ns, uid string, hosts []string) []*unstructured.Unstruct
 	c = c.defaults()
 	domain := c.ClusterDomain
 	port := func(p int) map[string]any { return map[string]any{"port": strconv.Itoa(p), "protocol": "TCP"} }
+	// A "*.domain" host (a reference rule) is a pattern: Cilium's "*." is
+	// exactly one label, the same as the proxy's wildcard match.
+	match := func(name string) map[string]any {
+		if strings.HasPrefix(name, "*.") {
+			return map[string]any{"matchPattern": name}
+		}
+		return map[string]any{"matchName": name}
+	}
 	dns := func(names []string) map[string]any {
 		rules := []any{}
 		for _, name := range names {
-			rules = append(rules, map[string]any{"matchName": name})
+			rules = append(rules, match(name))
 		}
 		return map[string]any{"toEndpoints": []any{map[string]any{"matchLabels": map[string]any{"k8s:io.kubernetes.pod.namespace": c.DNSNamespace, "k8s:k8s-app": "kube-dns"}}}, "toPorts": []any{map[string]any{"ports": []any{map[string]any{"port": "53", "protocol": "ANY"}}, "rules": map[string]any{"dns": rules}}}}
 	}
@@ -111,7 +120,7 @@ func (c Cilium) Objects(ns, uid string, hosts []string) []*unstructured.Unstruct
 	worker := base("worker", "worker", map[string]any{"ingress": []any{}, "egress": []any{dns(workerDNS), map[string]any{"toEndpoints": []any{map[string]any{"matchLabels": map[string]any{"k8s:io.kubernetes.pod.namespace": ns, "projects.agentwork.dev/role": "proxy", api.OwnerLabel: uid}}}, "toPorts": []any{map[string]any{"ports": []any{port(3128)}}}}}})
 	names := []any{}
 	for _, h := range hosts {
-		names = append(names, map[string]any{"matchName": h})
+		names = append(names, match(h))
 	}
 	proxy := base("proxy", "proxy", map[string]any{"ingress": []any{map[string]any{"fromEndpoints": []any{map[string]any{"matchLabels": map[string]any{"k8s:io.kubernetes.pod.namespace": ns, "projects.agentwork.dev/role": "worker", api.OwnerLabel: uid}}}, "toPorts": []any{map[string]any{"ports": []any{port(3128)}}}}}, "egress": []any{dns(proxyDNS), map[string]any{"toFQDNs": names, "toPorts": []any{map[string]any{"ports": []any{port(443)}}}}}})
 	if c.Gateway != nil {
@@ -121,7 +130,11 @@ func (c Cilium) Objects(ns, uid string, hosts []string) []*unstructured.Unstruct
 		}
 		serverNames := []any{}
 		for _, host := range hosts {
-			serverNames = append(serverNames, host)
+			if !strings.HasPrefix(host, "*.") {
+				// Reference wildcards reach public sites directly, never
+				// through the gateway; its SNI filter lists exact names.
+				serverNames = append(serverNames, host)
+			}
 		}
 		spec := proxy.Object["spec"].(map[string]any)
 		ports := map[string]any{"ports": []any{port(c.Gateway.Port)}}

@@ -383,6 +383,19 @@ func run(ctx context.Context) error {
 		}
 		reconciler.ReaderRoute = route
 	}
+	// Reference rules: the deployment's read-only list every project's proxy
+	// gets (README "Reference rules"). Read at startup; an invalid list stops
+	// the controller rather than run with part of it.
+	if path := os.Getenv("REFERENCE_RULES_FILE"); path != "" {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("reference rules: %w", err)
+		}
+		if reconciler.Config.ReferenceRules, reconciler.Config.ReferenceDigest, err = proxy.ReferenceRules(raw); err != nil {
+			return fmt.Errorf("reference rules: %w", err)
+		}
+		slog.Info("reference rules loaded", "digest", reconciler.Config.ReferenceDigest, "rules", len(reconciler.Config.ReferenceRules))
+	}
 	if e = reconciler.Config.Validate(); e != nil {
 		return e
 	}
@@ -412,6 +425,7 @@ func run(ctx context.Context) error {
 	}
 	server := &web.Server{T3Connect: reconciler.Access != nil, Client: direct, Host: host, Namespace: ns, Owner: owner, Password: password, Origin: os.Getenv("PUBLIC_ORIGIN"), GitHost: gitHost, GitOrigin: origin, AllowBasic: os.Getenv("ALLOW_STATIC_LOGIN") == "true"}
 	server.GitHubOwner = reconciler.Config.GitHubOwner
+	server.Reference = web.Reference{Digest: reconciler.Config.ReferenceDigest, Rules: reconciler.Config.ReferenceRules}
 	if reconciler.ProviderLeases != nil {
 		server.Providers = &web.Providers{Status: reconciler.ProviderLeaseStatus}
 	}

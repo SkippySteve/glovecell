@@ -56,10 +56,25 @@ func Validate(c Config) error {
 			return err
 		}
 	}
-	if len(c.Rules) == 0 || len(c.Rules) > 64 {
+	var reference []api.HTTPSRule
+	own := 0
+	for _, r := range c.Rules {
+		if r.Source != "" {
+			reference = append(reference, r)
+		} else {
+			own++
+		}
+	}
+	if len(c.Rules) == 0 || own > 64 || len(reference) > MaxReferenceRules {
 		return errors.New("between one and 64 HTTPS rules required")
 	}
+	if err := validateReference(reference); err != nil {
+		return err
+	}
 	for _, r := range c.Rules {
+		if r.Source != "" {
+			continue // validateReference
+		}
 		if len(r.Host) > 253 || !dnsHost.MatchString(r.Host) || net.ParseIP(r.Host) != nil {
 			return errors.New("HTTPS rules require exact lowercase DNS hosts")
 		}
@@ -91,7 +106,7 @@ func Allowed(c Config, host, method, path string) bool {
 		}
 	}
 	for _, r := range c.Rules {
-		if r.Host != host {
+		if !hostMatches(r.Host, host) {
 			continue
 		}
 		ok := false
