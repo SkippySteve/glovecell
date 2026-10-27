@@ -18,8 +18,21 @@ export const sandboxHref = (id: string, section?: Section) => '#/sandboxes/' + e
 export const orcaHref = () => '#/orca';
 export const navigate = (hash: string) => { location.hash = hash; };
 
+// A section may keep view state (filter, page, page size) in a query after the
+// route, as in #/sandboxes/orca-pilot/internet?q=github.com&size=50&page=3, so
+// reloads and shared links keep it. The route ignores the query.
+export const hashQuery = (hash = location.hash) => new URLSearchParams(hash.includes('?') ? hash.slice(hash.indexOf('?') + 1) : '');
+export function withQuery(href: string, params: Record<string, string | number | undefined>): string {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') q.set(k, String(v));
+  const text = q.toString();
+  return href.split('?')[0] + (text ? '?' + text : '');
+}
+// Rewrites the query without a hashchange (no scroll, no reload).
+export const replaceHashQuery = (params: Record<string, string | number | undefined>) => history.replaceState(history.state, '', withQuery(location.hash || '#/', params));
+
 export function parse(hash: string): Route {
-  const parts = hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(part => { try { return decodeURIComponent(part); } catch { return part; } });
+  const parts = hash.replace(/^#\/?/, '').split('?')[0].split('/').filter(Boolean).map(part => { try { return decodeURIComponent(part); } catch { return part; } });
   if (parts[0] === 'new') return {view: 'new'};
   if (parts[0] === 'orca') return {view: 'orca'};
   if (parts[0] === 'projects' && parts[1]) return {view: 'project', name: parts[1], section: toSection(parts[2])};
