@@ -47,7 +47,7 @@ func TestExistingSandboxesShareAuthenticationAndKeepCSRFFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := func(method, path, origin, body string, auth bool) *httptest.ResponseRecorder {
+	request := func(method, path, origin, body string, auth bool, mods ...func(*http.Request)) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, strings.NewReader(body))
 		if auth {
 			req.SetBasicAuth("operator", s.Password)
@@ -63,6 +63,9 @@ func TestExistingSandboxesShareAuthenticationAndKeepCSRFFence(t *testing.T) {
 		}
 		req.AddCookie(&http.Cookie{Name: "console-session", Value: "private"})
 		req.AddCookie(&http.Cookie{Name: "__Host-sandbox-csrf", Value: "fixture-csrf"})
+		for _, m := range mods {
+			m(req)
+		}
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		return rec
@@ -121,6 +124,66 @@ func TestExistingSandboxesShareAuthenticationAndKeepCSRFFence(t *testing.T) {
 		if rec = request("GET", path, "", "", true); rec.Code != 200 || calls != before+1 {
 			t.Fatal("section read not forwarded", path, rec.Code)
 		}
+	}
+	// Download into sandbox: reads, and posts that keep the origin and CSRF fences.
+	for _, path := range []string{"/sandboxes/api/downloads?workspace=shared-pilot", "/sandboxes/api/download-check?workspace=shared-pilot&id=x", "/sandboxes/api/download?workspace=shared-pilot&id=x"} {
+		before = calls
+		if rec = request("GET", path, "", "", true); calls != before+1 {
+			t.Fatal("download read not forwarded", path, rec.Code)
+		}
+	}
+	for _, path := range []string{"/sandboxes/download-check", "/sandboxes/download", "/sandboxes/download-cancel"} {
+		before = calls
+		if rec = request("POST", path, "https://evil.example", "csrf=fixture-csrf", true); rec.Code != 403 || calls != before {
+			t.Fatal("cross-origin download action forwarded", path, rec.Code)
+		}
+		if rec = request("POST", path, s.Origin, "csrf=wrong", true); rec.Code != 403 {
+			t.Fatal("download action CSRF bypassed", path, rec.Code)
+		}
+	}
+	// Upload into sandbox: form actions keep the same fences; a raw part needs
+	// application/octet-stream plus the CSRF header, and the same origin.
+	before = calls
+	if rec = request("GET", "/sandboxes/api/upload?workspace=shared-pilot&id=x", "", "", true); calls != before+1 {
+		t.Fatal("upload read not forwarded", rec.Code)
+	}
+	for _, path := range []string{"/sandboxes/upload-start", "/sandboxes/upload-cancel"} {
+		before = calls
+		if rec = request("POST", path, "https://evil.example", "csrf=fixture-csrf", true); rec.Code != 403 || calls != before {
+			t.Fatal("cross-origin upload action forwarded", path, rec.Code)
+		}
+		if rec = request("POST", path, s.Origin, "csrf=wrong", true); rec.Code != 403 {
+			t.Fatal("upload action CSRF bypassed", path, rec.Code)
+		}
+	}
+	raw := func(csrf string) func(*http.Request) {
+		return func(r *http.Request) {
+			r.Header.Set("Content-Type", "application/octet-stream")
+			if csrf != "" {
+				r.Header.Set("X-Sandbox-CSRF", csrf)
+			}
+		}
+	}
+	part := "/sandboxes/upload-data?workspace=shared-pilot&id=x&offset=0"
+	for name, tc := range map[string]struct {
+		origin string
+		mods   []func(*http.Request)
+		status int
+	}{
+		"form body":    {s.Origin, nil, 415},
+		"no csrf":      {s.Origin, []func(*http.Request){raw("")}, 415},
+		"cross origin": {"https://evil.example", []func(*http.Request){raw("fixture-csrf")}, 403},
+		"no origin":    {"", []func(*http.Request){raw("fixture-csrf")}, 403},
+		"text/plain":   {s.Origin, []func(*http.Request){raw("fixture-csrf"), func(r *http.Request) { r.Header.Set("Content-Type", "text/plain") }}, 415},
+	} {
+		before = calls
+		if rec = request("POST", part, tc.origin, "file bytes", true, tc.mods...); rec.Code != tc.status || calls != before {
+			t.Errorf("upload part, %s: %d forwarded=%v", name, rec.Code, calls != before)
+		}
+	}
+	before = calls
+	if rec = request("POST", part, s.Origin, "file bytes", true, raw("fixture-csrf")); calls != before+1 {
+		t.Fatal("upload part not forwarded", rec.Code)
 	}
 	before = calls
 	if rec = request("POST", "/sandboxes/cluster-access", s.Origin, "csrf=fixture-csrf", true); rec.Code != 404 || calls != before {

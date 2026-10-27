@@ -123,6 +123,14 @@ jobs:
           python3 /tmp/monorepo/.forgejo/scripts/promote.py --component project-proxy
           --image "$IMAGE" --source-repo "$GITHUB_REPOSITORY" --source-sha "$GITHUB_SHA"
           --require-status "CI / checks (push)"
+      - name: Open the download helper promotion PR
+        if: matrix.target == 'runtime' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          CI_PUBLISHER_TOKEN: ${{ secrets.CI_PUBLISHER_TOKEN }}
+        run: >-
+          python3 /tmp/monorepo/.forgejo/scripts/promote.py --component download-helper
+          --image "$IMAGE" --source-repo "$GITHUB_REPOSITORY" --source-sha "$GITHUB_SHA"
+          --require-status "CI / checks (push)"
       - name: Push the gated workspace image
         if: matrix.target == 'workspace' && github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:

@@ -108,6 +108,7 @@
 .dl-query { color: var(--openui-text-neutral-secondary); }
 .dl-tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .dl-progress { width: 100%; height: 10px; border: 0; border-radius: 5px; overflow: hidden; appearance: none; background: var(--openui-sunk-deep); }
+.up-drop.dragging { outline: 2px dashed var(--openui-border-accent-emphasis); outline-offset: -6px; }
 .dl-progress::-webkit-progress-bar { background: var(--openui-sunk-deep); }
 .dl-progress::-webkit-progress-value { background: var(--openui-interactive-accent-default); }
 .dl-progress::-moz-progress-bar { background: var(--openui-interactive-accent-default); }

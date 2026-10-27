@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"strings"
 	"time"
 
@@ -79,8 +80,8 @@ func fail(code, format string, args ...any) error {
 	return &codedError{code: code, msg: fmt.Sprintf(format, args...)}
 }
 
-// WorkspaceRoot is the only tree the helper writes to. The worker's HOME
-// (/workspace/home) is inside it; the root filesystem is read-only anyway.
+// WorkspaceRoot and the home directory are the only trees the helper writes
+// to. A project worker's HOME (/workspace/home) is inside WorkspaceRoot.
 const WorkspaceRoot = "/workspace"
 
 // RunHelper is `agent-project-controller fetch`. It reads one Job line, then
@@ -108,7 +109,7 @@ func RunHelper(stdin io.Reader, stdout io.Writer) error {
 	if err != nil {
 		return emitErr(stdout, err)
 	}
-	return emitErr(stdout, Run(ctx, job, WorkspaceRoot, client, stdout))
+	return emitErr(stdout, Run(ctx, job, "", client, stdout))
 }
 
 func emitErr(out io.Writer, err error) error {
@@ -169,9 +170,9 @@ func (j Job) timeout() time.Duration {
 	return t
 }
 
-// Run executes one job under root with the given client. Tests pass a temp
-// root and a client for a local TLS server.
-func Run(ctx context.Context, job Job, root string, client *http.Client, out io.Writer) error {
+// Run executes one job with the given client. base prefixes every path; tests
+// pass a temp directory and a client for a local TLS server.
+func Run(ctx context.Context, job Job, base string, client *http.Client, out io.Writer) error {
 	u, err := ParseURL(job.URL)
 	if err != nil {
 		return fail(CodeInvalid, "%s", err.Error())
@@ -185,7 +186,7 @@ func Run(ctx context.Context, job Job, root string, client *http.Client, out io.
 	case "probe":
 		return probe(ctx, job, u, client, out)
 	case "fetch":
-		return fetch(ctx, job, u, root, client, out)
+		return fetch(ctx, job, u, base, client, out)
 	}
 	return fail(CodeInvalid, "mode must be probe or fetch")
 }
@@ -219,7 +220,7 @@ func probe(ctx context.Context, job Job, u *url.URL, client *http.Client, out io
 	return nil
 }
 
-func fetch(ctx context.Context, job Job, u *url.URL, root string, client *http.Client, out io.Writer) error {
+func fetch(ctx context.Context, job Job, u *url.URL, base string, client *http.Client, out io.Writer) error {
 	if job.MaxBytes <= 0 || job.MaxBytes > MaxMaxBytes {
 		return fail(CodeInvalid, "size limit missing")
 	}
@@ -227,7 +228,7 @@ func fetch(ctx context.Context, job Job, u *url.URL, root string, client *http.C
 	if err != nil {
 		return fail(CodeInvalid, "%s", err.Error())
 	}
-	dir, name, shown, err := openDestination(root, job.Home, job.Destination, job.Overwrite)
+	dir, name, shown, err := openDestination(base, job.Home, job.Destination, job.Overwrite)
 	if err != nil {
 		return err
 	}
@@ -248,7 +249,7 @@ func fetch(ctx context.Context, job Job, u *url.URL, root string, client *http.C
 	if res.ContentLength > job.MaxBytes {
 		return fail(CodeTooLarge, "file is %d bytes; the limit is %d", res.ContentLength, job.MaxBytes)
 	}
-	tmp, f, err := createTemp(dir, name)
+	tmp, f, err := createTemp(dir, name, ".apc-download-")
 	if err != nil {
 		return err
 	}
@@ -315,34 +316,47 @@ func fetch(ctx context.Context, job Job, u *url.URL, root string, client *http.C
 // ones are created 0755), so a symlink planted anywhere on the path, before or
 // during the download, makes the open fail instead of redirecting the write.
 // It returns the parent directory descriptor and the final name.
-func openDestination(root, home, destination string, overwrite bool) (int, string, string, error) {
+//
+// Paths are logical ("/workspace/...", the home directory); base is a
+// filesystem prefix that only tests set. The walk starts at "/" so a symlink
+// on the way to the home directory itself is refused too. The allowed trees
+// are /workspace and home (default /workspace/home; sandbox-control
+// workspaces use /home/agent). Directories that make up a tree's own path
+// must exist; only directories below it are created.
+func openDestination(base, home, destination string, overwrite bool) (int, string, string, error) {
 	if err := CheckDestination(destination); err != nil {
 		return -1, "", "", fail(CodeInvalid, "%s", err.Error())
 	}
 	if home == "" {
-		home = root + "/home"
+		home = WorkspaceRoot + "/home"
 	}
-	full := destination
+	if !path.IsAbs(home) || path.Clean(home) != home || home == "/" {
+		return -1, "", "", fail(CodeInvalid, "home directory must be a clean absolute path")
+	}
+	full, tree := destination, WorkspaceRoot
 	if strings.HasPrefix(destination, "~/") {
-		full = strings.TrimSuffix(home, "/") + "/" + destination[2:]
-	} else {
-		full = root + destination[len(WorkspaceRoot):]
+		full, tree = home+"/"+destination[2:], home
 	}
-	if !strings.HasPrefix(full, root+"/") {
+	if !strings.HasPrefix(full, tree+"/") {
 		return -1, "", "", fail(CodeOutside, "destination is outside /workspace and the sandbox home")
 	}
-	parts := strings.Split(strings.TrimPrefix(full, root+"/"), "/")
+	parts := strings.Split(strings.TrimPrefix(full, "/"), "/")
 	for _, p := range parts {
 		if p == "" || p == "." || p == ".." {
 			return -1, "", "", fail(CodeInvalid, "destination must not contain empty, . or .. segments")
 		}
 	}
-	fd, err := unix.Open(root, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	fixed := len(strings.Split(strings.TrimPrefix(tree, "/"), "/"))
+	fd, err := unix.Open(base+"/", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
-		return -1, "", "", fail(CodeOutside, "workspace volume unavailable")
+		return -1, "", "", fail(CodeOutside, "filesystem unavailable")
 	}
-	for _, p := range parts[:len(parts)-1] {
+	for i, p := range parts[:len(parts)-1] {
 		next, err := openDir(fd, p)
+		if errors.Is(err, unix.ENOENT) && i < fixed {
+			unix.Close(fd)
+			return -1, "", "", fail(CodeOutside, "%s is not available in this sandbox", tree)
+		}
 		if errors.Is(err, unix.ENOENT) {
 			if merr := unix.Mkdirat(fd, p, 0o755); merr != nil && !errors.Is(merr, unix.EEXIST) {
 				unix.Close(fd)
@@ -408,14 +422,14 @@ func checkTarget(dir int, name string, overwrite bool) error {
 	return fail(CodeNotRegular, "the destination exists and is not a regular file; refused")
 }
 
-func createTemp(dir int, name string) (string, *os.File, error) {
+func createTemp(dir int, name, tag string) (string, *os.File, error) {
 	b := make([]byte, 6)
 	_, _ = rand.Read(b)
 	base := name
 	if len(base) > 200 {
 		base = base[:200]
 	}
-	tmp := "." + base + ".apc-download-" + hex.EncodeToString(b)
+	tmp := "." + base + tag + hex.EncodeToString(b)
 	fd, err := unix.Openat(dir, tmp, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o644)
 	if err != nil {
 		return "", nil, fail(CodeWrite, "cannot create a temporary file next to the destination")

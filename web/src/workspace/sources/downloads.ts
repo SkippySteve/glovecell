@@ -8,7 +8,7 @@
 //   GET  /api/v1/workspaces/<name>/downloads[/<id>]               -> DownloadJob(s)
 //   POST /api/v1/workspaces/<name>/downloads/<id>/cancel  {}
 // A later backend (Glovecell) supplies another DownloadSource without touching the UI.
-import {api, type Session} from '../../api';
+import {api, sandboxGet, sandboxGetOptional, sandboxPostJSON, type Session} from '../../api';
 
 export interface DownloadHop {
   url: string; redacted: string; host: string; status: number; crossHost: boolean; queryHash: string;
@@ -29,7 +29,11 @@ export interface DownloadJob {
 }
 export interface DownloadRequest { destination: string; sha256: string; overwrite: boolean; acceptQueryChanges: boolean }
 
+export interface DownloadAvailability { available: boolean; reason: string; maxBytes: number }
 export interface DownloadSource {
+  // Optional asynchronous answer to "can this workspace download?"; when
+  // present it replaces available, reason and maxBytes below.
+  status?: () => Promise<DownloadAvailability>;
   available: boolean;
   // Why downloads are unavailable, shown in place of the form.
   reason: string;
@@ -91,12 +95,41 @@ export function projectDownloads(name: string, session: Session): DownloadSource
   };
 }
 
-// sandbox-control workspaces have no download backend yet: sandbox-control
-// cannot run a process inside them (no exec), which the download needs.
-export function sandboxDownloads(): DownloadSource {
-  const off = () => Promise.reject(new Error('Downloads are not available for this sandbox yet'));
-  return {available: false, reason: 'sandbox-control workspaces cannot run the download helper yet: sandbox-control has no way to start a process inside them. Project sandboxes support downloads today.', maxBytes: 0,
-    check: off, getCheck: off, start: off, get: off, list: () => Promise.resolve([]), cancel: off};
+// sandbox-control workspaces, through the console's /sandboxes mount:
+//   GET  /api/downloads?workspace=     {enabled, reason, maxBytes, downloads, history}
+//   POST /download-check {url} · GET /api/download-check?workspace=&id=
+//   POST /download {check, digest, destination, sha256, overwrite, accept_query} · GET /api/download?workspace=&id=
+//   POST /download-cancel {id}
+// sandbox-control serves the same check and download shapes as the console backend.
+export function sandboxDownloads(id: string): DownloadSource {
+  let maxBytes = DEFAULT_MAX_BYTES;
+  const overview = () => sandboxGetOptional<Record<string, unknown>>('/api/downloads', {workspace: id});
+  return {
+    available: true, reason: '', get maxBytes() { return maxBytes; },
+    status: async () => {
+      const raw = await overview();
+      if (!raw) return {available: false, reason: 'This sandbox-control release has no downloads yet.', maxBytes: 0};
+      maxBytes = num(raw.maxBytes) || maxBytes;
+      return {available: raw.enabled === true, reason: str(raw.reason), maxBytes};
+    },
+    check: async url => toCheck(await sandboxPostJSON<unknown>('/download-check', id, {url})),
+    getCheck: async cid => toCheck(await sandboxGet<unknown>('/api/download-check', {workspace: id, id: cid})),
+    start: async (c, r) => toJob(await sandboxPostJSON<unknown>('/download', id, {check: c.id, digest: c.digest, destination: r.destination, sha256: r.sha256, overwrite: r.overwrite ? 'on' : '', accept_query: r.acceptQueryChanges ? 'on' : ''})),
+    get: async jid => toJob(await sandboxGet<unknown>('/api/download', {workspace: id, id: jid})),
+    list: async () => { const raw = await overview(); return raw ? list(raw.downloads).map(toJob) : []; },
+    cancel: async jid => { await sandboxPostJSON<unknown>('/download-cancel', id, {id: jid}); },
+  };
+}
+
+// Recorded checks and downloads of a sandbox-control workspace, for History.
+export interface DownloadEvent { at: number; action: string; id: string; by: string; detail: string }
+export function toDownloadEvents(raw: unknown): DownloadEvent[] {
+  const body = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  return list<Record<string, unknown>>(body.history).filter(e => e && typeof e === 'object').map(e => ({at: time(e.at), action: str(e.action), id: str(e.id), by: str(e.by), detail: str(e.detail)}));
+}
+export async function loadDownloadHistory(id: string): Promise<DownloadEvent[] | null> {
+  const raw = await sandboxGetOptional<unknown>('/api/downloads', {workspace: id});
+  return raw === null ? null : toDownloadEvents(raw);
 }
 
 // --- pure helpers for the section ---

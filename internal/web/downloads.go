@@ -61,12 +61,13 @@ type Downloads struct {
 	// the proxy resolves the host. Zero means two seconds.
 	Settle time.Duration
 
-	mu     sync.Mutex
-	checks map[string]*checkRecord
-	jobs   map[string]*jobRecord
-	busy   map[string]string // workspace UID -> operation id
-	cancel map[string]context.CancelFunc
-	now    func() time.Time
+	mu      sync.Mutex
+	checks  map[string]*checkRecord
+	jobs    map[string]*jobRecord
+	busy    map[string]string // workspace UID -> operation id (downloads and uploads)
+	uploads map[string]*uploadRecord
+	cancel  map[string]context.CancelFunc
+	now     func() time.Time
 }
 
 // Fixed worker-side settings: the project proxy service, the read-only
@@ -143,6 +144,7 @@ func (d *Downloads) init() {
 	defer d.mu.Unlock()
 	if d.checks == nil {
 		d.checks, d.jobs, d.busy, d.cancel = map[string]*checkRecord{}, map[string]*jobRecord{}, map[string]string{}, map[string]context.CancelFunc{}
+		d.uploads = map[string]*uploadRecord{}
 	}
 	if d.now == nil {
 		d.now = time.Now
@@ -203,6 +205,11 @@ type target struct {
 }
 
 func (s *Server) downloadTarget(ctx context.Context, name string) (*target, int, string) {
+	return s.projectTarget(ctx, name, "worker", "proxy")
+}
+
+// projectTarget finds a Ready project and exactly one ready pod per role.
+func (s *Server) projectTarget(ctx context.Context, name string, roles ...string) (*target, int, string) {
 	obj := &api.ProjectWorkspace{}
 	if err := s.Client.Get(ctx, types.NamespacedName{Namespace: s.Namespace, Name: name}, obj); err != nil {
 		return nil, http.StatusNotFound, "project unavailable"
@@ -215,7 +222,11 @@ func (s *Server) downloadTarget(ctx context.Context, name string) (*target, int,
 		return nil, http.StatusConflict, "downloads run only in project namespaces (apc-<uid>)"
 	}
 	t := &target{obj: obj, ns: ns, uid: string(obj.UID)}
-	for role, into := range map[string]*string{"worker": &t.worker, "proxy": &t.proxy} {
+	for _, role := range roles {
+		into := &t.worker
+		if role == "proxy" {
+			into = &t.proxy
+		}
 		var pods corev1.PodList
 		if err := s.Client.List(ctx, &pods, client.InNamespace(ns), client.MatchingLabels{api.OwnerLabel: t.uid, "projects.agentwork.dev/role": role}); err != nil {
 			return nil, http.StatusServiceUnavailable, "project pods unavailable"
@@ -248,7 +259,7 @@ func (d *Downloads) reserve(uid, id string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if other, ok := d.busy[uid]; ok {
-		return fmt.Errorf("another check or download (%s) is running in this sandbox", other)
+		return fmt.Errorf("another check, download or upload (%s) is running in this sandbox", other)
 	}
 	if len(d.busy) >= maxBusy {
 		return errors.New("too many downloads are running; try again shortly")
@@ -985,7 +996,7 @@ func (s *Server) downloadAudit(ctx context.Context, obj *api.ProjectWorkspace, a
 	now := time.Now().UTC().Format(time.RFC3339)
 	data["workspace"], data["workspaceUID"], data["action"], data["actor"], data["time"], data["download"] = obj.Name, string(obj.UID), action, actor, now, id
 	attrs := []any{"workspace", obj.Name, "workspace_uid", string(obj.UID), "action", action, "id", id, "actor", actor}
-	for _, k := range []string{"url", "chain", "followed", "destination", "outcome", "bytes", "sha256", "error", "change"} {
+	for _, k := range []string{"name", "url", "chain", "followed", "destination", "size", "outcome", "bytes", "sha256", "error", "change"} {
 		if v, ok := data[k]; ok {
 			attrs = append(attrs, k, v)
 		}

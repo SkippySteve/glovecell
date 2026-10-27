@@ -12,7 +12,7 @@ export interface Project {
   status?: { phase?: string; namespace?: string; observedGeneration?: number; conditions?: Condition[] };
 }
 export interface AuditRecord { time: string; action: string; message?: string }
-export interface Session { actor?: string; oidc?: boolean; sandboxControl?: boolean; t3Connect?: boolean; githubOwner?: string; runRecords?: boolean; handoffs?: boolean; orcaProjects?: boolean; orcaSandbox?: string; orcaNamespace?: string; lanHosts?: boolean; lanAllowed?: string[]; downloads?: boolean; downloadMaxBytes?: number }
+export interface Session { actor?: string; oidc?: boolean; sandboxControl?: boolean; t3Connect?: boolean; githubOwner?: string; runRecords?: boolean; handoffs?: boolean; orcaProjects?: boolean; orcaSandbox?: string; orcaNamespace?: string; lanHosts?: boolean; lanAllowed?: string[]; downloads?: boolean; downloadMaxBytes?: number; uploads?: boolean; uploadChunkBytes?: number }
 export interface Repository { full_name: string }
 
 export type EgressState = 'Open' | 'Learning' | 'Locked';
@@ -24,7 +24,7 @@ export interface ExistingSandbox {
   egress?: EgressState | ''; egressExpires?: number; egressControl?: boolean;
 }
 
-async function failure(response: Response): Promise<Error> {
+export async function failure(response: Response): Promise<Error> {
   const text = (await response.text()).trim();
   try {
     const parsed = JSON.parse(text);
@@ -163,6 +163,26 @@ export interface OrcaProject { name: string; repo: string; actor?: string; reque
 export const orcaProjects = () => api<OrcaProject[]>('orca-projects').then(list => list || []);
 export const orcaProject = (name: string) => api<OrcaProject>('orca-projects/' + encodeURIComponent(name));
 export const publishOrcaProject = (repo: string) => api<OrcaProject>('orca-projects', 'POST', {repo});
+
+// Posts a sandbox-control form action that answers with its own JSON body.
+export async function sandboxPostJSON<T>(path: string, id: string, fields: Record<string, string>): Promise<T> {
+  if (!csrf) await existingSandboxes();
+  const form = new URLSearchParams({workspace: id, csrf, ...fields});
+  const response = await fetch('/sandboxes' + path, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json'}, body: form, redirect: 'manual'});
+  if (response.type === 'opaqueredirect' || response.status === 404) throw new Error('This sandbox-control release does not support downloads yet');
+  if (!response.ok) throw await failure(response);
+  return response.json() as Promise<T>;
+}
+
+// Sends one raw upload part to sandbox-control. The body is file bytes, so the
+// CSRF token travels in X-Sandbox-CSRF (the cookie half still comes along).
+export async function sandboxPostBytes<T>(path: string, params: Record<string, string>, body: Uint8Array): Promise<T> {
+  if (!csrf) await existingSandboxes();
+  const response = await fetch('/sandboxes' + path + '?' + new URLSearchParams(params), {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/octet-stream', Accept: 'application/json', 'X-Sandbox-CSRF': csrf}, body: body as BodyInit, redirect: 'manual'});
+  if (response.type === 'opaqueredirect' || response.status === 404) throw new Error('This sandbox-control release does not support uploads yet');
+  if (!response.ok) throw await failure(response);
+  return response.json() as Promise<T>;
+}
 
 // Posts a sandbox-control form action and returns the refreshed summary.
 export async function sandboxAction(path: string, id: string, fields: Record<string, string | string[]>): Promise<ExistingSandbox> {

@@ -129,6 +129,8 @@ func (s *Server) Handler() (http.Handler, error) {
 		if s.Downloads != nil {
 			session["downloads"] = true
 			session["downloadMaxBytes"] = s.Downloads.MaxBytes
+			session["uploads"] = true
+			session["uploadChunkBytes"] = UploadChunkBytes
 		}
 		for k, v := range s.Handoffs.session() {
 			session[k] = v
@@ -173,6 +175,11 @@ func (s *Server) Handler() (http.Handler, error) {
 		mux.HandleFunc("GET /api/v1/workspaces/{name}/downloads", s.listDownloads)
 		mux.HandleFunc("GET /api/v1/workspaces/{name}/downloads/{id}", s.getDownload)
 		mux.HandleFunc("POST /api/v1/workspaces/{name}/downloads/{id}/cancel", s.cancelDownload)
+		mux.HandleFunc("POST /api/v1/workspaces/{name}/uploads", s.startUpload)
+		mux.HandleFunc("GET /api/v1/workspaces/{name}/uploads", s.listUploads)
+		mux.HandleFunc("GET /api/v1/workspaces/{name}/uploads/{id}", s.getUpload)
+		mux.HandleFunc("PUT /api/v1/workspaces/{name}/uploads/{id}/data", s.uploadData)
+		mux.HandleFunc("POST /api/v1/workspaces/{name}/uploads/{id}/cancel", s.cancelUpload)
 	}
 	if s.SandboxControl != nil {
 		mux.Handle("/sandboxes/", s.SandboxControl.Handler(s.Origin))
@@ -230,7 +237,12 @@ func (s *Server) Handler() (http.Handler, error) {
 				http.Error(w, "same-origin request required", 403)
 				return
 			}
-			if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") && !(s.SandboxControl != nil && strings.HasPrefix(r.URL.Path, "/sandboxes/") && r.Method == "POST") {
+			// Upload parts are raw bytes. They stay out of reach of cross-site
+			// forms: application/octet-stream and X-Upload-Offset both force a
+			// CORS preflight, and the Origin check above already applies.
+			uploadPart := s.Downloads != nil && r.Method == "PUT" && uploadDataPath.MatchString(r.URL.Path) &&
+				r.Header.Get("Content-Type") == "application/octet-stream" && r.Header.Get("X-Upload-Offset") != ""
+			if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") && !uploadPart && !(s.SandboxControl != nil && strings.HasPrefix(r.URL.Path, "/sandboxes/") && r.Method == "POST") {
 				http.Error(w, "JSON required", 415)
 				return
 			}
@@ -243,7 +255,16 @@ func (s *Server) Handler() (http.Handler, error) {
 			subject = "static-operator"
 			method = "basic"
 		}
-		ctx, cancel := context.WithTimeout(context.WithValue(context.WithValue(r.Context(), actorKey{}, subject), authKey{}, method), 25*time.Second)
+		timeout := 25 * time.Second
+		if s.Downloads != nil && (r.Method == "PUT" && uploadDataPath.MatchString(r.URL.Path) || s.SandboxControl != nil && r.Method == "POST" && r.URL.Path == "/sandboxes/upload-data") {
+			// One upload part may take longer than the console's usual request
+			// bounds on a slow link; it gets its own, still bounded, deadlines.
+			timeout = chunkDeadline + uploadFinishWait
+			rc := http.NewResponseController(w)
+			_ = rc.SetReadDeadline(time.Now().Add(chunkDeadline))
+			_ = rc.SetWriteDeadline(time.Now().Add(timeout + 30*time.Second))
+		}
+		ctx, cancel := context.WithTimeout(context.WithValue(context.WithValue(r.Context(), actorKey{}, subject), authKey{}, method), timeout)
 		defer cancel()
 		mux.ServeHTTP(w, r.WithContext(ctx))
 	}), nil
