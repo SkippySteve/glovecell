@@ -88,6 +88,9 @@
 {{- if and (eq (toString (index .Values.config "DOWNLOADS_ENABLED")) "true") (ne $provider "cilium") }}
 {{- fail "DOWNLOADS_ENABLED requires NETWORK_PROVIDER=cilium" }}
 {{- end }}
+{{- if and (index .Values.config "PROVIDER_LEASES_SECRET") (ne $provider "cilium") }}
+{{- fail "PROVIDER_LEASES_SECRET requires NETWORK_PROVIDER=cilium" }}
+{{- end }}
 {{- if or (index .Values.config "SANDBOX_CONTROL_URL") (index .Values.config "SANDBOX_CONTROL_ORIGIN") (index .Values.config "SANDBOX_CONTROL_OPERATOR") }}
 {{- range $key := list "SANDBOX_CONTROL_URL" "SANDBOX_CONTROL_ORIGIN" "SANDBOX_CONTROL_OPERATOR" }}
 {{- $_ := required (printf "config.%s is required when integrating existing sandbox controls" $key) (index $.Values.config $key) }}

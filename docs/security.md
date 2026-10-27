@@ -86,6 +86,24 @@ end for certain. Every add and remove is an immutable audit record with the
 operator, project, address, ports and time, and the controller records each
 applied policy.
 
+## Brokered subscription providers
+
+`spec.providers` gives a project's worker short-lived, access-only leases for
+Grok and Cursor; see [brokered providers](brokered-providers.md). Only OIDC
+operators change the opt-in. The provider broker holds `pods/exec` on the
+offline owner pods and writes one lease Secret in its own namespace; it has no
+rights in project namespaces. The controller copies a lease only into the
+projects that opted in, and CiliumNetworkPolicy `providers` lets only that
+project's proxy reach the provider's hosts. The proxy admits a provider request
+only with the project's current, unexpired grant and a matching bearer token,
+and always refuses Cursor's account routes. Revocation removes the grant,
+the policy rule and restarts the proxy while the worker keeps running. All
+opted-in projects receive the same access token; a copied token stays usable
+outside the sandbox until it expires, so grant providers only to projects
+whose other egress you would trust with it. Deployments should add admission
+policies that keep `providers` proxy-only TCP 443 to the reviewed hosts and
+confine the broker's exec to the owner pods.
+
 ## Downloads into a sandbox
 
 "Download into sandbox" is off unless `DOWNLOADS_ENABLED=true`. It never

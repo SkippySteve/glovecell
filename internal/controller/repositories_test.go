@@ -154,7 +154,7 @@ func TestPrivateGitHubTokenRemainsOnlyInGateway(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Prepare resources directly; no network grants or real repositories are contacted.
-	if err := r.objects(ctx, w, s); err != nil {
+	if err := r.objects(ctx, w, s, nil); err != nil {
 		t.Fatal(err)
 	}
 	var worker, gateway corev1.Secret

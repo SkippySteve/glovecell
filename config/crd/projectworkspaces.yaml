@@ -115,6 +115,25 @@ spec:
                       addedAt:
                         type: string
                         format: date-time
+                providers:
+                  description: Brokered subscription providers this project opts into. Off by default. Editable while running; removing an entry revokes that provider for this project. The controller needs a provider lease source.
+                  type: array
+                  maxItems: 2
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys: [name]
+                  items:
+                    type: object
+                    required: [name]
+                    properties:
+                      name:
+                        type: string
+                        enum: [grok, cursor]
+                      addedBy:
+                        type: string
+                        maxLength: 512
+                      addedAt:
+                        type: string
+                        format: date-time
                 https:
                   type: array
                   maxItems: 63
