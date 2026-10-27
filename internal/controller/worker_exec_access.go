@@ -51,10 +51,6 @@ func (r *Reconciler) controllerServiceAccount() string {
 // pods/exec in the namespaces it creates and nowhere else, without a
 // cluster-wide grant. Empty WorkerExecClusterRole leaves project RBAC
 // unchanged (an installation that still grants exec cluster-wide).
-//
-// The roleRef of a RoleBinding is immutable, so a binding that points at
-// another role is deleted and recreated; a binding not labelled for this
-// project is never adopted.
 func (r *Reconciler) ensureWorkerExecAccess(ctx context.Context, w *api.ProjectWorkspace) error {
 	role := strings.TrimSpace(r.Config.WorkerExecClusterRole)
 	if role == "" {
@@ -63,17 +59,27 @@ func (r *Reconciler) ensureWorkerExecAccess(ctx context.Context, w *api.ProjectW
 	if err := validateWorkerExec(role, r.Config.ControllerServiceAccount); err != nil {
 		return err
 	}
+	return r.ensureSelfBinding(ctx, w, workerExecAccessName, role)
+}
+
+// ensureSelfBinding makes RoleBinding name in the project namespace grant
+// ClusterRole role to the controller's own ServiceAccount and nobody else.
+//
+// The roleRef of a RoleBinding is immutable, so a binding that points at
+// another role is deleted and recreated; a binding not labelled for this
+// project is never adopted.
+func (r *Reconciler) ensureSelfBinding(ctx context.Context, w *api.ProjectWorkspace, name, role string) error {
 	want := rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: role}
 	subjects := []rbacv1.Subject{{Kind: rbacv1.ServiceAccountKind, Name: r.controllerServiceAccount(), Namespace: r.Config.Namespace}}
 	ns := namespace(w)
 	binding := &rbacv1.RoleBinding{}
-	err := r.Get(ctx, client.ObjectKey{Namespace: ns, Name: workerExecAccessName}, binding)
+	err := r.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, binding)
 	switch {
 	case apierrors.IsNotFound(err):
 	case err != nil:
 		return err
 	case binding.Labels[api.OwnerLabel] != string(w.UID):
-		return fmt.Errorf("worker exec binding is not owned by this project")
+		return fmt.Errorf("RoleBinding %s/%s is not owned by this project", ns, name)
 	case binding.RoleRef == want:
 		if len(binding.Subjects) == 1 && binding.Subjects[0] == subjects[0] {
 			return nil
@@ -86,7 +92,7 @@ func (r *Reconciler) ensureWorkerExecAccess(ctx context.Context, w *api.ProjectW
 		}
 	}
 	return r.Create(ctx, &rbacv1.RoleBinding{
-		ObjectMeta: metav1.ObjectMeta{Name: workerExecAccessName, Namespace: ns, Labels: map[string]string{api.OwnerLabel: string(w.UID)}},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: map[string]string{api.OwnerLabel: string(w.UID)}},
 		RoleRef:    want,
 		Subjects:   subjects,
 	})

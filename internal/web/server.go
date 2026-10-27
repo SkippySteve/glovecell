@@ -54,6 +54,8 @@ type Server struct {
 	LAN                                *LANGrants
 	// Downloads enables "Download into sandbox" for project sandboxes.
 	Downloads *Downloads
+	// Providers enables brokered provider opt-in (providers.go).
+	Providers *Providers
 }
 
 // openUISpinnerStyle allows the one stylesheet OpenUI's Renderer injects on mount
@@ -126,6 +128,9 @@ func (s *Server) Handler() (http.Handler, error) {
 			session["lanHosts"] = true
 			session["lanAllowed"] = s.LAN.Config.AllowedStrings()
 		}
+		if s.Providers != nil {
+			session["providers"] = []string{"grok", "cursor"}
+		}
 		if s.Downloads != nil {
 			session["downloads"] = true
 			session["downloadMaxBytes"] = s.Downloads.MaxBytes
@@ -166,6 +171,9 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.HandleFunc("POST /api/v1/workspaces/{name}/repositories", s.enrollRepository)
 	mux.HandleFunc("POST /api/v1/workspaces/{name}/lan-hosts", s.addLANHost)
 	mux.HandleFunc("DELETE /api/v1/workspaces/{name}/lan-hosts/{address}", s.removeLANHost)
+	mux.HandleFunc("GET /api/v1/provider-leases", s.providerLeases)
+	mux.HandleFunc("POST /api/v1/workspaces/{name}/providers", s.addProvider)
+	mux.HandleFunc("DELETE /api/v1/workspaces/{name}/providers/{provider}", s.removeProvider)
 	mux.HandleFunc("GET /api/v1/workspaces/{name}/audit", s.audit)
 	mux.HandleFunc("GET /api/v1/workspaces/{name}/clients", s.clients)
 	if s.Downloads != nil {

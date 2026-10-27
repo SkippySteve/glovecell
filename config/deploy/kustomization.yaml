@@ -12,6 +12,7 @@ configMapGenerator:
       - NETWORK_PROVIDER=cilium
       - CONTROL_NAMESPACE=agent-project-controller
       - WORKER_EXEC_CLUSTER_ROLE=agent-project-controller-worker-exec
+      - PROJECT_ACCESS_CLUSTER_ROLE=agent-project-controller-project-access
       - LISTEN_ADDR=0.0.0.0:8080
       - FORGEJO_ORIGIN=https://forgejo.example.com
       - FORGEJO_OWNER=operator

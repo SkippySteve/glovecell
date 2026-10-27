@@ -36,7 +36,7 @@ func TestMuseGatewayCredentialRenewalRevocationAndRecovery(t *testing.T) {
 		} else if err := os.WriteFile(key, []byte(material), 0600); err != nil {
 			t.Fatal(err)
 		}
-		if err := r.objects(ctx, w, ledger); err != nil {
+		if err := r.objects(ctx, w, ledger, nil); err != nil {
 			t.Fatal(err)
 		}
 		var worker, gateway corev1.Secret

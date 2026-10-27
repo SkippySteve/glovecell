@@ -179,6 +179,18 @@ narrows the ranges or turns the feature off, a project whose grant is now refuse
 moves to **Needs attention**, its worker stops and its `lan-hosts` policy is
 deleted. Remove the grant to resume.
 
+## Subscription providers
+
+A project sandbox's **Credentials** section lists **Subscription providers**
+(Grok and Cursor) when the controller has a provider lease source
+(`PROVIDER_LEASES_SECRET`). **Enable** lets that sandbox run `grok` or
+`cursor-agent` with the operator's subscription; **Revoke** withdraws it. Both
+apply while the sandbox runs and need a signed-in OIDC operator. The sandbox
+gets only a short-lived pass; the login stays with an offline owner outside
+every sandbox. A note appears when the broker currently has no pass for a
+provider, for example because its login needs renewing. Each change is in
+**History**. See [brokered providers](brokered-providers.md).
+
 ## Download into sandbox
 
 Put a file from the internet into a running project sandbox without opening
