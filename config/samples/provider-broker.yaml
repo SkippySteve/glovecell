@@ -1,0 +1,185 @@
+# Example: the provider broker in lease mode with one offline Grok owner
+# (docs/brokered-providers.md). Replace the image digests. Add a Cursor owner
+# the same way (pod "cursor", login at ~/.config/cursor/auth.json) and list it in
+# PROVIDER_BROKER_PROVIDERS. Then set PROVIDER_LEASES_SECRET=provider-broker/provider-leases
+# on the controller and let its service account get that Secret.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: provider-broker
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: provider-broker
+  namespace: provider-broker
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: provider-broker
+  namespace: provider-broker
+rules:
+# The broker creates its journal and lease Secret on first use.
+- apiGroups: ['']
+  resources: [secrets]
+  verbs: [create]
+- apiGroups: ['']
+  resources: [secrets]
+  resourceNames: [provider-broker-journal, provider-leases]
+  verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: provider-broker
+  namespace: provider-broker
+subjects:
+- kind: ServiceAccount
+  name: provider-broker
+  namespace: provider-broker
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: provider-broker
+---
+# Exec into the one owner pod, nothing else.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: provider-broker-grok-owner
+  namespace: provider-owners
+rules:
+- apiGroups: ['']
+  resources: [pods/exec]
+  resourceNames: [grok]
+  verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: provider-broker-grok-owner
+  namespace: provider-owners
+subjects:
+- kind: ServiceAccount
+  name: provider-broker
+  namespace: provider-broker
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: provider-broker-grok-owner
+---
+# The controller reads only the lease Secret here.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: provider-leases-reader
+  namespace: provider-broker
+rules:
+- apiGroups: ['']
+  resources: [secrets]
+  resourceNames: [provider-leases]
+  verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: provider-leases-reader
+  namespace: provider-broker
+subjects:
+- kind: ServiceAccount
+  name: controller
+  namespace: agent-project-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: provider-leases-reader
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: provider-broker
+  namespace: provider-broker
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: provider-broker
+  template:
+    metadata:
+      labels:
+        app: provider-broker
+    spec:
+      serviceAccountName: provider-broker
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: broker
+        image: registry.example.com/agent-project-controller@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        args: [provider-broker]
+        env:
+        - name: PROVIDER_BROKER_CONTROL_NAMESPACE
+          value: provider-broker
+        - name: PROVIDER_BROKER_JOURNAL
+          value: provider-broker-journal
+        - name: PROVIDER_BROKER_LEASES
+          value: provider-leases
+        - name: PROVIDER_BROKER_PROVIDERS
+          value: grok
+        - name: GROK_OWNER_NAMESPACE
+          value: provider-owners
+        - name: GROK_OWNER_POD
+          value: grok
+        - name: GROK_OWNER_CONTAINER
+          value: grok
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: [ALL]
+---
+# The owner: no network (add a deny-all policy for your CNI), no token, sleep.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: grok
+  namespace: provider-owners
+  labels:
+    app: credential-owner
+spec:
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+  - name: grok
+    # The workspace image has python3 and the Grok CLI for the one-time sign-in.
+    image: registry.example.com/agent-project-workspace@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    command: [python3, -c, 'import time; time.sleep(2147483647)']
+    env:
+    - name: HOME
+      value: /owner/home
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop: [ALL]
+    volumeMounts:
+    - name: identity
+      mountPath: /owner/home/.grok
+  volumes:
+  - name: identity
+    persistentVolumeClaim:
+      claimName: grok-identity

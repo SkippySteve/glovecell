@@ -8,6 +8,7 @@ import {SandboxRuns} from '../factory/SandboxRuns';
 import {existingKind, orcaRuntimeId} from '../orca';
 import {LifecycleButton, ProjectHistory, ProjectInternet, ProjectOverview, ProjectRepositories} from '../Project';
 import {LanHosts} from '../LanHosts';
+import {Providers} from '../Providers';
 import {navigate, projectHref, sandboxHref, SECTIONS, type Section} from '../router';
 import {classicHref, Services, type SandboxContext} from '../sandbox/Sandbox';
 import {SettingsTab} from '../sandbox/Settings';
@@ -255,6 +256,7 @@ export function ProjectWorkspace({name, section}: {name: string; section: Sectio
       <ul className="grant-chips" aria-label="Active grants">
         <li className="gchip">{rules ? `Fixed rules · ${rules}` : 'Repositories only'}</li>
         {hosts ? <li className="gchip">LAN · {hosts} static host{hosts === 1 ? '' : 's'}</li> : null}
+        {(p.spec.providers || []).map(item => <li key={item.name} className="gchip">Provider · {item.name}</li>)}
       </ul>
     </header>
   );
@@ -263,7 +265,7 @@ export function ProjectWorkspace({name, section}: {name: string; section: Sectio
     : section === 'packages' ? <div className="stack"><SectionIntro title="Packages" /><NotAvailable what="Package approvals" needs="Project sandboxes have no package approval list; registry rules on the Internet page allow downloads." /></div>
     : section === 'downloads' ? <Files key={p.metadata.name} downloads={downloads} uploads={uploads} workspace={p.metadata.name} />
     : section === 'previews' ? <div className="stack"><SectionIntro title="Previews & dev links" /><NotAvailable what="Previews and dev links" needs="Project sandboxes do not publish previews or dev links yet." /></div>
-    : section === 'credentials' ? <div className="stack"><SectionIntro title="Credentials">Repositories this sandbox can push task branches to. Secret values are never shown.</SectionIntro><ProjectRepositories p={p} /></div>
+    : section === 'credentials' ? <div className="stack"><SectionIntro title="Credentials">Repositories this sandbox can push task branches to, and the subscription providers it may use. Secret values are never shown.</SectionIntro><ProjectRepositories p={p} /><Providers p={p} /></div>
     : section === 'history' ? <div className="stack"><SectionIntro title="History" /><ProjectHistory p={p} /></div>
     : <ProjectOverview p={p} />;
   return (

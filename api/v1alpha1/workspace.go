@@ -25,6 +25,20 @@ type WorkspaceSpec struct {
 	// LANHosts grants the project's worker direct TCP to single IPv4 hosts on the
 	// operator's LAN. Unlike HTTPS rules they change while the project runs.
 	LANHosts []LANHost `json:"lanHosts,omitempty"`
+	// Providers opts the project into brokered subscription providers (Grok,
+	// Cursor). Off by default. Like LAN hosts they change while the project
+	// runs: removing an entry revokes that provider for this project only.
+	// The controller needs a configured provider lease source.
+	Providers []ProviderGrant `json:"providers,omitempty"`
+}
+
+// ProviderGrant is one operator opt-in to a brokered provider. The worker then
+// receives the provider's short-lived access lease, and the project proxy may
+// reach the provider's reviewed hosts. Refresh material never leaves its owner.
+type ProviderGrant struct {
+	Name    string       `json:"name"`
+	AddedBy string       `json:"addedBy,omitempty"`
+	AddedAt *metav1.Time `json:"addedAt,omitempty"`
 }
 
 // LANHost is one operator grant: outbound TCP from the worker to Address on Ports.

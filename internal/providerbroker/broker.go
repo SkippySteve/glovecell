@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -32,6 +33,11 @@ type Config struct {
 	Control, Workspace, UID, Journal string
 	OAuthClientIDs                   map[string]string
 	Owners                           map[string]Owner
+	// Leases selects lease mode (leases.go): the Secret in Control that
+	// receives one lease per provider in Providers, for the controller to
+	// distribute to opted-in projects. Workspace and UID are then unused.
+	Leases    string
+	Providers []string
 }
 type Access struct {
 	Token   string  `json:"accessToken"`
@@ -182,7 +188,7 @@ func (b *Broker) owner(ctx context.Context, provider string) (Access, error) {
 	if err := b.Client.Get(ctx, key, &ledger); err != nil {
 		return Access{}, errors.New("renewal journal unavailable")
 	}
-	if ledger.Labels["providers.agentwork.dev/workspace-uid"] != b.Config.UID {
+	if !b.journalBound(&ledger) {
 		return Access{}, errors.New("renewal journal binding changed")
 	}
 	var pending renewal
@@ -347,6 +353,45 @@ func (b *Broker) Tick(ctx context.Context) error {
 	return errors.Join(failures...)
 }
 
+// configFromEnv reads the broker configuration. PROVIDER_BROKER_LEASES selects
+// lease mode, which needs owners only for PROVIDER_BROKER_PROVIDERS and ignores
+// the single-workspace variables (so one Deployment can carry both while an
+// older image is replaced). Otherwise the single-workspace mode needs all of
+// its variables and an owner for every provider.
+func configFromEnv() (Config, error) {
+	cfg := Config{Control: os.Getenv("PROVIDER_BROKER_CONTROL_NAMESPACE"), Journal: os.Getenv("PROVIDER_BROKER_JOURNAL"), Leases: os.Getenv("PROVIDER_BROKER_LEASES"), Owners: map[string]Owner{}, OAuthClientIDs: map[string]string{}}
+	names := []string{"codex", "grok", "cursor"}
+	if cfg.Leases != "" {
+		if cfg.Control == "" || cfg.Journal == "" || cfg.Leases == cfg.Journal {
+			return Config{}, errors.New("trusted provider broker configuration required")
+		}
+		for _, name := range strings.Split(os.Getenv("PROVIDER_BROKER_PROVIDERS"), ",") {
+			if !slices.Contains(LeaseProviders, name) || slices.Contains(cfg.Providers, name) {
+				return Config{}, errors.New("PROVIDER_BROKER_PROVIDERS must list grok and/or cursor")
+			}
+			cfg.Providers = append(cfg.Providers, name)
+		}
+		names = cfg.Providers
+	} else {
+		cfg.Workspace, cfg.UID = os.Getenv("PROVIDER_BROKER_WORKSPACE"), os.Getenv("PROVIDER_BROKER_WORKSPACE_UID")
+		if cfg.Control == "" || cfg.Workspace == "" || cfg.UID == "" || cfg.Journal == "" {
+			return Config{}, errors.New("trusted provider broker configuration required")
+		}
+	}
+	for _, name := range names {
+		prefix := strings.ToUpper(name) + "_OWNER_"
+		owner := Owner{Namespace: os.Getenv(prefix + "NAMESPACE"), Pod: os.Getenv(prefix + "POD"), Container: os.Getenv(prefix + "CONTAINER")}
+		if owner.Namespace == "" || owner.Pod == "" || owner.Container == "" {
+			return Config{}, errors.New("explicit credential owner required")
+		}
+		cfg.Owners[name] = owner
+		if name != "grok" {
+			cfg.OAuthClientIDs[name] = os.Getenv(strings.ToUpper(name) + "_OAUTH_CLIENT_ID")
+		}
+	}
+	return cfg, nil
+}
+
 func Run(ctx context.Context, c client.Client, config *rest.Config) error {
 	flags := flag.NewFlagSet("provider-broker", flag.ContinueOnError)
 	once := flags.Bool("once", false, "Publish one access lease tick")
@@ -357,25 +402,14 @@ func Run(ctx context.Context, c client.Client, config *rest.Config) error {
 	if *force != "" && !*once {
 		return errors.New("forced renewal requires --once")
 	}
-	cfg := Config{Control: os.Getenv("PROVIDER_BROKER_CONTROL_NAMESPACE"), Workspace: os.Getenv("PROVIDER_BROKER_WORKSPACE"), UID: os.Getenv("PROVIDER_BROKER_WORKSPACE_UID"), Journal: os.Getenv("PROVIDER_BROKER_JOURNAL"), Owners: map[string]Owner{}, OAuthClientIDs: map[string]string{}}
-	if cfg.Control == "" || cfg.Workspace == "" || cfg.UID == "" || cfg.Journal == "" {
-		return errors.New("trusted provider broker configuration required")
-	}
-	for _, name := range []string{"codex", "grok", "cursor"} {
-		prefix := strings.ToUpper(name) + "_OWNER_"
-		owner := Owner{Namespace: os.Getenv(prefix + "NAMESPACE"), Pod: os.Getenv(prefix + "POD"), Container: os.Getenv(prefix + "CONTAINER")}
-		if owner.Namespace == "" || owner.Pod == "" || owner.Container == "" {
-			return errors.New("explicit credential owner required")
-		}
-		cfg.Owners[name] = owner
-		if name != "grok" {
-			cfg.OAuthClientIDs[name] = os.Getenv(strings.ToUpper(name) + "_OAUTH_CLIENT_ID")
-		}
+	cfg, err := configFromEnv()
+	if err != nil {
+		return err
 	}
 	cfg.ForceRenew = map[string]bool{}
 	if *force != "" {
 		for _, name := range strings.Split(*force, ",") {
-			if name != "codex" && name != "cursor" {
+			if name != "codex" && name != "cursor" || cfg.Leases != "" && !slices.Contains(cfg.Providers, name) {
 				return errors.New("unsupported forced owner renewal")
 			}
 			cfg.ForceRenew[name] = true
@@ -391,11 +425,15 @@ func Run(ctx context.Context, c client.Client, config *rest.Config) error {
 		}
 		return output.Bytes(), nil
 	}}
+	tick := b.Tick
+	if cfg.Leases != "" {
+		tick = b.TickLeases
+	}
 	if *once {
-		return b.Tick(ctx)
+		return tick(ctx)
 	}
 	for {
-		if err := b.Tick(ctx); err != nil {
+		if err := tick(ctx); err != nil {
 			slog.Warn("provider broker renewal unavailable", "status", err.Error())
 		} else {
 			slog.Info("provider broker access leases renewed", "lease_seconds", strconv.Itoa(300))

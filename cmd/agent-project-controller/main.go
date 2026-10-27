@@ -32,6 +32,8 @@ import (
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/telemetry"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/web"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -100,6 +102,24 @@ func lanFromEnv(provider network.Provider) (network.LANConfig, error) {
 		return network.LANConfig{}, errors.New("LAN_GRANT_ALLOWED_CIDRS requires NETWORK_PROVIDER=cilium")
 	}
 	return lan, nil
+}
+
+// providerLeasesFromEnv reads the optional brokered provider lease source,
+// PROVIDER_LEASES_SECRET=<namespace>/<name>: the Secret the provider broker
+// writes in lease mode. Unset keeps spec.providers off.
+func providerLeasesFromEnv(provider network.Provider) (*types.NamespacedName, error) {
+	raw := os.Getenv("PROVIDER_LEASES_SECRET")
+	if raw == "" {
+		return nil, nil
+	}
+	ns, name, ok := strings.Cut(raw, "/")
+	if !ok || len(validation.IsDNS1123Label(ns)) != 0 || len(validation.IsDNS1123Subdomain(name)) != 0 {
+		return nil, errors.New("PROVIDER_LEASES_SECRET must be <namespace>/<secret name>")
+	}
+	if _, ok := provider.(network.ProviderPolicy); !ok {
+		return nil, errors.New("PROVIDER_LEASES_SECRET requires NETWORK_PROVIDER=cilium")
+	}
+	return &types.NamespacedName{Namespace: ns, Name: name}, nil
 }
 
 // downloadsFromEnv reads the optional "Download into sandbox" setting. It is
@@ -345,6 +365,9 @@ func run(ctx context.Context) error {
 	}
 	reconciler.IndependentCodexWorkspaceUID = os.Getenv("INDEPENDENT_CODEX_WORKSPACE_UID")
 	reconciler.MuseSubscriptionKeyFile = os.Getenv("MUSE_SUBSCRIPTION_KEY_FILE")
+	if reconciler.ProviderLeases, e = providerLeasesFromEnv(networkProvider); e != nil {
+		return e
+	}
 	if host := os.Getenv("READER_HTTPS_HOST"); host != "" {
 		route := &proxy.ReaderRoute{Host: host, Upstream: os.Getenv("READER_UPSTREAM")}
 		if err := route.Validate(); err != nil {
@@ -385,6 +408,9 @@ func run(ctx context.Context) error {
 	}
 	server := &web.Server{T3Connect: reconciler.Access != nil, Client: direct, Host: host, Namespace: ns, Owner: owner, Password: password, Origin: os.Getenv("PUBLIC_ORIGIN"), GitHost: gitHost, GitOrigin: origin, AllowBasic: os.Getenv("ALLOW_STATIC_LOGIN") == "true"}
 	server.GitHubOwner = reconciler.Config.GitHubOwner
+	if reconciler.ProviderLeases != nil {
+		server.Providers = &web.Providers{Status: reconciler.ProviderLeaseStatus}
+	}
 	if lan.Enabled() {
 		server.LAN = &web.LANGrants{Config: lan, Nodes: network.NodeAddresses}
 	}

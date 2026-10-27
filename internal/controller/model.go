@@ -30,6 +30,9 @@ func RejectRefreshMaterial(data map[string][]byte) error {
 			return errors.New("model access contains an unreviewed field")
 		}
 	}
+	if brokeredOnly(data) {
+		return nil
+	}
 	token, account := string(data["access-token"]), string(data["chatgpt-account-id"])
 	if token == "" || len(token) > 32768 || !bearerToken.MatchString(token) || account == "" || len(account) > 256 || strings.ContainsAny(account, "\r\n\t {}[]\"") {
 		return errors.New("model access requires bounded access and account fields")
@@ -113,4 +116,20 @@ func independentCodex(data map[string][]byte) bool {
 	}
 	_, ok := grants["codex"]
 	return ok
+}
+
+// brokeredOnly reports a Secret that carries only access-only provider grants
+// (for example the controller's brokered Grok and Cursor leases) and no Codex
+// grant. It has no whole-worker expiry: each provider entry expires on its own
+// at the launcher and the gateway, and its removal never stops the project.
+func brokeredOnly(data map[string][]byte) bool {
+	if len(data) != 1 || len(data["provider-access"]) == 0 {
+		return false
+	}
+	var grants map[string]json.RawMessage
+	if json.Unmarshal(data["provider-access"], &grants) != nil {
+		return false
+	}
+	_, codex := grants["codex"]
+	return !codex
 }

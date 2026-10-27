@@ -45,6 +45,10 @@ config:
   DOWNLOADS_ENABLED: 'false'
   DOWNLOAD_MAX_BYTES: ''
   DOWNLOAD_TIMEOUT: ''
+  # Brokered subscription providers per project (docs/brokered-providers.md).
+  # <namespace>/<secret> written by the provider broker in lease mode. Empty
+  # turns spec.providers off. Requires NETWORK_PROVIDER=cilium.
+  PROVIDER_LEASES_SECRET: ''
   WORKSPACE_CPU_REQUEST: 500m
   WORKSPACE_MEMORY_REQUEST: 512Mi
   WORKSPACE_CPU_LIMIT: '4'

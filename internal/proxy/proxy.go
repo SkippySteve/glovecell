@@ -141,6 +141,8 @@ type Server struct {
 	GitHubToken         func() (string, error)
 	MuseSubscriptionKey func() (string, error)
 	ProviderGrants      func() ([]byte, error)
+	// BrokeredList returns the project's opted-in brokered providers (brokered.go).
+	BrokeredList func() ([]byte, error)
 	// GrantTransport carries one-time download grants (download_grants.go).
 	GrantTransport *http.Transport
 	grants         *grantBook
@@ -312,13 +314,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "destination denied", 403)
 		return
 	}
-	found := false
-	for _, rule := range s.Config.Rules {
-		if rule.Host == host {
-			found = true
-		}
-	}
-	if !found && !s.grants.hostLive(host) {
+	if !s.inRules(host) && !s.grants.hostLive(host) && s.brokeredProvider(host) == "" {
 		http.Error(w, "destination denied", 403)
 		return
 	}
@@ -385,7 +381,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		// Reject alternate authorities, escaped paths and protocol upgrades. HTTP/2 is inspected on its own path.
 		traceRequestRoute(host, req)
-		denied := requestDenied(s.Config, host, req)
+		denied := s.requestDenied(host, req)
 		if denied {
 			traceRequestStatus(host, req, 403)
 			req.Body.Close()
@@ -446,9 +442,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return // One request per tunnel bounds connection lifetime and revocation delay.
 	}
 }
-func requestDenied(cfg Config, host string, req *http.Request) bool {
+func (s *Server) requestDenied(host string, req *http.Request) bool {
 	reqHost := strings.TrimSuffix(req.Host, ":443")
-	return reqHost != host || req.URL.IsAbs() || req.Method == "CONNECT" || req.Header.Get("Upgrade") != "" || strings.Contains(req.URL.EscapedPath(), "%") || !Allowed(cfg, host, req.Method, req.URL.Path)
+	if reqHost != host || req.URL.IsAbs() || req.Method == "CONNECT" || req.Header.Get("Upgrade") != "" || strings.Contains(req.URL.EscapedPath(), "%") {
+		return true
+	}
+	return !Allowed(s.Config, host, req.Method, req.URL.Path) && !s.brokeredAllowed(host, req.Method, req.URL.Path)
 }
 
 // serveHTTP2 inspects each HTTP/2 stream. It is not an opaque tunnel.
@@ -462,7 +461,7 @@ func (s *Server) serveHTTP2(ctx context.Context, conn net.Conn, host string) {
 				return
 			}
 			traceRequestRoute(host, req)
-			if requestDenied(s.Config, host, req) {
+			if s.requestDenied(host, req) {
 				traceRequestStatus(host, req, 403)
 				http.Error(w, "request denied", http.StatusForbidden)
 				return
@@ -557,6 +556,7 @@ func Run(ctx context.Context) error {
 	s.GitHubToken = gatewayGitHubToken
 	s.MuseSubscriptionKey = gatewayMuseSubscriptionKey
 	s.ProviderGrants = gatewayProviderGrants
+	s.BrokeredList = gatewayBrokeredProviders
 	server := &http.Server{Addr: ":3128", Handler: s, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 32 << 10}
 	control := &http.Server{Addr: ControlAddress, Handler: s.ControlHandler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, MaxHeaderBytes: 8 << 10}
 	go func() {
