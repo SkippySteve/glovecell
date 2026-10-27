@@ -89,8 +89,25 @@ export interface SandboxDetail {
 }
 // One method and URL. fingerprints counts its distinct queries and bodies; older
 // sandbox-control releases list each fingerprint on its own and omit the counts.
-export interface Observation { host: string; method: string; path: string; scheme: string; port: number; queryHash?: string; package?: {ecosystem: string; name: string; version?: string}; fingerprints?: number; requests?: number; first?: number; last?: number; observation: string }
-export interface ObservationPage { filter: string; pending: {total: number; items: Observation[]}; approved: {total: number; items: Observation[]} }
+export interface Observation { host: string; method: string; path: string; scheme: string; port: number; queryHash?: string; package?: {ecosystem: string; name: string; version?: string}; fingerprints?: number; requests?: number; first?: number; last?: number; observation: string; allow?: AllowOptions }
+// One-click web rule options for a waiting or blocked request (sandbox-control
+// README "Broad web rules"); absent on releases without web rules.
+export interface AllowOptions { host: string; method: string; path: string; pattern: string; wildcard: string; wildcardReason: string; githubOwner: string; githubRepo: string; sharedHost: boolean; passthrough: boolean }
+// Server-side page of a list (positions from 1); absent on older releases.
+export interface Paging { page: number; size: number; pages: number; first: number; last: number }
+export interface ObservationList { total: number; items: Observation[]; paging?: Paging }
+export interface WebRule {
+  id: string; kind: 'path' | 'domain' | 'wildcard' | 'github-repo' | 'github-owner'; host: string; path: string; methods: string[]; anyMethod: boolean; apex: boolean;
+  owner: string; repo: string; write: boolean; passthrough: boolean; expires: string; active: boolean; description: string; risks: string[];
+  rules: {host: string; path: string; methods: string[]; purpose: string}[]; requests: number; lastUsed: string; actor: string; created: string;
+}
+export interface RuleEvent { at: string; action: string; rule: string; description: string; by: string; expires: string; detail: string }
+export interface PassthroughTool { name: string; problem: string; evidence: string; source: string; alternative: string }
+export interface EgressCapacity { waiting: number; approved: number; waitingLimit: number; approvalLimit: number; warnWaiting: boolean; warnApprovals: boolean; rolledOff: number; lastRolledOff: string; oldestWaiting: string; approvalCapHits: number; lastCapHit: string }
+export interface ObservationPage {
+  filter: string; pending: ObservationList; approved: ObservationList;
+  rules?: WebRule[]; ruleHistory?: RuleEvent[]; passthroughTools?: {note: string; tools: PassthroughTool[]}; capacity?: EgressCapacity;
+}
 export interface Preview {
   id: string; state: string; proposedName: string; proposedRulesText: string; rulesText: string;
   lan: boolean; tailscale: boolean; gapAcknowledged: boolean; seen: number; first: number; count: number;
@@ -135,14 +152,21 @@ export async function sandboxGetOptional<T>(path: string, params: Record<string,
   return response.json() as Promise<T>;
 }
 export const sandboxDetail = (id: string) => sandboxGet<SandboxDetail>('/api/workspace', {workspace: id});
-export const sandboxObservations = (id: string, q: string, limit?: number) => sandboxGet<ObservationPage>('/api/egress', limit ? {workspace: id, q, limit: String(limit)} : {workspace: id, q});
+// With page and size, releases that page server-side return `paging` per list;
+// older ones ignore them and return the newest `limit` rows.
+export const sandboxObservations = (id: string, q: string, limit?: number, page?: number, size?: number) => sandboxGet<ObservationPage>('/api/egress', {
+  workspace: id, q, ...(limit ? {limit: String(limit)} : {}), ...(page ? {page: String(page)} : {}), ...(size ? {size: String(size)} : {}),
+});
 export const sandboxPreviews = (id: string, expired: boolean) => sandboxGet<{expiredCount: number; requests: Preview[]}>('/api/previews', expired ? {workspace: id, expired: '1'} : {workspace: id});
 export const sandboxDevLinks = (id: string) => sandboxGet<DevLink[]>('/api/devlinks', {workspace: id});
 export const sandboxActivity = (id: string, minutes: number) => sandboxGet<Activity>('/api/activity', {workspace: id, minutes: String(minutes)});
 
 // An agent's own report that a denial stops its task. The agent supplies kind,
 // resource and reason; the operator reviews and dismisses. Agents approve nothing.
-export interface AgentReport { id: number; kind: string; resource: string; reason: string; count: number; first: string; last: string }
+export interface AgentReport { id: number; kind: string; resource: string; reason: string; count: number; first: string; last: string; requests?: ReportRequests }
+// A web report's link to the request list: the Internet filter that finds it,
+// matching waiting and approved counts, and a note when nothing matches.
+export interface ReportRequests { filter: string; waiting: number; approved: number; note: string }
 // Null when this sandbox-control release has no agent reports.
 export async function sandboxReports(id: string): Promise<AgentReport[] | null> {
   const response = await fetch('/sandboxes/api/reports?' + new URLSearchParams({workspace: id}), {credentials: 'same-origin', headers: {Accept: 'application/json'}});

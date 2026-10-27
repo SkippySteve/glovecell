@@ -172,3 +172,18 @@ details.fold[open] > summary { margin-bottom: var(--openui-space-m); }
   .card .rows li, .card > .items li { flex-wrap: wrap; }
   .big-countdown { font-size: 22px; }
 }
+
+/* Internet: web rules, "More ways to allow", list size and pager. */
+.warning-text, .risks { color: var(--openui-text-alert-primary); font: var(--openui-text-body-sm); }
+.risks { margin: 4px 0 0; padding-left: 18px; }
+.allow-panel { flex-basis: 100%; display: flex; flex-direction: column; gap: var(--openui-space-s); padding: var(--openui-space-s) 0; }
+.allow-panel fieldset { border: 1px solid var(--openui-border-default); border-radius: 6px; padding: var(--openui-space-s) var(--openui-space-m); display: flex; flex-direction: column; gap: 6px; }
+.allow-panel .actions { display: flex; flex-wrap: wrap; gap: var(--openui-space-s); align-items: center; }
+.check-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.row-actions { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.rule-lines { margin: 6px 0 0; padding-left: 18px; font: var(--openui-text-body-sm); display: flex; flex-direction: column; gap: 4px; }
+.capacity { display: flex; flex-direction: column; gap: var(--openui-space-s); padding: var(--openui-space-s) var(--openui-space-l); }
+.capacity .actions, .pager form { display: flex; flex-wrap: wrap; gap: var(--openui-space-s); align-items: center; }
+.field.inline { display: inline-flex; flex-direction: row; align-items: center; gap: 6px; }
+.pager input[type=number] { width: 5.5em; }
+details.pad { padding: var(--openui-space-s) var(--openui-space-l); }
