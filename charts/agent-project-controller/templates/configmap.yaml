@@ -17,7 +17,7 @@
 {{- fail "t3Connect.relayURL must be an HTTPS origin" }}
 {{- end }}
 {{- end }}
-{{- range $key := list "CONTROL_NAMESPACE" "WORKSPACE_IMAGE" "PROXY_IMAGE" "LISTEN_ADDR" "FORGEJO_TOKEN_FILE" "GITHUB_APP_PRIVATE_KEY_FILE" "OIDC_CLIENT_SECRET_FILE" "API_SECRET_FILE" "WORKSPACE_SCHEDULING_JSON" "PROXY_SCHEDULING_JSON" "T3_CONNECT_ENABLED" "T3_CONNECT_DATA" "T3_CONNECT_RELAY_URL" "T3_CONNECT_BINARY" "T3_CONNECT_CONNECTOR" "REGISTRAR_NAMESPACE" "WORKER_EXEC_CLUSTER_ROLE" "CONTROLLER_SERVICE_ACCOUNT" }}
+{{- range $key := list "CONTROL_NAMESPACE" "WORKSPACE_IMAGE" "PROXY_IMAGE" "LISTEN_ADDR" "FORGEJO_TOKEN_FILE" "GITHUB_APP_PRIVATE_KEY_FILE" "OIDC_CLIENT_SECRET_FILE" "API_SECRET_FILE" "WORKSPACE_SCHEDULING_JSON" "PROXY_SCHEDULING_JSON" "T3_CONNECT_ENABLED" "T3_CONNECT_DATA" "T3_CONNECT_RELAY_URL" "T3_CONNECT_BINARY" "T3_CONNECT_CONNECTOR" "REGISTRAR_NAMESPACE" "WORKER_EXEC_CLUSTER_ROLE" "PROJECT_ACCESS_CLUSTER_ROLE" "CONTROLLER_SERVICE_ACCOUNT" }}
 {{- if hasKey $.Values.config $key }}
 {{- fail (printf "config.%s is managed by the chart; use the corresponding chart setting" $key) }}
 {{- end }}
@@ -115,6 +115,7 @@ data:
 {{- if .Values.controlClient.enabled }}
   REGISTRAR_NAMESPACE: {{ .Values.controlClient.namespace | quote }}
 {{- end }}
+  PROJECT_ACCESS_CLUSTER_ROLE: {{ include "apc.projectAccessRole" . | quote }}
 {{- if include "apc.workerExec" . }}
   WORKER_EXEC_CLUSTER_ROLE: {{ include "apc.workerExecRole" . | quote }}
 {{- end }}

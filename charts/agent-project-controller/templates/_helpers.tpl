@@ -7,3 +7,9 @@
 {{- define "apc.workerExecRole" -}}
 {{- printf "%s-%s" .Release.Namespace .Release.Name | trunc 51 | trimSuffix "-" }}-worker-exec
 {{- end -}}
+
+{{/* ClusterRole the controller binds per project namespace for that
+project's Secrets and for deleting the project namespace itself. */}}
+{{- define "apc.projectAccessRole" -}}
+{{- printf "%s-%s" .Release.Namespace .Release.Name | trunc 48 | trimSuffix "-" }}-project-access
+{{- end -}}

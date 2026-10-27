@@ -31,6 +31,7 @@ import (
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/t3"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/telemetry"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/web"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
@@ -326,7 +327,10 @@ func run(ctx context.Context) error {
 		return e
 	}
 	config := ctrl.GetConfigOrDie()
-	manager, e := ctrl.NewManager(config, ctrl.Options{Scheme: scheme, LeaderElection: true, LeaderElectionID: "agent-project-controller", LeaderElectionNamespace: ns, HealthProbeBindAddress: ":8081", Metrics: metricsserver.Options{BindAddress: "0"}, Cache: cache.Options{ByObject: map[client.Object]cache.ByObject{&api.ProjectWorkspace{}: {Namespaces: map[string]cache.Config{ns: {}}}}}, Client: client.Options{Cache: &client.CacheOptions{DisableFor: []client.Object{&api.ProjectWorkspace{}}}}})
+	// Secrets are never cached: a cache would start a cluster-wide Secret
+	// informer, and the controller may read Secrets only in its own namespace
+	// and in project namespaces (RoleBindings, not a ClusterRole).
+	manager, e := ctrl.NewManager(config, ctrl.Options{Scheme: scheme, LeaderElection: true, LeaderElectionID: "agent-project-controller", LeaderElectionNamespace: ns, HealthProbeBindAddress: ":8081", Metrics: metricsserver.Options{BindAddress: "0"}, Cache: cache.Options{ByObject: map[client.Object]cache.ByObject{&api.ProjectWorkspace{}: {Namespaces: map[string]cache.Config{ns: {}}}}}, Client: client.Options{Cache: &client.CacheOptions{DisableFor: []client.Object{&api.ProjectWorkspace{}, &corev1.Secret{}}}}})
 	if e != nil {
 		return e
 	}
@@ -350,7 +354,7 @@ func run(ctx context.Context) error {
 	if e != nil {
 		return e
 	}
-	reconciler := &controller.Reconciler{LAN: lan, Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, GitHost: gitHost, ForgejoOrigin: origin, Owner: owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling, RegistrarNamespace: os.Getenv("REGISTRAR_NAMESPACE"), WorkerExecClusterRole: os.Getenv("WORKER_EXEC_CLUSTER_ROLE"), ControllerServiceAccount: env("CONTROLLER_SERVICE_ACCOUNT", controller.DefaultControllerServiceAccount)}}
+	reconciler := &controller.Reconciler{LAN: lan, Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, GitHost: gitHost, ForgejoOrigin: origin, Owner: owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling, RegistrarNamespace: os.Getenv("REGISTRAR_NAMESPACE"), WorkerExecClusterRole: os.Getenv("WORKER_EXEC_CLUSTER_ROLE"), ProjectAccessClusterRole: os.Getenv("PROJECT_ACCESS_CLUSTER_ROLE"), ControllerServiceAccount: env("CONTROLLER_SERVICE_ACCOUNT", controller.DefaultControllerServiceAccount)}}
 	if os.Getenv("GITHUB_REPOSITORY_TOKEN_FILE") != "" {
 		reconciler.GitHubToken, e = secret("GITHUB_REPOSITORY_TOKEN_FILE")
 		if e != nil {
