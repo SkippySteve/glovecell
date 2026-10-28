@@ -8,6 +8,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  statuses: write
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -28,21 +29,53 @@ jobs:
           go install sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.0.0-20260125163108-a19ec76a3c5d
           echo "KUBEBUILDER_ASSETS=$(setup-envtest use 1.34.1 -p path)" >> "$GITHUB_ENV"
       - name: Go race tests, vet and Helm qualification
+        id: gotest
+        continue-on-error: true
         run: |
-          make test vet build
-          APC_HELM_TEST=true go test -count=1 ./internal/installation
+          mkdir -p /tmp/diag
+          (make test vet build; APC_HELM_TEST=true go test -count=1 ./internal/installation) 2>&1 | tee /tmp/diag/gotest.log
+          grep -q -e '^FAIL' -e '^--- FAIL' -e '^panic' /tmp/diag/gotest.log && exit 1 || true
       - name: Operator and T3 denial tests
+        id: pytest
+        continue-on-error: true
         run: |
+          exec > >(tee /tmp/diag/pytest.log) 2>&1
           python3 -m venv /tmp/apc-tests
           /tmp/apc-tests/bin/pip install -r scripts/requirements-recovery.txt
           /tmp/apc-tests/bin/python -m unittest discover -s scripts -p 'test_*.py' -v
           /tmp/apc-tests/bin/python -m unittest discover -s internal/t3 -p 'test_*.py' -v
       - name: Vulnerability check
+        id: vuln
+        continue-on-error: true
         run: |
+          exec > >(tee /tmp/diag/vuln.log) 2>&1
           go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
           govulncheck ./...
       - name: Package release candidate
-        run: make release VERSION=0.1.0-alpha.1
+        id: release
+        continue-on-error: true
+        run: |
+          exec > >(tee /tmp/diag/release.log) 2>&1
+          make release VERSION=0.1.0-alpha.1
+      - name: DIAG post step results
+        if: always()
+        env:
+          TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          API: ${{ github.server_url }}/api/v1/repos/${{ github.repository }}/statuses
+        run: |
+          post() { # context, state, description
+            curl -s -o /dev/null -X POST -H "Authorization: token $TOKEN" -H 'Content-Type: application/json' \
+              -d "$(python3 -c 'import json,sys; print(json.dumps({"context":sys.argv[1],"state":sys.argv[2],"description":sys.argv[3][:900]}))' "$1" "$2" "$3")" "$API/$SHA"
+          }
+          post diag-gotest-outcome success "${{ steps.gotest.outcome }} pytest=${{ steps.pytest.outcome }} vuln=${{ steps.vuln.outcome }} release=${{ steps.release.outcome }}"
+          for n in gotest pytest vuln release; do
+            f=/tmp/diag/$n.log
+            [ -f $f ] || continue
+            d=$(grep -E -e '^(--- FAIL|FAIL|panic|Error|ERROR|Vulnerability #|    Found in|    Fixed in|.*_test.go:[0-9]+)' $f | head -12 | tr '\n' '|')
+            [ -n "$d" ] || d="(no failure lines) $(tail -c 300 $f | tr '\n' '|')"
+            post "diag-$n" success "$d"
+          done
       - uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
         with:
           name: alpha-candidate-${{ github.sha }}
