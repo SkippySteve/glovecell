@@ -75,8 +75,16 @@ jobs:
                   print('mis', m.get('ID'), r.get('Target'), m.get('Severity'), m.get('Status'), m.get('CauseMetadata', {}).get('StartLine'))
           PY
           python3 /tmp/diag.py > /tmp/diag.txt 2>&1 || true
-          trivy fs --scanners vuln,secret,misconfig $GATE . > /tmp/gate.log 2>&1 || true
-          grep -a -E '^(Total|[A-Za-z0-9_./-]+ \()|AVD-|KSV|DS[0-9]|CVE-|GHSA-|(CRITICAL|HIGH):' /tmp/gate.log | grep -a -v -E 'INFO|WARN' | head -25 | cut -c1-200 >> /tmp/diag.txt || true
+          trivy fs --scanners vuln,secret --severity HIGH,CRITICAL --ignore-unfixed --format json --output /tmp/v.json . > /dev/null 2>&1 || true
+          cat > /tmp/v.py <<'PY'
+          import json
+          for r in json.load(open('/tmp/v.json')).get('Results', []):
+              for v in r.get('Vulnerabilities') or []:
+                  print('vuln', r['Target'], v['PkgName'], v['VulnerabilityID'], v['InstalledVersion'], v.get('FixedVersion'))
+              for v in r.get('Secrets') or []:
+                  print('secret', r['Target'], v.get('RuleID'), v.get('StartLine'))
+          PY
+          python3 /tmp/v.py >> /tmp/diag.txt 2>&1 || true
           i=0
           while IFS= read -r line; do
             i=$((i+1)); post "diag-sec-$i" "$line"
