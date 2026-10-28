@@ -11,7 +11,6 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
-  statuses: write
 env:
   TRIVY_VERSION: 0.76.0
   TRIVY_SHA256: e24b1c51293c1b15e4ba8d45bbc7891ba053f90278ec2698f3562c993e145fe7
@@ -40,7 +39,6 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           mkdir -p "$GITHUB_WORKSPACE/reports"
       - name: Secrets in history
-        continue-on-error: true
         run: gitleaks git --redact --report-format json --report-path reports/gitleaks.json .
       - name: Record source findings and SBOM
         if: always()
@@ -49,47 +47,6 @@ jobs:
           trivy fs --format cyclonedx --output reports/sbom-source.cdx.json .
       - name: Gate source findings
         run: trivy fs --scanners vuln,secret,misconfig $GATE .
-      - name: DIAG post
-        if: always()
-        env:
-          TOKEN: ${{ github.token }}
-          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          API: ${{ github.server_url }}/api/v1/repos/${{ github.repository }}/statuses
-        run: |
-          post() {
-            curl -s -o /dev/null -X POST -H "Authorization: token $TOKEN" -H 'Content-Type: application/json' \
-              -d "$(python3 -c 'import json,sys; print(json.dumps({"context":sys.argv[1],"state":"success","description":sys.argv[2][:250]}))' "$1" "$2")" "$API/$SHA"
-          }
-          trivy fs --scanners misconfig --severity HIGH,CRITICAL --format json --output /tmp/tm.json . > /tmp/tm.log 2>&1 || true
-          grep -a -E 'FATAL|ERR|WARN' /tmp/tm.log | head -6 | cut -c1-230 | while IFS= read -r l; do post diag-sec-log "$l"; done
-          ls -la /tmp/tm.json 2>&1 | head -1 | while IFS= read -r l; do post diag-sec-ls "$l"; done
-          cat > /tmp/diag.py <<'PY'
-          import json
-          try:
-              for f in json.load(open('reports/gitleaks.json')):
-                  print('leak', f['Fingerprint'])
-          except Exception as e:
-              print('leak-err', e)
-          for r in json.load(open('/tmp/tm.json')).get('Results', []):
-              for m in r.get('Misconfigurations') or []:
-                  print('mis', m.get('ID'), r.get('Target'), m.get('Severity'), m.get('Status'), m.get('CauseMetadata', {}).get('StartLine'))
-          PY
-          python3 /tmp/diag.py > /tmp/diag.txt 2>&1 || true
-          trivy fs --scanners vuln,secret --severity HIGH,CRITICAL --ignore-unfixed --format json --output /tmp/v.json . > /dev/null 2>&1 || true
-          cat > /tmp/v.py <<'PY'
-          import json
-          for r in json.load(open('/tmp/v.json')).get('Results', []):
-              for v in r.get('Vulnerabilities') or []:
-                  print('vuln', r['Target'], v['PkgName'], v['VulnerabilityID'], v['InstalledVersion'], v.get('FixedVersion'))
-              for v in r.get('Secrets') or []:
-                  print('secret', r['Target'], v.get('RuleID'), v.get('StartLine'))
-          PY
-          python3 /tmp/v.py >> /tmp/diag.txt 2>&1 || true
-          i=0
-          while IFS= read -r line; do
-            i=$((i+1)); post "diag-sec-$i" "$line"
-          done < /tmp/diag.txt
-          post diag-sec-count "lines=$i"
       - uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
         if: always()
         with:
