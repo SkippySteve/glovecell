@@ -1,0 +1,43 @@
+# Reviewed Trivy exceptions. Each one names a check and ONE file, with the
+# reason and a date to review it again. Trivy stops honouring an entry after
+# expired_at, so the gate fails again until someone re-reads the reason.
+misconfigurations:
+  # Provider broker sample: the broker must exec into its owner pods to read the
+  # offline login. The Role already names exactly those pods (resourceNames);
+  # Trivy flags any pods/exec regardless. The real deployment adds admission
+  # policies (infra repo infra/agent-workplace/provider-broker/).
+  - id: KSV-0053
+    paths:
+      - config/samples/provider-broker.yaml
+    statement: pods/exec limited by resourceNames to the owner pods the broker needs
+    expired_at: 2027-04-28
+
+  # Controller RBAC (config/deploy/rbac.yaml). The same three needs, each
+  # already scoped by how it is bound:
+  # - KSV-0053: ClusterRole agent-project-controller-worker-exec is bound only by
+  #   RoleBindings inside project namespaces the controller creates, never by a
+  #   ClusterRoleBinding. The controller needs it to start T3 Connect and to
+  #   register in the worker.
+  - id: KSV-0053
+    paths:
+      - config/deploy/rbac.yaml
+    statement: worker exec ClusterRole is bound per project namespace only
+    expired_at: 2027-04-28
+
+  # - KSV-0041: ClusterRole agent-project-controller-project-access (Secrets in a
+  #   project's own namespace) is likewise bound per project namespace only. It
+  #   holds that project's credential Secrets.
+  - id: KSV-0041
+    paths:
+      - config/deploy/rbac.yaml
+    statement: project Secrets ClusterRole is bound per project namespace only
+    expired_at: 2027-04-28
+
+  # - KSV-0056: the controller creates the Services and the optional
+  #   NetworkPolicies of each project (NETWORK_PROVIDER=network-policy is
+  #   experimental; the default Cilium profile does not use those rules).
+  - id: KSV-0056
+    paths:
+      - config/deploy/rbac.yaml
+    statement: controller manages per-project Services and NetworkPolicies
+    expired_at: 2027-04-28

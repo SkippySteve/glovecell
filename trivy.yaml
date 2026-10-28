@@ -1,0 +1,3 @@
+# Trivy reads this file from the working directory. It only points at the
+# reviewed exceptions list; see .trivyignore.yaml.
+ignorefile: .trivyignore.yaml
