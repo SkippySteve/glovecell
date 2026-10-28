@@ -76,7 +76,7 @@ jobs:
           for n in inst leaks gate; do
             f=/tmp/diag/$n.log
             [ -f $f ] || continue
-            d=$(tail -c 600 $f | tr '\n' '|' || true)
+            d=$(grep -a -E "AVD-|KSV|HIGH|CRITICAL|Failures|\.yaml|\.tf|Dockerfile" $f | head -30 | cut -c1-90 | tr '\n' '|' || true)
             post "diag-sec-$n" success "$d"
           done
       - uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
