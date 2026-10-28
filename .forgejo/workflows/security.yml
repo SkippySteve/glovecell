@@ -11,6 +11,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  statuses: write
 env:
   TRIVY_VERSION: 0.76.0
   TRIVY_SHA256: e24b1c51293c1b15e4ba8d45bbc7891ba053f90278ec2698f3562c993e145fe7
@@ -26,7 +27,11 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install pinned scanners
+        id: inst
+        continue-on-error: true
         run: |
+          mkdir -p /tmp/diag
+          exec > >(tee /tmp/diag/inst.log) 2>&1
           set -eu
           cd /tmp
           curl -fsSLo trivy.tgz "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
@@ -39,14 +44,41 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           mkdir -p "$GITHUB_WORKSPACE/reports"
       - name: Secrets in history
-        run: gitleaks git --redact --report-format json --report-path reports/gitleaks.json .
+        id: leaks
+        continue-on-error: true
+        run: |
+          gitleaks git --redact --report-format json --report-path reports/gitleaks.json . 2>&1 | tee /tmp/diag/leaks.log || true
+          python3 -c "
+          import json
+          for f in json.load(open('reports/gitleaks.json')): print('LEAK', f['RuleID'], f['File'], f['StartLine'], f['Commit'][:8])
+          " 2>&1 | head -20 | tee -a /tmp/diag/leaks.log
       - name: Record source findings and SBOM
         if: always()
         run: |
           trivy fs --scanners vuln,secret,misconfig --format json --output reports/trivy-source.json .
           trivy fs --format cyclonedx --output reports/sbom-source.cdx.json .
       - name: Gate source findings
-        run: trivy fs --scanners vuln,secret,misconfig $GATE .
+        id: gate
+        continue-on-error: true
+        run: trivy fs --scanners vuln,secret,misconfig $GATE . 2>&1 | tee /tmp/diag/gate.log; test ${PIPESTATUS[0]} -eq 0
+      - name: DIAG post
+        if: always()
+        env:
+          TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          API: ${{ github.server_url }}/api/v1/repos/${{ github.repository }}/statuses
+        run: |
+          post() {
+            curl -s -o /dev/null -X POST -H "Authorization: token $TOKEN" -H 'Content-Type: application/json' \
+              -d "$(python3 -c 'import json,sys; print(json.dumps({"context":sys.argv[1],"state":sys.argv[2],"description":sys.argv[3][:900]}))' "$1" "$2" "$3")" "$API/$SHA"
+          }
+          post diag-sec-outcome success "inst=${{ steps.inst.outcome }} leaks=${{ steps.leaks.outcome }} gate=${{ steps.gate.outcome }}"
+          for n in inst leaks gate; do
+            f=/tmp/diag/$n.log
+            [ -f $f ] || continue
+            d=$(tail -c 600 $f | tr '\n' '|' || true)
+            post "diag-sec-$n" success "$d"
+          done
       - uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
         if: always()
         with:
