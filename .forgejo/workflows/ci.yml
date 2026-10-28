@@ -72,7 +72,7 @@ jobs:
           for n in gotest pytest vuln release; do
             f=/tmp/diag/$n.log
             [ -f $f ] || continue
-            d=$(grep -E -e '^(--- FAIL|FAIL|panic|Error|ERROR|Vulnerability #|    Found in|    Fixed in|.*_test.go:[0-9]+)' $f | head -12 | tr '\n' '|')
+            d=$(grep -E -e '^(--- FAIL|FAIL|panic|Error|ERROR|Vulnerability #|    Found in|    Fixed in|.*_test.go:[0-9]+)' $f | head -12 | tr '\n' '|' || true)
             [ -n "$d" ] || d="(no failure lines) $(tail -c 300 $f | tr '\n' '|')"
             post "diag-$n" success "$d"
           done
