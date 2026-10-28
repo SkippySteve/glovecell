@@ -72,9 +72,11 @@ jobs:
               print('leak-err', e)
           for r in json.load(open('/tmp/tm.json')).get('Results', []):
               for m in r.get('Misconfigurations') or []:
-                  print('mis', m['ID'], m['AVDID'], r['Target'], m['Status'], m.get('CauseMetadata', {}).get('StartLine'))
+                  print('mis', m.get('ID'), r.get('Target'), m.get('Severity'), m.get('Status'), m.get('CauseMetadata', {}).get('StartLine'))
           PY
-          python3 /tmp/diag.py > /tmp/diag.txt || true
+          python3 /tmp/diag.py > /tmp/diag.txt 2>&1 || true
+          trivy fs --scanners vuln,secret,misconfig $GATE . > /tmp/gate.log 2>&1 || true
+          grep -a -E '^(Total|[A-Za-z0-9_./-]+ \()|AVD-|KSV|DS[0-9]|CVE-|GHSA-|(CRITICAL|HIGH):' /tmp/gate.log | grep -a -v -E 'INFO|WARN' | head -25 | cut -c1-200 >> /tmp/diag.txt || true
           i=0
           while IFS= read -r line; do
             i=$((i+1)); post "diag-sec-$i" "$line"
