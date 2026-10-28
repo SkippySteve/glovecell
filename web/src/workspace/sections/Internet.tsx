@@ -4,7 +4,7 @@ import {useData} from '../../data';
 import {classicHref, timeOf} from '../../sandbox/Sandbox';
 import {Button, Callout, Card, CardHeader, Input, Tabs, TabsList, TabsTrigger, Tag, ToggleGroup, ToggleItem} from '../../ui';
 import {Countdown, plural, SectionIntro, WindowBar} from '../bits';
-import {addRule, clearUnapproved, decideRequest, DEFAULT_PAGE_SIZE, dismissOlder, draftFor, draftRisks, EXPIRIES, loadRequests, METHODS, needsConfirm, PAGE_SIZES, pageKeeping, pageOf, pageSize, passthroughAllowed, removeRule, requestUrl, WEB_WINDOWS, webAccess, webLearn, webLock, webOpen, webStartFresh, type Requests, type RuleDraft, type RuleKind} from '../sources/internet';
+import {addRule, clearUnapproved, decideRequest, DEFAULT_PAGE_SIZE, dismissOlder, draftFor, draftRisks, EXPIRIES, loadRequests, METHODS, needsConfirm, PAGE_SIZES, pageKeeping, pageOf, pageSize, passthroughAllowed, removeRule, requestUrl, rulesBySource, WEB_WINDOWS, webAccess, webLearn, webLock, webOpen, webStartFresh, type Requests, type RuleDraft, type RuleKind, type RuleSource} from '../sources/internet';
 import {reportTime} from '../sources/reports';
 import {hashQuery, replaceHashQuery} from '../../router';
 import {clockAt} from '../time';
@@ -160,7 +160,8 @@ function CapacityBanner({c, filter, busy, clear, dismiss}: {c: EgressCapacity; f
 function WebRules({ws, data}: {ws: SandboxState; data: Requests}) {
   const [busy, setBusy] = useState('');
   const [adding, setAdding] = useState(false);
-  const rules = data.rules || [];
+  const [show, setShow] = useState<RuleSource>('all');
+  const {shown: rules, git, here} = rulesBySource(data.rules || [], show);
   const remove = async (r: WebRule) => {
     if (!confirm(`Remove the rule: ${r.description}?`)) return;
     setBusy(r.id);
@@ -173,18 +174,19 @@ function WebRules({ws, data}: {ws: SandboxState; data: Requests}) {
       <div className="card-hd"><h2 id="web-rules-title">Web rules ({rules.length})</h2><span className="end"><Button size="small" variant="secondary" onClick={() => setAdding(!adding)}>{adding ? 'Close' : 'Add a web rule'}</Button></span></div>
       <div className="card-bd">
         <p className="subtle-text">Broad approvals: a path pattern, a whole domain, every subdomain, or a GitHub project. Each is one entry; removing it removes everything it allows. Private networks and cluster services stay blocked whatever a rule says. Every change is a policy revision.</p>
+        {git ? <p className="subtle-text">Show: {(['all', 'here', 'git'] as RuleSource[]).map(s => <Button key={s} size="small" variant={show === s ? 'secondary' : 'tertiary'} onClick={() => setShow(s)}>{s === 'all' ? `all (${git + here})` : s === 'here' ? `added here (${here})` : `from Git (${git})`}</Button>)} Rules from Git give read-only access to the source and docs of the projects this deployment uses; they are permanent and change only in Git.</p> : null}
         {adding ? <AllowPanel ws={ws} free onDone={() => setAdding(false)} /> : null}
       </div>
       <ul className="items rows" aria-label="Web rules">
         {rules.map(r => (
           <li key={r.id}>
             <div className="item-main">
-              <span className="request">{r.passthrough ? <Tag size="sm" variant="warning" text="uninspected" /> : null}{!r.active ? <Tag size="sm" text="expired" /> : null} <strong>{r.description}</strong></span>
+              <span className="request">{r.fromGit ? <Tag size="sm" variant="info" text="from Git" /> : null}{r.passthrough ? <Tag size="sm" variant="warning" text="uninspected" /> : null}{!r.active ? <Tag size="sm" text="expired" /> : null} <strong>{r.description}</strong></span>
               <span className="subtle-text">{r.expires ? `${r.active ? 'until' : 'expired'} ${reportTime(r.expires)}` : 'permanent'} · {plural(r.requests, 'request')} allowed{r.lastUsed ? `, last ${reportTime(r.lastUsed)}` : ''} · added by {r.actor}</span>
               {r.risks.length ? <ul className="risks">{r.risks.map(x => <li key={x}>{x}</li>)}</ul> : null}
               <details><summary>{plural(r.rules.length, 'rule')} it allows</summary><ul className="rule-lines">{r.rules.map((l, i) => <li key={i}><code>{l.methods.length ? l.methods.join(', ') : 'any method'} {l.host}{l.path}</code> <span className="subtle-text">{l.purpose}</span></li>)}</ul></details>
             </div>
-            <Button size="small" variant="secondary" buttonType="destructive" disabled={busy === r.id} onClick={() => remove(r)}>Remove</Button>
+            {r.fromGit ? <span className="subtle-text">managed in Git: {r.source}</span> : <Button size="small" variant="secondary" buttonType="destructive" disabled={busy === r.id} onClick={() => remove(r)}>Remove</Button>}
           </li>
         ))}
         {!rules.length ? <li className="empty-item">No web rules yet. Use “More ways to allow” on a waiting request.</li> : null}

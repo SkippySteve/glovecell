@@ -2,6 +2,7 @@ import {useEffect, useState, type FormEvent} from 'react';
 import {api, type AuditRecord, type Project as ProjectWorkspace} from './api';
 import {useData} from './data';
 import {LanHostList} from './LanHosts';
+import {ReferenceRules} from './Reference';
 import {newRule, RuleList, rulesError, toDraft, toRule, type RuleDraft} from './Rules';
 import {pausedForEdits, projectState, settled} from './state';
 import {Button, Callout, Card, CardHeader, Input, Tag} from './ui';
@@ -174,6 +175,7 @@ export function ProjectInternet({p}: {p: ProjectWorkspace}) {
           ) : null}
         </Card>
       </form>
+      <ReferenceRules />
     </div>
   );
 }

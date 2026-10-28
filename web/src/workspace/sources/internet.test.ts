@@ -1,7 +1,7 @@
 import {describe, expect, it} from 'vitest';
-import type {AgentReport, AllowOptions, Observation} from '../../api';
+import type {AgentReport, AllowOptions, Observation, WebRule} from '../../api';
 import {hashQuery, parse, withQuery} from '../../router';
-import {addRule, draftFor, draftRisks, needsConfirm, pageKeeping, pageOf, pageSize, type RequestList} from './internet';
+import {addRule, draftFor, draftRisks, needsConfirm, pageKeeping, pageOf, pageSize, rulesBySource, type RequestList} from './internet';
 import {reportRequests} from './reports';
 
 const item = (i: number): Observation => ({host: 'proxy.golang.org', method: 'GET', path: `/m/@v/v${i}.zip`, scheme: 'https', port: 443, observation: String(i)});
@@ -69,5 +69,16 @@ describe('web blocked reports', () => {
   it('ignore other kinds and older releases', () => {
     expect(reportRequests(report({kind: 'package', requests: {filter: 'x', waiting: 0, approved: 0, note: ''}}))).toBeUndefined();
     expect(reportRequests(report({}))).toBeUndefined();
+  });
+});
+
+describe('web rules by source', () => {
+  const rule = (id: string, fromGit: boolean) => ({id, fromGit, source: fromGit ? 'git:reference-sources.yaml#' + id : undefined}) as WebRule;
+  const rules = [rule('a', false), rule('cilium', true), rule('uv', true)];
+  it('counts and filters rules from Git and rules added here', () => {
+    expect(rulesBySource(rules, 'all')).toMatchObject({git: 2, here: 1});
+    expect(rulesBySource(rules, 'all').shown).toHaveLength(3);
+    expect(rulesBySource(rules, 'git').shown.map(r => r.id)).toEqual(['cilium', 'uv']);
+    expect(rulesBySource(rules, 'here').shown.map(r => r.id)).toEqual(['a']);
   });
 });

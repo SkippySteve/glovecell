@@ -56,6 +56,15 @@ type Server struct {
 	Downloads *Downloads
 	// Providers enables brokered provider opt-in (providers.go).
 	Providers *Providers
+	// Reference is the deployment's reference rules, shown read only next to
+	// every project's own rules (README "Reference rules").
+	Reference Reference
+}
+
+// Reference is the reference list as the console shows it.
+type Reference struct {
+	Digest string          `json:"digest"`
+	Rules  []api.HTTPSRule `json:"rules"`
 }
 
 // openUISpinnerStyle allows the one stylesheet OpenUI's Renderer injects on mount
@@ -172,6 +181,13 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.HandleFunc("POST /api/v1/workspaces/{name}/lan-hosts", s.addLANHost)
 	mux.HandleFunc("DELETE /api/v1/workspaces/{name}/lan-hosts/{address}", s.removeLANHost)
 	mux.HandleFunc("GET /api/v1/provider-leases", s.providerLeases)
+	mux.HandleFunc("GET /api/v1/reference-rules", func(w http.ResponseWriter, r *http.Request) {
+		out := s.Reference
+		if out.Rules == nil {
+			out.Rules = []api.HTTPSRule{}
+		}
+		writeJSON(w, out)
+	})
 	mux.HandleFunc("POST /api/v1/workspaces/{name}/providers", s.addProvider)
 	mux.HandleFunc("DELETE /api/v1/workspaces/{name}/providers/{provider}", s.removeProvider)
 	mux.HandleFunc("GET /api/v1/workspaces/{name}/audit", s.audit)

@@ -66,6 +66,13 @@ type Config struct {
 	// ServiceAccount in each project namespace, so project Secrets and
 	// deleting the project namespace never need a cluster-wide grant.
 	ProjectAccessClusterRole string
+
+	// ReferenceRules are the deployment's read-only reference rules
+	// (proxy.ReferenceRules, README "Reference rules"), added to every
+	// project's proxy policy after its own rules. ReferenceDigest names the
+	// list in audit records.
+	ReferenceRules  []api.HTTPSRule
+	ReferenceDigest string
 }
 
 func (c Config) Validate() error {
@@ -510,6 +517,11 @@ func (r *Reconciler) ensure(ctx context.Context, w *api.ProjectWorkspace) error 
 		if e = r.modelAccess(ctx, w); e != nil {
 			return e
 		}
+	}
+	// The deployment's reference list may change while a project runs; only
+	// its labelled rules are swapped (reference_rules.go).
+	if e = r.syncReferenceRules(ctx, w); e != nil {
+		return e
 	}
 	if e = r.updateAccessPolicy(ctx, w, s); e != nil {
 		return e
@@ -1249,12 +1261,8 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 	if e != nil {
 		return e
 	}
-	hosts := []string{}
-	for _, r := range cfg.Rules {
-		hosts = append(hosts, r.Host)
-	}
 	objects := []client.Object{}
-	for _, p := range r.Network.Objects(ns, string(w.UID), hosts) {
+	for _, p := range r.Network.Objects(ns, string(w.UID), policyHosts(cfg)) {
 		objects = append(objects, p)
 	}
 	gitData := map[string][]byte{"username": s.Data["username"], "token": s.Data["token"]}

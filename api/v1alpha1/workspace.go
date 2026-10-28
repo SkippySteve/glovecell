@@ -16,6 +16,12 @@ type HTTPSRule struct {
 	Host    string   `json:"host"`
 	Methods []string `json:"methods"`
 	Paths   []string `json:"paths"` // Literal prefixes, not regular expressions.
+	// Source labels a rule from the deployment's reference list (README
+	// "Reference rules"), such as "git:reference-sources.yaml#cilium". Only
+	// the controller sets it: the CRD has no such field, and a project's own
+	// rules with a source are refused. Labelled rules are read only, may use
+	// a "*.domain" host, and do not count toward the 64 project rules.
+	Source string `json:"source,omitempty"`
 }
 type WorkspaceSpec struct {
 	Repository   string              `json:"repository"`

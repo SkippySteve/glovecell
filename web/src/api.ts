@@ -1,7 +1,8 @@
 // Typed clients for the console API (/api/v1) and the mounted sandbox-control service (/sandboxes).
 
 export type Method = 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS';
-export interface HTTPSRule { host: string; methods: Method[]; paths: string[] }
+// source is set only on the deployment's reference rules (reference.ts).
+export interface HTTPSRule { host: string; methods: Method[]; paths: string[]; source?: string }
 export interface ProjectRepository { name: string; host: string; repository: string; public?: boolean }
 // Direct outbound TCP from the project worker to one IPv4 host on the operator's LAN.
 export interface LANHost { address: string; ports: number[]; note?: string; addedBy?: string; addedAt?: string }
@@ -101,6 +102,9 @@ export interface WebRule {
   id: string; kind: 'path' | 'domain' | 'wildcard' | 'github-repo' | 'github-owner'; host: string; path: string; methods: string[]; anyMethod: boolean; apex: boolean;
   owner: string; repo: string; write: boolean; passthrough: boolean; expires: string; active: boolean; description: string; risks: string[];
   rules: {host: string; path: string; methods: string[]; purpose: string}[]; requests: number; lastUsed: string; actor: string; created: string;
+  // Set on rules a sandbox-control sync keeps in step with Git (reference
+  // sources); the console cannot remove them.
+  source?: string; fromGit?: boolean;
 }
 export interface RuleEvent { at: string; action: string; rule: string; description: string; by: string; expires: string; detail: string }
 export interface PassthroughTool { name: string; problem: string; evidence: string; source: string; alternative: string }

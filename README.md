@@ -78,6 +78,23 @@ Keep inspection keys outside agent environments, install only the necessary publ
 
 Optional LAN host grants are the one direct exception: an operator can let one project's worker open TCP to a single IPv4 host and listed ports on the home network, while the project runs. They are off by default. See [LAN hosts](docs/console.md#lan-hosts).
 
+### Reference rules
+
+An operator can give every project read-only access to a fixed list of sources, such as the repositories and official documentation of the open-source projects a deployment runs, without adding them to each project. Set `REFERENCE_RULES_FILE` (Helm: `referenceRules.configMap`) to a JSON document:
+
+```json
+{"version": 1, "digest": "0123456789ab", "projects": [
+  {"name": "cilium", "source": "git:reference-sources.yaml#cilium",
+   "repos": [{"github": "cilium/cilium"}, {"host": "codeberg.org", "path": "owner/repo"}],
+   "docs": [{"domain": "cilium.io", "wildcard": true}, {"domain": "cilium.readthedocs.io", "wildcard": false}]}]}
+```
+
+- Each project's rules are ordinary HTTPS rules in the project's proxy policy, after the project's own rules, labelled with `source`. The console shows them, read only, under **From Git** on each project's Internet page, and `GET /api/v1/reference-rules` lists them.
+- They are read only: `docs` allow GET and HEAD on every path of the domain, and with `wildcard` of every name one label below it (`*.cilium.io`, as Cilium's `matchPattern` does). A wildcard is refused over a public suffix or shared hosting (the Public Suffix List, private section included). A GitHub repository allows what clone, fetch, API reads, raw files, archives, Git LFS and release downloads use; another Git host allows GET and HEAD under the repository's path. POST is allowed only to `git-upload-pack` (fetch); `git-receive-pack` (push) and every other method are refused. Nothing in the document can ask for more.
+- They do not count toward a project's 64 rules (the list has its own bound of 2,048 rules) and a project's own rules cannot carry a `source`.
+- The controller reads the file at startup; an invalid file stops it rather than run with part of the list. A changed list applies to running projects without a pause: only the labelled rules change in the proxy policy and network policy, and the proxy restarts so open connections end under the new list. Each change is an audit record (`reference-rules-<digest>`).
+- GET-only access still lets an agent put data into a URL it requests, so list only sources the deployment would let any project read.
+
 The initial release should document a qualified Cilium plus inspecting-proxy combination. Additional network or proxy providers require the same bypass, revocation and failure-mode qualification.
 
 ## Optional agent integrations

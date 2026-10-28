@@ -130,3 +130,12 @@ export function addRule(d: RuleDraft): {path: '/egress'; fields: Record<string, 
   return {path: '/egress', fields};
 }
 export const removeRule = (r: WebRule): Form => ({path: '/egress', fields: {action: 'web-rule-remove', 'rule.id': r.id}});
+
+// Web rules by source: every rule, those added here, or those from Git
+// (sandbox-control reference sources). Counts are of every rule.
+export type RuleSource = 'all' | 'here' | 'git';
+export function rulesBySource(rules: WebRule[], show: RuleSource) {
+  const git = rules.filter(r => r.fromGit).length;
+  const shown = show === 'all' ? rules : rules.filter(r => Boolean(r.fromGit) === (show === 'git'));
+  return {shown, git, here: rules.length - git};
+}
