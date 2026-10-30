@@ -15,6 +15,7 @@ import (
 	"time"
 
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/auditlog"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/bootstrap"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/connect"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/controller"
@@ -30,6 +31,7 @@ import (
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/proxy"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/reader"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/registration"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/store"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/t3"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/telemetry"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/web"
@@ -57,6 +59,41 @@ func env(k, fallback string) string {
 		return fallback
 	}
 	return v
+}
+// databaseFromEnv reads the controller database settings (D13 item 2,
+// docs/database.md). Without DATABASE_URL_FILE it returns nil: history stays
+// in audit ConfigMaps and approvals and access requests are refused.
+func databaseFromEnv(ctx context.Context) (*store.Postgres, store.Retention, error) {
+	urlFile, caFile := os.Getenv("DATABASE_URL_FILE"), os.Getenv("DATABASE_CA_FILE")
+	retention := store.Retention{History: 365 * 24 * time.Hour, DecidedRequests: 365 * 24 * time.Hour, ProxySummaries: 30 * 24 * time.Hour}
+	if urlFile == "" {
+		if caFile != "" || os.Getenv("DATABASE_MAX_CONNS") != "" {
+			return nil, retention, errors.New("DATABASE_CA_FILE and DATABASE_MAX_CONNS need DATABASE_URL_FILE")
+		}
+		return nil, retention, nil
+	}
+	cfg, err := store.ConfigFromFiles(urlFile, caFile)
+	if err != nil {
+		return nil, retention, err
+	}
+	if v := os.Getenv("DATABASE_MAX_CONNS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 2 || n > 100 {
+			return nil, retention, errors.New("DATABASE_MAX_CONNS must be 2 to 100")
+		}
+		cfg.MaxConns = int32(n)
+	}
+	for key, dst := range map[string]*time.Duration{"HISTORY_RETENTION": &retention.History, "DECIDED_REQUEST_RETENTION": &retention.DecidedRequests, "PROXY_SUMMARY_RETENTION": &retention.ProxySummaries} {
+		if v := os.Getenv(key); v != "" {
+			d, err := time.ParseDuration(v)
+			if err != nil || d < 0 || d > 0 && d < 24*time.Hour {
+				return nil, retention, fmt.Errorf("%s must be 0 (keep) or a duration of at least 24h", key)
+			}
+			*dst = d
+		}
+	}
+	db, err := store.Open(ctx, cfg)
+	return db, retention, err
 }
 func profile(prefix string) controller.ResourceProfile {
 	return controller.ResourceProfile{CPURequest: os.Getenv(prefix + "_CPU_REQUEST"), MemoryRequest: os.Getenv(prefix + "_MEMORY_REQUEST"), CPULimit: os.Getenv(prefix + "_CPU_LIMIT"), MemoryLimit: os.Getenv(prefix + "_MEMORY_LIMIT")}
@@ -413,6 +450,31 @@ func run(ctx context.Context) error {
 	if e = reconciler.Config.Validate(); e != nil {
 		return e
 	}
+	// Operational records (D13 item 2). The pool connects lazily: the
+	// controller starts and enforces while the database is down, and the
+	// monitor applies migrations as soon as it is reachable.
+	db, retention, e := databaseFromEnv(ctx)
+	if e != nil {
+		return fmt.Errorf("database: %w", e)
+	}
+	var monitor *store.Monitor
+	var auditLog *auditlog.Log
+	if db != nil {
+		defer db.Close()
+		auditLog = &auditlog.Log{Client: direct, Namespace: ns, Store: db}
+		monitor = store.NewMonitor(db, db.Migrate)
+		monitor.Retention = retention
+		monitor.OnReady = func(ctx context.Context) {
+			if _, err := auditLog.ImportLegacy(ctx); err != nil {
+				slog.Warn("audit ConfigMap import incomplete; retrying", "error", err.Error())
+			}
+		}
+		reconciler.AuditLog = auditLog
+		go monitor.Run(ctx)
+		go auditLog.Run(ctx, 30*time.Second)
+	} else {
+		slog.Warn("no database configured (DATABASE_URL_FILE): history stays in audit ConfigMaps, and approvals and access requests are refused; PostgreSQL is required (docs/database.md)")
+	}
 	// Orchestrator adapters an OrchestratorClass may name. Orca and command
 	// clients grant nothing in the cluster today (the control-host registrar
 	// does); T3 joins when T3 Connect is configured below.
@@ -465,8 +527,20 @@ func run(ctx context.Context) error {
 	if e = manager.AddReadyzCheck("readyz", healthz.Ping); e != nil {
 		return e
 	}
+	if monitor != nil {
+		// Ready reflects database health. The chart's console Service
+		// publishes not-ready addresses, so the console stays reachable to
+		// explain an outage.
+		if e = manager.AddReadyzCheck("database", monitor.Check); e != nil {
+			return e
+		}
+	}
 	server := &web.Server{T3Connect: reconciler.Access != nil, Client: direct, Host: host, Namespace: ns, Owner: owner, Password: password, Origin: os.Getenv("PUBLIC_ORIGIN"), GitHost: gitHost, GitOrigin: origin, AllowBasic: os.Getenv("ALLOW_STATIC_LOGIN") == "true"}
 	server.GitHubOwner = reconciler.Config.GitHubOwner
+	server.Audit = auditLog
+	if db != nil {
+		server.Database = &web.Database{Store: db, Monitor: monitor}
+	}
 	server.Reference = web.Reference{Digest: reconciler.Config.ReferenceDigest, Rules: reconciler.Config.ReferenceRules}
 	if reconciler.ProviderLeases != nil {
 		server.Providers = &web.Providers{Status: reconciler.ProviderLeaseStatus}
@@ -504,7 +578,8 @@ func run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		server.OIDC, e = web.NewOIDC(ctx, web.OIDCConfig{Issuer: os.Getenv("OIDC_ISSUER"), ClientID: os.Getenv("OIDC_CLIENT_ID"), ClientSecret: clientSecret, Origin: server.Origin, GroupsClaim: env("OIDC_GROUPS_CLAIM", "groups"), Scopes: web.CSV(env("OIDC_SCOPES", "profile,groups")), AllowedGroups: web.CSV(os.Getenv("OIDC_ALLOWED_GROUPS")), AllowedSubjects: web.CSV(os.Getenv("OIDC_ALLOWED_SUBJECTS"))})
+		server.OIDC, e = web.NewOIDC(ctx, web.OIDCConfig{Issuer: os.Getenv("OIDC_ISSUER"), ClientID: os.Getenv("OIDC_CLIENT_ID"), ClientSecret: clientSecret, Origin: server.Origin, GroupsClaim: env("OIDC_GROUPS_CLAIM", "groups"), Scopes: web.CSV(env("OIDC_SCOPES", "profile,groups")), AllowedGroups: web.CSV(os.Getenv("OIDC_ALLOWED_GROUPS")), AllowedSubjects: web.CSV(os.Getenv("OIDC_ALLOWED_SUBJECTS")),
+			ApproverGroups: web.CSV(os.Getenv("OIDC_APPROVER_GROUPS")), ApproverGroupsClaim: os.Getenv("OIDC_APPROVER_GROUPS_CLAIM")})
 		if e != nil {
 			return e
 		}
