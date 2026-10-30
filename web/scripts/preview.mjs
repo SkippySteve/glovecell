@@ -90,6 +90,9 @@ const page = (list, q) => { const items = list.filter(o => !q || (o.host + o.pat
 
 const project = {metadata: {name: 'demo-project', uid: 'u1', generation: 3, resourceVersion: '42'}, spec: {repository: 'example/demo-project', desiredState: 'Running', https: [{host: 'api.github.com', methods: ['GET'], paths: ['/repos/example/demo-project']}, {host: 'registry.npmjs.org', methods: ['GET', 'HEAD'], paths: ['/']}], lanHosts: [{address: '192.168.1.31', ports: [22], note: 'Desktop SSH', addedBy: 'operator', addedAt: new Date((t0 - 3 * DAY) * 1000).toISOString()}]}, status: {phase: 'Ready', namespace: 'apc-demo-project', observedGeneration: 3, conditions: [{type: 'Ready', status: 'True', reason: 'Ready', message: 'Ready', observedGeneration: 3}]}};
 
+// A second, paused project so Home's filters and sort orders have something to sort.
+const pausedProject = {metadata: {name: 'docs-site', uid: 'u2', generation: 2, resourceVersion: '17'}, spec: {repository: 'example/docs-site', desiredState: 'Paused', https: []}, status: {phase: 'Paused', namespace: 'apc-docs-site', observedGeneration: 2, conditions: [{type: 'Ready', status: 'False', reason: 'Paused', message: 'Paused by operator', observedGeneration: 2}]}};
+
 function act(w, path, f) {
   const action = f.get('action') || '';
   const seconds = Number(f.get('duration') || 0), minutes = Number(f.get('minutes') || 60);
@@ -254,7 +257,7 @@ createServer(async (req, res) => {
         const b = req.method === 'POST' ? JSON.parse((await body(req)) || '{}') : {};
         try { const [status, out] = downloads(decodeURIComponent(dl[1]), dl[2], req.method, b); return json(res, status, out); } catch (e) { return json(res, 409, {error: e.message}); }
       }
-      if (r === 'workspaces') return json(res, 200, [project]);
+      if (r === 'workspaces') return json(res, 200, [project, pausedProject]);
       if (r === 'repositories') return json(res, 200, [{full_name: 'example/demo-project'}]);
       if (r === 'orca-projects') return json(res, 200, [{name: 'demo-project', repo: 'example/demo-project', status: 'registered', clone: '/workspace/demo-project'}, {name: 'docs', repo: 'example/docs', status: 'published', actor: 'operator', requestedAt: new Date().toISOString()}]);
       if (r === 'runs') return json(res, 200, []);

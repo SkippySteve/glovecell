@@ -34,7 +34,6 @@ export function NewSandbox() {
   const available = Boolean(repositories?.length);
   return (
     <>
-      <nav className="crumbs" aria-label="Breadcrumb"><a href="#/">Sandboxes</a><span aria-hidden="true">/</span><span>New</span></nav>
       <div className="page-head"><div><h1>New sandbox</h1><p className="muted">Pick a repository and decide what the sandbox can reach.</p></div></div>
       <form id="create" onSubmit={submit}>
         <Card variant="sunk" width="full">

@@ -41,7 +41,6 @@ export function OrcaProjects() {
   };
   return (
     <>
-      <nav className="crumbs" aria-label="Breadcrumb"><a href="#/">Sandboxes</a><span aria-hidden="true">/</span><span>Orca projects</span></nav>
       <div className="page-head"><div><h1>Orca projects</h1><p className="muted">Publish a repository to the Orca sandbox. It appears in every Orca app paired with that sandbox, with no further steps. Each project is a repository inside that one sandbox.</p></div></div>
       <form onSubmit={submit}>
         <Card variant="sunk" width="full">
