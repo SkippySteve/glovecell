@@ -5,6 +5,7 @@ package matrix
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -93,6 +94,13 @@ func (b *Bot) Run(ctx context.Context) error {
 	b.cli.Crypto = b.crypto
 	b.started = time.Now()
 	slog.Info("matrix bot signed in", "user", b.cfg.UserID, "device", b.cli.DeviceID.String())
+	// Show Steve's current master key so the operator can compare it with
+	// his own client before pinning it. It is public key material.
+	if msk := b.masterKey(ctx, id.UserID(b.cfg.Steve)); msk != "" {
+		slog.Info("Steve's cross-signing master key as the bot sees it", "masterKey", msk, "pinned", b.cfg.Trust.PinnedMasterKey != "", "matchesPin", msk == b.cfg.Trust.PinnedMasterKey)
+	} else {
+		slog.Warn("Steve has no cross-signing master key yet; no device of his counts as verified")
+	}
 	syncer := b.cli.Syncer.(*mautrix.DefaultSyncer)
 	syncer.OnSync(func(context.Context, *mautrix.RespSync, string) bool {
 		b.ready.Store(true)
@@ -273,7 +281,15 @@ func (b *Bot) SendVoice(ctx context.Context, roomID, threadRoot string, audio *s
 	} else {
 		content.URL = up.ContentURI.CUString()
 	}
-	resp, err := b.cli.SendMessageEvent(ctx, room, event.EventMessage, content)
+	// Marshal with encoding/json and send the raw JSON: mautrix's canonical
+	// JSON encoder (json/v2 under Go 1.27) drops empty objects marked
+	// omitempty, which would lose "org.matrix.msc3245.voice": {} and with it
+	// the voice-message rendering. The integration test checks this.
+	raw, err := json.Marshal(content)
+	if err != nil {
+		return "", err
+	}
+	resp, err := b.cli.SendMessageEvent(ctx, room, event.EventMessage, json.RawMessage(raw))
 	if err != nil {
 		return "", err
 	}
