@@ -398,13 +398,23 @@ func (l *Log) Run(ctx context.Context, interval time.Duration) {
 		}
 		step, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		if _, err := l.ImportLegacy(step); err != nil {
-			slog.Warn("audit ConfigMap import incomplete; retrying", "error", err.Error())
+			logRetry("audit ConfigMap import incomplete; retrying", err)
 		} else if n, err := l.DrainSpool(step); err != nil {
-			slog.Warn("audit spool drain incomplete; retrying", "error", err.Error())
+			logRetry("audit spool drain incomplete; retrying", err)
 		} else if n > 0 {
 			slog.Info("spooled audit records moved into the database", "records", n)
 		}
 		cancel()
 		timer.Reset(interval)
 	}
+}
+
+// logRetry logs a retried step: a database that is not reachable or not yet
+// migrated is expected (the monitor reports it), anything else is a warning.
+func logRetry(msg string, err error) {
+	if errors.Is(err, store.ErrUnavailable) {
+		slog.Info(msg, "error", err.Error())
+		return
+	}
+	slog.Warn(msg, "error", err.Error())
 }
