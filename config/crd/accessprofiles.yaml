@@ -1,0 +1,106 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: accessprofiles.projects.agentwork.dev
+spec:
+  group: projects.agentwork.dev
+  scope: Cluster
+  names:
+    plural: accessprofiles
+    singular: accessprofile
+    kind: AccessProfile
+    shortNames: [aprof]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      additionalPrinterColumns:
+        - name: Level
+          type: string
+          jsonPath: .spec.level
+        - name: Grants
+          type: string
+          jsonPath: .spec.allowedGrants
+        - name: Description
+          type: string
+          jsonPath: .spec.description
+          priority: 1
+      schema:
+        openAPIV3Schema:
+          description: A named, cluster-wide preset of what a cell may reach. Cells name one in spec.accessProfileName.
+          type: object
+          required: [spec]
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              required: [level]
+              properties:
+                level:
+                  description: The step this profile implements on the console's access scale.
+                  type: string
+                  enum: [locked, ask, standard, open, custom]
+                description:
+                  type: string
+                  maxLength: 500
+                https:
+                  description: Read-only HTTPS rules every cell with this profile gets (GET and HEAD, plus POST to git-upload-pack).
+                  type: array
+                  maxItems: 256
+                  items:
+                    type: object
+                    required: [host, methods, paths]
+                    properties:
+                      host:
+                        type: string
+                        maxLength: 253
+                        pattern: '^(\*\.)?[a-z0-9]([a-z0-9.-]*[a-z0-9])?$'
+                      methods:
+                        type: array
+                        minItems: 1
+                        maxItems: 3
+                        items:
+                          type: string
+                          enum: [GET, HEAD, POST]
+                      paths:
+                        type: array
+                        minItems: 1
+                        maxItems: 64
+                        items:
+                          type: string
+                          minLength: 1
+                          maxLength: 512
+                          pattern: '^/'
+                registries:
+                  type: array
+                  maxItems: 4
+                  x-kubernetes-list-type: set
+                  items:
+                    type: string
+                    enum: [go, npm, python, rust]
+                allowedGrants:
+                  description: AccessGrant types cells with this profile may hold. Empty allows none.
+                  type: array
+                  maxItems: 3
+                  x-kubernetes-list-type: set
+                  items:
+                    type: string
+                    enum: [internet, lan, package]
+                maxGrantDuration:
+                  description: The longest a grant of each type may last, as a Go duration such as 8h.
+                  type: object
+                  properties:
+                    internet:
+                      type: string
+                    lan:
+                      type: string
+                    package:
+                      type: string
+                approveRequests:
+                  description: Blocked requests are listed for an operator to approve one by one. Allows nothing by itself.
+                  type: boolean

@@ -1,0 +1,3 @@
+{{- if .Values.accessProfiles.install }}
+{{ .Files.Get "files/accessprofiles.yaml" }}
+{{- end }}
