@@ -29,6 +29,8 @@ jobs:
             image: agent-project-controller
           - target: workspace
             image: agent-project-workspace
+          - target: voice
+            image: glovecell-voice
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
