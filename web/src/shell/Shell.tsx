@@ -26,7 +26,7 @@ function Count({n, label, tone}: {n: number; label: string; tone?: 'warn' | 'liv
   return <span className={'side-badge' + (tone ? ' ' + tone : '')}>{n}<span className="visually-hidden"> {label}</span></span>;
 }
 
-interface Item { key: string; kind: 'sandbox' | 'project'; name: string; stopped: boolean; waiting: number; attention: boolean; lan: number; href: (s: Section) => string }
+interface Item { key: string; kind: 'sandbox' | 'project'; name: string; stopped: boolean; status?: string; waiting: number; attention: boolean; lan: number; href: (s: Section) => string }
 
 function useItems(): {sandboxes: Item[]; projects: Item[]} {
   const {existing, projects} = useData();
@@ -36,7 +36,7 @@ function useItems(): {sandboxes: Item[]; projects: Item[]} {
       .sort((a, b) => a.name.localeCompare(b.name)),
     projects: projects.filter(p => p.status?.phase !== 'Removed').map(p => {
       const state = projectState(p);
-      return {key: 'p:' + p.metadata.name, kind: 'project' as const, name: p.metadata.name, stopped: state.label !== 'Ready', waiting: 0, attention: Boolean(state.attention), lan: 0,
+      return {key: 'p:' + p.metadata.name, kind: 'project' as const, name: p.metadata.name, stopped: state.label !== 'Ready', status: state.label.toLowerCase(), waiting: 0, attention: Boolean(state.attention), lan: 0,
         href: (sec: Section) => projectHref(p.metadata.name, sec === 'runs' || sec === 'settings' ? 'overview' : sec)};
     }).sort((a, b) => a.name.localeCompare(b.name)),
   };
@@ -58,7 +58,7 @@ function WorkspaceGroup({label, href, items, current, section, here, labelId}: {
           return (
             <li key={item.key} className={open ? 'is-open' : undefined}>
               <a className="side-link side-ws" href={item.href(open ? 'overview' : section)}>
-                <span className="side-name">{item.name}{item.stopped ? <span className="side-sub">{item.kind === 'project' ? 'not ready' : 'stopped'}</span> : null}</span>
+                <span className="side-name">{item.name}{item.stopped ? <span className="side-sub">{item.status || 'stopped'}</span> : null}</span>
                 <span className="side-end">
                   {lan ? <span className="side-badge live">LAN<span className="visually-hidden"> access open</span></span> : null}
                   <Count n={item.waiting} label="waiting on you" tone="warn" />

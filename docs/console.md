@@ -8,7 +8,7 @@ with the service that owns them; no worker or credential migration is required.
 
 ## Instant web access
 
-When sandbox-control is mounted, the Sandboxes page starts with a **Web access**
+When sandbox-control is mounted, Home and the Sandboxes page show a **Web access**
 panel. **Open all** lets every enrolled sandbox-control workspace reach any
 public HTTP or HTTPS destination for the chosen window (15 minutes to 24
 hours). **Lock all** returns them to their approved requests. Each row also has
@@ -56,22 +56,52 @@ with a visible focus ring and no motion under `prefers-reduced-motion`. Page
 stylesheets use only these tokens and never their own colour values or
 `prefers-color-scheme` queries.
 
+### Navigation
+
+Every page shares one shell. The top bar holds the brand, a **Search or jump
+to** button, the theme switcher and Sign out. On desktop a sidebar lists
+**Home**, **Needs attention** (with the number of requests waiting on you),
+**Sandboxes** and **Projects** with each workspace under them (counts of what
+waits on you, a **LAN** badge while LAN access is open, and the state of a
+stopped or paused one), then **Runs**, **Orca projects** and **New sandbox**.
+Under the workspace on screen it lists that workspace's sections. Below 60rem
+the sidebar becomes a menu behind the **Menu** button. Breadcrumbs above each
+page lead back, for example Home / Sandboxes / orca-pilot / Internet.
+
+**Ctrl-K** (**⌘K** on a Mac), or the search button, opens a command palette.
+Type part of a page, workspace or section name, or a word for a section
+(`egress`, `upload`, `audit`, `ssh`), in any order: `orca-pilot internet`
+goes straight to that sandbox's Internet section. Arrow keys move, Enter opens,
+Esc closes and returns focus. With nothing typed it lists recent picks, the
+sections of the workspace on screen, pages and workspaces. The palette only
+navigates; it holds no action that changes a sandbox.
+
+**Home** shows every sandbox and project at a glance: how many run, how many are
+open or learning on the web, how many requests wait on you and how many need
+attention (each also a filter), the Web access panel, and a table with state,
+access, what waits on you and the last recorded activity. A text filter, kind,
+state and sort order (most urgent, name, running first, widest access, recent
+activity) are kept in the address (`#/?q=…&show=…&sort=…`). Access shows the
+web access state (Open, Learning, Locked) or, for projects, their fixed rules;
+when the API reports a named access level it is shown instead. Recent activity
+merges policy revisions (including start and stop) and LAN grant history for
+sandboxes and the audit trail for projects. `#/sandboxes` and `#/projects` are
+the same view for one kind. `#/attention` is the Needs attention inbox.
+
 ### Sandbox workspace view
 
-Opening a sandbox shows one workspace at a time. A sidebar lists every
-workspace (sandbox-control sandboxes and console projects, with counts of what
-waits on you and a **LAN** badge while LAN access is open) and the sections of
-the current one: **Overview**, **Internet**, **LAN devices**, **Packages**,
-**Files**, **Previews & dev links**, **Credentials**, **History**, plus **Runs** and
-**Settings** for sandbox-control sandboxes. A sticky header shows the workspace
-state, its pod, and every open grant with a countdown: web access (with Lock),
-each LAN grant (with Restrict) and live dev links. On narrow screens the sidebar
-becomes a workspace picker and a row of section links, and the header scrolls
-away.
+Opening a sandbox shows one workspace at a time. Its sections are
+**Overview**, **Internet**, **LAN devices**, **Packages**, **Files**,
+**Previews & dev links**, **Credentials**, **History**, plus **Runs** and
+**Settings** for sandbox-control sandboxes; the sidebar lists them with badges
+for what waits on you. A sticky header shows the workspace state, its pod, and
+every open grant with a countdown: web access (with Lock), each LAN grant (with
+Restrict) and live dev links. On narrow screens a row of section links stays
+at the top of the page and the header scrolls away.
 
 Routes are `#/sandboxes/<id>/<section>` and `#/projects/<name>/<section>`. The
-earlier tab names (`access`, `devlinks`, `activity`, `repositories`) still land
-on the matching section.
+earlier tab names (`access`, `devlinks`, `activity`, `repositories`), and
+`files`, `uploads` and `web`, still land on the matching section.
 
 Each section reads its data through one module in
 `web/src/workspace/sources/` (`internet.ts`, `lan.ts`, `packages.ts`,

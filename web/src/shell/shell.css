@@ -161,6 +161,8 @@
   .shell-search-text, .shell-search kbd { display: none; }
   .shell-search-short { display: inline; }
   .page.workspace-page > .shell-crumbs { padding-top: var(--openui-space-m); }
+  .dash-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dash-stat { flex-direction: column; gap: 2px; padding: 8px 12px; }
   .dash-toolbar .field { flex: 1 1 140px; }
   .dash-toolbar .dash-filter { flex-basis: 100%; }
   .dash-events li { grid-template-columns: minmax(0, 1fr); gap: 2px; padding: 10px var(--openui-space-m); }

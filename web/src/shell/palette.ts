@@ -86,9 +86,10 @@ export function tokenScore(token: string, field: string): number {
   const ws = words(f);
   if (ws.includes(token) || f === token) return 8;
   if (ws.some(w => w.startsWith(token)) || f.startsWith(token)) return 6;
-  if (f.includes(token)) return 4;
+  // Inside a word only for longer tokens: "lan" should not find "glance".
+  if (token.length >= 4 && f.includes(token)) return 4;
   // Letters in order ("lnd" finds "lan devices"), only when they stay close together.
-  if (token.length < 3) return 0;
+  if (token.length < 4) return 0;
   let at = -1, first = -1;
   for (const ch of token) {
     at = f.indexOf(ch, at + 1);

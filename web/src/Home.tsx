@@ -35,7 +35,7 @@ function useOrcaProjects(enabled: boolean) {
 }
 
 interface Activity { key: string; workspace: string; href: string; at: number; title: string; detail: string; by: string }
-const humanize = (action: string) => { const text = action.replace(/[-_]+/g, ' ').trim(); return text.charAt(0).toUpperCase() + text.slice(1); };
+const humanize = (action: string) => { const text = action.replace(/[-_]+/g, ' ').trim().replace(/\blan\b/gi, 'LAN'); return text.charAt(0).toUpperCase() + text.slice(1); };
 
 // The newest events across workspaces: policy revisions (which include start
 // and stop) and LAN grant changes for sandboxes, the audit trail for projects.
@@ -131,7 +131,7 @@ function RowActions({row, sandbox, minutes}: {row: Row; sandbox?: ExistingSandbo
     : <Button size="small" variant="primary" buttonType="destructive" disabled={pending} onClick={() => egress([row.name], 'lock', Number(minutes))} aria-label={'Lock web access for ' + row.name}>{pending ? 'Locking…' : 'Lock'}</Button>;
 }
 
-function WorkspaceRow({row, sandbox, minutes, orca, now}: {row: Row; sandbox?: ExistingSandbox; minutes: string; orca?: OrcaProject[]; now: number}) {
+function WorkspaceRow({row, sandbox, minutes, orca, now, loadingActivity}: {row: Row; sandbox?: ExistingSandbox; minutes: string; orca?: OrcaProject[]; now: number; loadingActivity: boolean}) {
   const review = row.kind === 'sandbox' ? sandboxHref(row.name, sandbox && egressControllable(sandbox) ? 'internet' : 'overview') : projectHref(row.name);
   return (
     <TableRow data-sandbox={row.kind === 'sandbox' ? row.name : undefined} data-project={row.kind === 'project' ? row.name : undefined}>
@@ -140,7 +140,7 @@ function WorkspaceRow({row, sandbox, minutes, orca, now}: {row: Row; sandbox?: E
       <TableCell data-label="Access"><AccessCell row={row} /></TableCell>
       <TableCell data-label="Waiting on you">{row.waiting ? <a href={review} className="count-link"><span className="count num">{row.waiting}</span> to review</a>
         : row.attention ? <a href={review} className="attention">{row.attention}</a> : <span className="subtle">None</span>}</TableCell>
-      <TableCell data-label="Last activity">{row.lastActivity ? <a className="row-when" href={row.kind === 'sandbox' ? sandboxHref(row.name, 'history') : projectHref(row.name, 'history')}><time dateTime={new Date(row.lastActivity).toISOString()}>{ago(row.lastActivity, now)}</time></a> : <span className="subtle">None recorded</span>}</TableCell>
+      <TableCell data-label="Last activity">{row.lastActivity ? <a className="row-when" href={row.kind === 'sandbox' ? sandboxHref(row.name, 'history') : projectHref(row.name, 'history')}><time dateTime={new Date(row.lastActivity).toISOString()}>{ago(row.lastActivity, now)}</time></a> : <span className="subtle">{loadingActivity ? 'Loading…' : 'None recorded'}</span>}</TableCell>
       <TableCell data-label="" align="right" className="row-actions"><RowActions row={row} sandbox={sandbox} minutes={minutes} /></TableCell>
     </TableRow>
   );
@@ -272,7 +272,7 @@ export function Home({scope = 'all'}: {scope?: Kind}) {
         {!loaded ? <p className="empty">Loading sandboxes…</p> : rows.length ? (
           <Table aria-labelledby="dash-list-title" containerClassName="sandbox-table">
             <TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Status</TableHead><TableHead>Access</TableHead><TableHead>Waiting on you</TableHead><TableHead>Last activity</TableHead><TableHead><span className="visually-hidden">Actions</span></TableHead></TableRow></TableHeader>
-            <TableBody>{rows.map(r => <WorkspaceRow key={r.key} row={r} sandbox={byId.get(r.name)} minutes={minutes} orca={r.kind === 'sandbox' && r.name === runtime ? orca : undefined} now={now} />)}</TableBody>
+            <TableBody>{rows.map(r => <WorkspaceRow key={r.key} row={r} sandbox={byId.get(r.name)} minutes={minutes} orca={r.kind === 'sandbox' && r.name === runtime ? orca : undefined} now={now} loadingActivity={activity.items === null} />)}</TableBody>
           </Table>
         ) : scoped.length ? (
           <Card variant="sunk" width="full" className="empty-card"><h2>Nothing matches</h2><p className="muted">No {kind === 'project' ? 'project' : 'sandbox'} matches this filter.</p><div><Button variant="secondary" onClick={() => setFilters({q: '', show: 'all'})}>Clear filters</Button></div></Card>

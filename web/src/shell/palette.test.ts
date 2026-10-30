@@ -64,6 +64,9 @@ describe('matching', () => {
     expect(tokenScore('vice', 'LAN devices')).toBe(4);
     expect(tokenScore('rh', 'research')).toBe(0);
     expect(tokenScore('oxz', 'orca-pilot')).toBe(0);
+    // Short tokens never match inside a word.
+    expect(tokenScore('lan', 'at a glance')).toBe(0);
+    expect(searchCommands('lan', commands).every(c => c.kind === 'section')).toBe(true);
   });
 
   it('needs every word to match', () => {
