@@ -10,8 +10,7 @@ import {LifecycleButton, ProjectHistory, ProjectInternet, ProjectOverview, Proje
 import {LanHosts} from '../LanHosts';
 import {Providers} from '../Providers';
 import {navigate, projectHref, sandboxHref, SECTIONS, type Section} from '../router';
-import {classicHref, Services, type SandboxContext} from '../sandbox/Sandbox';
-import {SettingsTab} from '../sandbox/Settings';
+import {classicHref, type SandboxContext} from '../sandbox/Sandbox';
 import {existingState, projectState} from '../state';
 import {Button, Callout, Card, Tag} from '../ui';
 import {Countdown, NotAvailable, SectionIntro} from './bits';
@@ -25,7 +24,8 @@ import {Internet} from './sections/Internet';
 import {Lan, useRestrict} from './sections/Lan';
 import {Overview} from './sections/Overview';
 import {Packages} from './sections/Packages';
-import {Previews} from './sections/Previews';
+import {Previews, ProjectPreviews} from './sections/Previews';
+import {Settings} from './sections/Settings';
 import {loadLan} from './sources/lan';
 import {webAccess} from './sources/internet';
 import {liveLinks} from './sources/previews';
@@ -216,7 +216,7 @@ export function SandboxWorkspace({id, section}: {id: string; section: Section}) 
     : section === 'credentials' ? <Credentials ws={ws} now={now} />
     : section === 'history' ? <History ws={ws} ctx={ctx} />
     : section === 'runs' ? <div className="stack"><SectionIntro title="Runs">Orchestration runs collected from this sandbox.</SectionIntro><SandboxRuns namespace={d.namespace} /></div>
-    : <div className="stack"><SectionIntro title="Settings">Policy profiles, revisions and shared services.</SectionIntro><Services key={d.revision.id} {...ctx} /><SettingsTab {...ctx} /></div>;
+    : <Settings {...ctx} />;
   return (
     <Shell current={'s:' + id} section={section} kind="sandbox" badges={badges} lanOpen={counts} header={header}>
       {d.revision.error ? <Callout variant="danger" title={'Revision ' + d.revision.id + ' ' + d.revision.status.toLowerCase()} description={d.revision.error} /> : null}
@@ -264,7 +264,7 @@ export function ProjectWorkspace({name, section}: {name: string; section: Sectio
     : section === 'lan' ? <div className="stack"><SectionIntro title="LAN devices">Project sandboxes use the project's static LAN hosts: direct TCP to one IPv4 address and explicit ports, kept until removed. Outbound only.</SectionIntro><LanHosts p={p} /></div>
     : section === 'packages' ? <div className="stack"><SectionIntro title="Packages" /><NotAvailable what="Package approvals" needs="Project sandboxes have no package approval list; registry rules on the Internet page allow downloads." /></div>
     : section === 'downloads' ? <Files key={p.metadata.name} downloads={downloads} uploads={uploads} workspace={p.metadata.name} />
-    : section === 'previews' ? <div className="stack"><SectionIntro title="Previews & dev links" /><NotAvailable what="Previews and dev links" needs="Project sandboxes do not publish previews or dev links yet." /></div>
+    : section === 'previews' ? <ProjectPreviews />
     : section === 'credentials' ? <div className="stack"><SectionIntro title="Credentials">Repositories this sandbox can push task branches to, and the subscription providers it may use. Secret values are never shown.</SectionIntro><ProjectRepositories p={p} /><Providers p={p} /></div>
     : section === 'history' ? <div className="stack"><SectionIntro title="History" /><ProjectHistory p={p} /></div>
     : <ProjectOverview p={p} />;

@@ -51,14 +51,21 @@ const W = {
     pending: [...observations('p', 3, 1, false), {host: 'telemetry.example.com', method: 'POST', path: '/v1/events', scheme: 'https', port: 443, queryHash: '', fingerprints: 5, requests: 17, first: t0 - 2 * HOUR, last: t0 - 52 * MIN, observation: 'p-telemetry'}],
     approved: observations('a', 212, 3, true),
     reports: [{id: 15, kind: 'other', resource: '192.168.1.50:1337', reason: 'TCP connect to 192.168.1.50:1337 times out', count: 3, first: iso(t0 - 41 * MIN), last: iso(t0 - 6 * MIN)}],
-    devlinks: [{Name: 'docs-preview', State: 'Pending', Port: 5173, Cwd: '/workspace/example/web', Note: 'Vite preview of the docs site', Commit: '9f3c2ab41e07aa00', Branch: 'task/example/docs', med: 2, low: 5, requested: t0 - 20 * MIN}],
+    devlinks: [{Name: 'docs-preview', State: 'Pending', Port: 5173, Cwd: '/workspace/example/web', Note: 'Vite preview of the docs site', Commit: '9f3c2ab41e07aa00', Branch: 'task/example/docs', med: 2, low: 5, requested: t0 - 20 * MIN},
+      {Name: 'chart-demo', State: 'Scan failed', Port: 8080, Cwd: '/workspace/example/charts', Commit: '0c4d18e2b97f3a55', Branch: 'task/example/charts', requested: t0 - 3 * HOUR, scan: 'Failed', scanError: 'the scanner timed out after 10 minutes'}],
     lan: {hosts: [lanHost('192.168.1.50', true, [], [{port: 1337, verdict: 'used', firstSeen: iso(t0 - 3 * DAY), lastSeen: iso(t0 - 2 * DAY), count: 14}, {port: 50000, verdict: 'used', firstSeen: iso(t0 - 2 * DAY), lastSeen: iso(t0 - 2 * DAY), count: 6}, {port: 50013, verdict: 'refused', firstSeen: iso(t0 - 2 * DAY), lastSeen: iso(t0 - 2 * DAY), count: 3}]), lanHost('192.168.1.60', false, [22, 2122])],
       history: [{at: iso(t0 - 2 * DAY), event: 'expired', host: '192.168.1.50', ports: 'all', by: 'sandbox-control', deadline: '', detail: 'rule removed; the workspace pod restarts'}, {at: iso(t0 - 2 * DAY - 50 * MIN), event: 'opened', host: '192.168.1.50', ports: 'all', by: 'operator', deadline: iso(t0 - 2 * DAY + 10 * MIN), detail: ''}]},
   }),
   'orca-runtime': workspace('orca-runtime', {
     pending: observations('q', 2, 5, false), approved: observations('b', 96, 5, true),
-    devlinks: [{Name: 'example-docs', State: 'Approved', Live: true, Port: 4173, Cwd: '/workspace/example/docs', Commit: '51d0e9a7c2b4ee11', Branch: 'main', low: 1, requested: t0 - DAY, expires: t0 + 6 * DAY + 3 * HOUR}],
-    previews: [{id: 'v1', state: 'Pending', proposedName: 'vite', proposedRulesText: 'GET,HEAD /\nGET prefix:/assets/', rulesText: '', lan: false, tailscale: false, gapAcknowledged: false, seen: t0 - 2 * MIN, first: t0 - HOUR, count: 4, listener: {project: 'example', worktree: 'docs', port: 5173, pid: 48211, address: '0.0.0.0', loopback: false}, urls: {lan: 'https://preview-v1.example.com', tailnet: 'https://preview-v1-ts.example.com'}}],
+    devlinks: [{Name: 'example-docs', State: 'Approved', Live: true, Port: 4173, Cwd: '/workspace/example/docs', Commit: '51d0e9a7c2b4ee11', Branch: 'main', low: 1, requested: t0 - DAY, expires: t0 + 6 * DAY + 3 * HOUR},
+      {Name: 'storybook', State: 'Scanning', Port: 6006, Cwd: '/workspace/example/ui', Note: 'Component gallery', Commit: 'a7e2c90d13f4b866', Branch: 'task/example/ui', requested: t0 - 2 * MIN, scan: 'Running'},
+      {Name: 'admin-console', State: 'Offline', Port: 3000, Cwd: '/workspace/example/admin', Commit: '3b8f0e6a2d91c7f4', Branch: 'main', requested: t0 - 3 * DAY, expires: t0 + 4 * DAY, approvedDigest: '3b8f0e6a2d91c7f4'},
+      {Name: 'api-mock', State: 'Expired', Port: 4010, Cwd: '/workspace/example/api', Commit: '6d2a9b0f4e81c3a7', Branch: 'main', requested: t0 - 9 * DAY, expires: t0 - DAY}],
+    previews: [{id: 'v1', state: 'Pending', proposedName: 'vite', proposedRulesText: 'GET,HEAD /\nGET prefix:/assets/', rulesText: '', lan: false, tailscale: false, gapAcknowledged: false, seen: t0 - 2 * MIN, first: t0 - HOUR, count: 4, listener: {project: 'example', worktree: 'docs', port: 5173, pid: 48211, address: '0.0.0.0', loopback: false}, urls: {lan: 'https://preview-v1.example.com', tailnet: 'https://preview-v1-ts.example.com'}},
+      {id: 'v2', state: 'Approved', live: true, proposedName: 'admin-ui', proposedRulesText: 'GET,HEAD prefix:/', rulesText: 'GET,HEAD prefix:/', lan: true, tailscale: true, gapAcknowledged: true, seen: t0, first: t0 - 5 * HOUR, count: 120, listener: {project: 'example', worktree: 'admin', port: 8000, pid: 50112, address: '0.0.0.0', loopback: false}, urls: {lan: 'https://preview-v2.example.com', tailnet: 'https://preview-v2-ts.example.com'}},
+      {id: 'v3', state: 'Needs network binding', proposedName: 'notebook', proposedRulesText: 'GET,HEAD prefix:/', rulesText: '', lan: false, tailscale: false, gapAcknowledged: false, seen: t0 - MIN, first: t0 - 20 * MIN, count: 7, listener: {project: 'example', worktree: 'research', port: 8888, pid: 51200, address: '127.0.0.1', loopback: true}, urls: {lan: 'https://preview-v3.example.com', tailnet: 'https://preview-v3-ts.example.com'}},
+      {id: 'v0', state: 'Expired', proposedName: 'old-api', proposedRulesText: 'GET prefix:/', rulesText: 'GET prefix:/', lan: true, tailscale: false, gapAcknowledged: true, seen: t0 - 2 * DAY, first: t0 - 3 * DAY, count: 300, listener: {project: 'example', worktree: 'api', port: 9000, pid: 40001, address: '0.0.0.0', loopback: false}, urls: {lan: 'https://preview-v0.example.com', tailnet: 'https://preview-v0-ts.example.com'}}],
     lan: {hosts: [lanHost('192.168.1.50', true, [])], history: []},
   }),
   'research': workspace('research', {learningEgress: false, learning: null, mode: 'Suspended', lan: 'research'}),
@@ -81,8 +88,8 @@ function apiLan(w) {
 }
 function apiDevLinks(w) {
   return w.devlinks.map(d => ({Name: d.Name, Workspace: w.id, State: d.State, URL: `https://${d.Name}.dev.example.com/`, Host: `${d.Name}.dev.example.com`, Port: d.Port, Cwd: d.Cwd, Project: 'example', Worktree: 'main', Note: d.Note || '', RulesText: 'GET,HEAD prefix:/',
-    Scan: {ID: 's-' + d.Name, Status: 'Complete', Error: '', Started: d.requested, Finished: d.requested + 90, Root: d.Cwd, Commit: d.Commit, Branch: d.Branch, Remote: '', Worktree: 'clean', Modified: null, Packages: null, Vulns: null, Secrets: null, Scanner: 'Trivy', Truncated: false, Digest: d.Commit},
-    Approved: Boolean(d.Live), ApprovedDigest: d.Live ? d.Commit : '', Expires: d.expires || 0, Requested: d.requested, Decided: 0, Actor: 'operator', Live: Boolean(d.Live),
+    Scan: {ID: 's-' + d.Name, Status: d.scan || 'Complete', Error: d.scanError || '', Started: d.requested, Finished: d.scan === 'Running' ? 0 : d.requested + 90, Root: d.Cwd, Commit: d.Commit, Branch: d.Branch, Remote: '', Worktree: 'clean', Modified: null, Packages: null, Vulns: null, Secrets: null, Scanner: 'Trivy', Truncated: false, Digest: d.Commit},
+    Approved: Boolean(d.Live), ApprovedDigest: d.Live ? d.Commit : d.approvedDigest || '', Expires: d.expires || 0, Requested: d.requested, Decided: 0, Actor: 'operator', Live: Boolean(d.Live),
     Counts: {packages: 61, unapproved: 0, critical: 0, high: 0, medium: d.med || 0, low: d.low || 0, secrets: 0, modified: 0},
     Events: [{Action: d.Live ? 'approved for 7 days' : 'published (scan complete)', Actor: d.Live ? 'operator' : 'agent', Detail: 'build ' + d.Commit.slice(0, 12), At: d.requested}], AccessTotal: d.Live ? 11 : 0, Egress: '', Viewers: 'operator via the identity provider'}));
 }
@@ -280,7 +287,12 @@ createServer(async (req, res) => {
         case '/api/egress': return w.learningEgress ? json(res, 200, {filter: q.get('q') || '', pending: page(w.pending, q.get('q')), approved: page(w.approved, q.get('q'))}, headers) : json(res, 409, {error: 'learning is not enrolled for this workspace'});
         case '/api/lan': return json(res, 200, apiLan(w), headers);
         case '/api/devlinks': return json(res, 200, apiDevLinks(w), headers);
-        case '/api/previews': return json(res, 200, {expiredCount: 0, requests: w.previews}, headers);
+        case '/api/previews': {
+          // Approved fixtures marked live are "observed" on every request, as the host collector would.
+          const now = unix(), all = w.previews.map(p => p.live && p.state === 'Approved' ? {...p, seen: now - 3} : p);
+          const inactive = p => ['Expired', 'Revoked', 'Denied'].includes(p.state); // as sandbox-control apiPreviews
+          return json(res, 200, {expiredCount: all.filter(inactive).length, requests: q.get('expired') ? all : all.filter(p => !inactive(p))}, headers);
+        }
         case '/api/reports': return json(res, 200, {reports: w.reports}, headers);
         case '/api/cluster': return json(res, 200, {Identity: {Namespace: w.namespace, Name: 'agent'}, Grants: w.id === 'coding-a' ? [{Namespace: 'example-app', Name: 'grant-debug', Capability: 'debug', Subject: w.namespace + '/agent', Reason: 'inspect a crash loop', GrantedBy: 'operator', Expires: new Date((t0 + 40 * MIN) * 1000).toISOString(), Left: '', ThisSandbox: true}] : [], Namespaces: ['example-app'], Capabilities: [], Durations: []}, headers);
         case '/api/activity': return json(res, 200, {window: {start: '', end: '', minutes: Number(q.get('minutes') || 15)}, links: {}, sources: [{source: 'Web inspection', scope: w.namespace, at: unix(), items: [{title: 'GET telemetry.example.com', target: 'https://telemetry.example.com/v1/events', time: 'just now', outcome: 'Blocked', count: 4}]}], health: {cards: [{title: 'worker', target: '212 MiB memory in use'}]}}, headers);

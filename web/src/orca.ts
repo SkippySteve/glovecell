@@ -9,6 +9,18 @@ export const POLL_MS = 3000;
 export const POLL_LIMIT = 100;
 export const preparing = (list: OrcaProject[]) => list.some(p => p.status === 'preparing');
 
+// How many records are in each state, for the list heading.
+export function projectCounts(list: OrcaProject[]): {total: number; published: number; registered: number; preparing: number; failed: number} {
+  const out = {total: list.length, published: 0, registered: 0, preparing: 0, failed: 0};
+  for (const p of list) {
+    if (p.status === 'published') out.published++;
+    else if (p.status === 'registered') out.registered++;
+    else if (p.status === 'failed') out.failed++;
+    else out.preparing++;
+  }
+  return out;
+}
+
 export function projectStatus(p: OrcaProject): {label: string; variant: TagVariant; busy?: boolean} {
   if (p.status === 'published') return {label: 'Published', variant: 'success'};
   if (p.status === 'registered') return {label: 'In Orca', variant: 'neutral'};
