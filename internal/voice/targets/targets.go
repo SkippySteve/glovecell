@@ -130,6 +130,7 @@ func normalize(s string) string {
 // the printer" in the middle of a sentence never redirect anything.
 var (
 	leadOverride = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)^\s*(?:please\s+)?(?:use|switch\s+to|send\s+(?:this|it)\s+to)\s+([a-z][a-z ]{1,20}?)(?:\s+for\s+(?:this|it))?\s*[.!]?\s*()$`),
 		regexp.MustCompile(`(?i)^\s*(?:please\s+)?(?:send|give|pass)\s+(?:this|it|that)\s+to\s+([a-z][a-z ]{1,20}?)\s*[,.:;!-]\s*(.*)$`),
 		regexp.MustCompile(`(?i)^\s*(?:please\s+)?use\s+([a-z][a-z ]{1,20}?)\s*(?:for\s+this)?\s*[,.:;!-]\s*(.*)$`),
 		regexp.MustCompile(`(?i)^\s*(?:please\s+)?ask\s+([a-z][a-z ]{1,20}?)\s+to\s+(.+)$`),

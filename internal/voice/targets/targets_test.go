@@ -34,6 +34,8 @@ func TestParseOverride(t *testing.T) {
 		{"Tidy the README and use Codex", "codex", "Tidy the README"},
 		{"Fix the cache. Use the orka.", "orca", "Fix the cache"},
 		{"Please send this to Archon - work on issue 12", "archon", "Work on issue 12"},
+		{"use orca", "orca", ""},
+		{"Switch to Codex.", "codex", ""},
 	}
 	for _, c := range cases {
 		target, rest, ok := r.ParseOverride(c.in)
