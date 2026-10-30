@@ -67,23 +67,21 @@ Console API: `GET /api/v1/access-profiles`, `PATCH /api/v1/workspaces/{name}/acc
 `POST /api/v1/workspaces/{name}/lock`, `GET|POST /api/v1/workspaces/{name}/grants` and
 `DELETE /api/v1/workspaces/{name}/grants/{grant}`. See [API](api.md).
 
-### Admission rules to add as ValidatingAdmissionPolicies
+### Admission policies
 
-The CRD schemas enforce shape (levels, read-only profile methods, grant union, immutable cell and type). These rules
-need a ValidatingAdmissionPolicy (CEL), failure policy Fail:
+The CRD schemas enforce shape (levels, read-only profile methods, grant union, immutable cell and type). The chart adds
+ValidatingAdmissionPolicies (`templates/access-admission-policies.yaml`, failure policy Fail, enabled with
+`admissionPolicies.enabled`, LAN ranges from the `admission-params` ConfigMap):
 
-1. AccessGrant: only the controller's ServiceAccount may create, update or delete AccessGrants and write
-   `accessgrants/status`; agent ServiceAccounts never.
-2. AccessGrant: `expiresAt` is in the future at creation, and `expiresAt - now <= 8h` for `internet`, `<= 24h` for `lan`,
-   `<= 30d` for `package` (or a `paramKind` holding the limits).
-3. AccessGrant: `spec.expiresAt` may only move earlier on update (no silent extension; extend by a new grant).
-4. AccessGrant: `metadata.labels["projects.agentwork.dev/cell"] == spec.cell`, and exactly one ownerReference of kind
-   ProjectWorkspace named `spec.cell`.
-5. AccessGrant `lan`: the address is inside the LAN allowlist and outside the denylist (`paramKind` with the
-   deployment's `LAN_GRANT_ALLOWED_CIDRS` and `LAN_GRANT_DENIED_CIDRS`); node addresses still need the controller.
-6. AccessProfile: only cluster admins (or the GitOps ServiceAccount) may write profiles; at most one profile carries
-   the default annotation (needs a list, so this one is a webhook or a controller check).
-7. AccessProfile `https`: POST only with paths ending in `/git-upload-pack`, never `git-receive-pack`; `*.domain`
-   hosts not on public suffixes (public-suffix list needs a webhook; the controller checks it too).
-8. ProjectWorkspace: `spec.accessProfileName` names an existing profile (needs a lookup: webhook, or leave to the
-   controller, which blocks the cell).
+- `access-grant-writer`: only the controller's ServiceAccount (or `system:masters`) creates or updates AccessGrants and
+  their status; agent ServiceAccounts are refused even if RBAC allowed them.
+- `access-grant`: `expiresAt` after creation and within `accessGrants.maxDuration` (internet 8h, lan 24h, package 720h,
+  counted from `metadata.creationTimestamp` because CEL has no clock); an update may only move `expiresAt` earlier; the
+  `projects.agentwork.dev/cell` label and exactly one ProjectWorkspace ownerReference name `spec.cell`; LAN addresses
+  inside the allowlist, outside the denylist and never loopback, link-local, metadata, multicast, network or broadcast.
+- `access-profile`: rules are read only (POST only to `git-upload-pack`, never `git-receive-pack`), paths are literal,
+  only the open level allows internet grants and it must set their maximum duration.
+
+Left to a webhook or the controller (CEL cannot do them): node addresses for LAN grants (the controller reads Node
+objects), at most one default profile (needs a list), wildcard hosts on public suffixes (needs the public-suffix list),
+and `spec.accessProfileName` naming an existing profile (needs a lookup; the controller blocks the cell otherwise).

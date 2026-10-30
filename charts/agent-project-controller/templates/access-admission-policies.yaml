@@ -1,0 +1,144 @@
+{{- /*
+ValidatingAdmissionPolicies for AccessGrant and AccessProfile (docs/access-levels.md).
+They reuse the admission-params ConfigMap of admission-policies.yaml for the
+LAN ranges; grant limits come from accessGrants.maxDuration. The controller
+and console API repeat every check. CEL has no clock, so lifetimes are
+measured from metadata.creationTimestamp, which the API server sets before
+validating admission.
+*/ -}}
+{{- if .Values.admissionPolicies.enabled }}
+{{- $prefix := include "apc.policyPrefix" . }}
+{{- $max := .Values.accessGrants.maxDuration }}
+{{- range $t := list "internet" "lan" "package" }}
+{{- if not (regexMatch "^[0-9]+(h|m)$" (index $max $t | toString)) }}
+{{- fail (printf "accessGrants.maxDuration.%s must be a whole number of hours or minutes, such as 8h" $t) }}
+{{- end }}
+{{- end }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $prefix }}-access-grant-writer
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [projects.agentwork.dev]
+        apiVersions: [v1alpha1]
+        operations: [CREATE, UPDATE]
+        resources: [accessgrants, accessgrants/status]
+  validations:
+    # Only the controller (its console API writes grants for signed-in
+    # operators) or a cluster administrator; never an agent's ServiceAccount.
+    - expression: >-
+        request.userInfo.username == 'system:serviceaccount:{{ $.Release.Namespace }}:controller' ||
+        'system:masters' in request.userInfo.groups
+      message: Only the project controller writes AccessGrants; ask an operator to grant access from the console.
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $prefix }}-access-grant
+spec:
+  failurePolicy: Fail
+  paramKind:
+    apiVersion: v1
+    kind: ConfigMap
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [projects.agentwork.dev]
+        apiVersions: [v1alpha1]
+        operations: [CREATE, UPDATE]
+        resources: [accessgrants]
+  variables:
+    - name: lifetime
+      expression: "timestamp(object.spec.expiresAt) - timestamp(object.metadata.creationTimestamp)"
+    - name: limit
+      expression: >-
+        {'internet': duration({{ $max.internet | quote }}), 'lan': duration({{ $max.lan | quote }}), 'package': duration({{ $max.package | quote }})}[object.spec.type]
+    - name: allowed
+      expression: "params.data.lanAllowedCIDRs.split(',').filter(c, c != '')"
+    - name: denied
+      expression: "params.data.lanDeniedCIDRs.split(',').filter(c, c != '').map(c, c.contains('/') ? c : c + '/32')"
+  validations:
+    - expression: "oldObject != null || (variables.lifetime > duration('0s') && variables.lifetime <= variables.limit)"
+      messageExpression: "'spec.expiresAt must be after creation and at most ' + string(variables.limit) + ' later for ' + object.spec.type + ' grants'"
+      reason: Invalid
+    - expression: "oldObject == null || timestamp(object.spec.expiresAt) <= timestamp(oldObject.spec.expiresAt)"
+      message: A grant can end earlier, never later; create a new grant to extend access.
+      reason: Forbidden
+    - expression: >-
+        has(object.metadata.labels) && 'projects.agentwork.dev/cell' in object.metadata.labels &&
+        object.metadata.labels['projects.agentwork.dev/cell'] == object.spec.cell
+      message: The projects.agentwork.dev/cell label must name spec.cell.
+      reason: Invalid
+    - expression: >-
+        has(object.metadata.ownerReferences) &&
+        object.metadata.ownerReferences.exists_one(o, o.apiVersion == 'projects.agentwork.dev/v1alpha1' && o.kind == 'ProjectWorkspace' && o.name == object.spec.cell)
+      message: A grant must be owned by the ProjectWorkspace it names.
+      reason: Invalid
+    - expression: "object.spec.type != 'lan' || size(variables.allowed) > 0"
+      message: LAN host grants are disabled on this controller.
+      reason: Forbidden
+    - expression: >-
+        object.spec.type != 'lan' || (
+          ![ '0.0.0.0/8', '127.0.0.0/8', '169.254.0.0/16', '224.0.0.0/4', '240.0.0.0/4'].exists(c, cidr(c).containsIP(object.spec.lan.address)) &&
+          variables.allowed.exists(c, cidr(c).containsIP(object.spec.lan.address)) &&
+          !variables.denied.exists(c, cidr(c).containsIP(object.spec.lan.address)) &&
+          !object.spec.lan.address.endsWith('.0') && !object.spec.lan.address.endsWith('.255'))
+      messageExpression: "'Refused: LAN grants must name one host inside the allowed LAN ranges ' + variables.allowed.join(', ') + ' and outside the denylist'"
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $prefix }}-access-profile
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [projects.agentwork.dev]
+        apiVersions: [v1alpha1]
+        operations: [CREATE, UPDATE]
+        resources: [accessprofiles]
+  variables:
+    - name: rules
+      expression: "has(object.spec.https) ? object.spec.https : []"
+  validations:
+    # Profile rules are read only: POST only to git-upload-pack (Git fetch), never git-receive-pack (push).
+    - expression: >-
+        variables.rules.all(r, r.paths.all(p, !p.contains('git-receive-pack')) &&
+          (!r.methods.exists(m, m == 'POST') || r.paths.all(p, p.endsWith('/git-upload-pack'))))
+      message: Profile rules are read only; POST is allowed only to git-upload-pack, and never to git-receive-pack.
+      reason: Forbidden
+    - expression: "variables.rules.all(r, r.paths.all(p, !p.matches('[%?#\\\\\\\\]') && !p.contains('..') && !p.contains('//')))"
+      message: Profile rule paths are literal prefixes.
+      reason: Invalid
+    - expression: "object.spec.level != 'open' || (has(object.spec.allowedGrants) && 'internet' in object.spec.allowedGrants && has(object.spec.maxGrantDuration) && has(object.spec.maxGrantDuration.internet))"
+      message: The open level needs internet grants with a maximum duration; it never opens without a time limit.
+      reason: Invalid
+    - expression: "object.spec.level == 'open' || !has(object.spec.allowedGrants) || !('internet' in object.spec.allowedGrants)"
+      message: Only the open level may allow internet grants.
+      reason: Forbidden
+{{- range $name := list "access-grant-writer" "access-grant" "access-profile" }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $prefix }}-{{ $name }}
+spec:
+  policyName: {{ $prefix }}-{{ $name }}
+  validationActions: [Deny]
+{{- if eq $name "access-grant" }}
+  paramRef:
+    name: admission-params
+    namespace: {{ $.Release.Namespace }}
+    parameterNotFoundAction: Deny
+{{- end }}
+  # This release's control namespace only; cluster-scoped AccessProfiles always match.
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: {{ $.Release.Namespace }}
+{{- end }}
+{{- end }}

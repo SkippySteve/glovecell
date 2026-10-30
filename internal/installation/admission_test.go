@@ -91,7 +91,8 @@ func TestAdmissionPolicyParamsRender(t *testing.T) {
 			}
 		}
 	}
-	if policies != 5 || bindings != 5 || params == nil {
+	// Five ProjectWorkspace policies and three for access levels (access-admission-policies.yaml).
+	if policies != 8 || bindings != 8 || params == nil {
 		t.Fatalf("policies %d, bindings %d, params %v", policies, bindings, params != nil)
 	}
 	data, _, _ := unstructured.NestedStringMap(params.Object, "data")

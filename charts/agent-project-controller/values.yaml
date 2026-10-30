@@ -17,6 +17,13 @@ automationAPI:
 # locked is the cluster default for new cells. Set false to manage profiles yourself.
 accessProfiles:
   install: true
+# Longest AccessGrant per type, enforced by an admission policy from the
+# grant's creation time (whole hours or minutes). Profiles may set less.
+accessGrants:
+  maxDuration:
+    internet: 8h
+    lan: 24h
+    package: 720h
 config:
   # network-policy is experimental and requires independent dataplane qualification.
   NETWORK_PROVIDER: cilium
