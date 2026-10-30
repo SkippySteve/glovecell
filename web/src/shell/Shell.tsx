@@ -6,6 +6,7 @@ import type {ExistingSandbox, Project} from '../api';
 import {useData} from '../data';
 import {attentionHref, breadcrumbs, homeHref, newSandboxHref, orcaHref, projectHref, projectsHref, sandboxesHref, sandboxHref, sectionsFor, type Route, type Section} from '../router';
 import {existingState, projectState} from '../state';
+import {ThemeSwitcher} from '../ThemeSwitcher';
 import {Button} from '../ui';
 import {CommandPalette, openPalette, paletteShortcut} from './Palette';
 import {useShell} from './state';
@@ -137,8 +138,8 @@ function TopBar({menuOpen, toggleMenu, menuButton}: {menuOpen: boolean; toggleMe
       <button type="button" className="shell-search" onClick={openPalette} aria-keyshortcuts="Control+K Meta+K">
         <span className="shell-search-text">Search or jump to…</span><span className="shell-search-short" aria-hidden="true">Search</span><kbd aria-hidden="true">{shortcut}</kbd>
       </button>
-      {/* Theme switcher (theme agent): <ThemeSwitcher /> goes here, before the actor and Sign out. */}
       <span className="console-actor subtle">{session.actor || ''}</span>
+      <ThemeSwitcher />
       {session.oidc ? <Button variant="tertiary" size="small" onClick={logout}>Sign out</Button> : null}
     </header>
   );
