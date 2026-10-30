@@ -99,6 +99,16 @@ every open grant with a countdown: web access (with Lock), each LAN grant (with
 Restrict) and live dev links. On narrow screens a row of section links stays
 at the top of the page and the header scrolls away.
 
+**Previews & dev links** opens with one list of everything the sandbox serves:
+each dev link and detected server with its status (pending approval, serving,
+approved but not serving, stale, or inactive), its address with **Copy**, an
+**Open** button for links that are serving, and when sandbox-control last saw
+or scanned it. The list refreshes every 30 seconds (every 5 while a scan runs).
+Decisions stay in the cards below it. **Open browser session** is shown
+disabled with its reason: no console view of a sandbox's page exists yet.
+**Settings** groups the policy (revisions and profiles), shared services, and
+links to the sections where each kind of access is changed.
+
 Routes are `#/sandboxes/<id>/<section>` and `#/projects/<name>/<section>`. The
 earlier tab names (`access`, `devlinks`, `activity`, `repositories`), and
 `files`, `uploads` and `web`, still land on the matching section.

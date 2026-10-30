@@ -1,6 +1,6 @@
-import {useCallback, useEffect, useState} from 'react';
+import {useState} from 'react';
 import type {DevLink} from '../api';
-import {loadDevLinks} from '../workspace/sources/previews';
+import {devlinkTarget} from '../workspace/sources/previews';
 import {useData} from '../data';
 import {Button, Card, Tag, TextArea, ToggleGroup, ToggleItem, type TagVariant} from '../ui';
 import {timeOf, type SandboxContext} from './Sandbox';
@@ -39,7 +39,7 @@ function DevLinkCard({l, act, reload}: {l: DevLink; act: SandboxContext['act']; 
   };
   const verify = l.URL + '_dev/verify';
   return (
-    <Card variant="sunk" width="full" className="devlink" data-devlink={l.Name}>
+    <Card variant="sunk" width="full" className="devlink pv-target" data-devlink={l.Name} id={devlinkTarget(l.Name)} tabIndex={-1}>
       <div className="preview-head">
         <div>
           <h3>{l.Live ? <a href={l.URL} target="_blank" rel="noopener noreferrer">{l.Host}</a> : l.Host}</h3>
@@ -82,26 +82,13 @@ function DevLinkCard({l, act, reload}: {l: DevLink; act: SandboxContext['act']; 
   );
 }
 
-export function DevLinksTab({detail, act}: SandboxContext) {
-  const {toast} = useData();
-  const [links, setLinks] = useState<DevLink[] | null>(null);
-  const load = useCallback(async () => {
-    try { setLinks(await loadDevLinks(detail.id)); } catch (e) { toast((e as Error).message, true); }
-  }, [detail.id, toast]);
-  useEffect(() => { load(); }, [load, detail.devLinkPending]);
-  // A scan takes a minute or two; refresh while one runs.
-  useEffect(() => {
-    if (!links?.some(l => l.State === 'Scanning')) return;
-    const timer = window.setTimeout(load, 5000);
-    return () => window.clearTimeout(timer);
-  }, [links, load]);
+// The section (workspace/sections/Previews.tsx) loads and refreshes the list.
+export function DevLinksTab({act, links, reload}: Pick<SandboxContext, 'act'> & {links: DevLink[] | null; reload: () => Promise<void>}) {
   return (
     <div className="stack">
-      <div className="section-intro">
-        <p className="muted">Apps an agent published with <code>dev-link publish</code>. Each build is scanned for dependencies, vulnerabilities and secrets. An approved link is private to you behind Authentik, and always opens on its verification card. A restart with changed files or dependencies needs approval again.</p>
-      </div>
+      <p className="muted">Apps an agent published with <code>dev-link publish</code>. Each build is scanned for dependencies, vulnerabilities and secrets. An approved link is private to you behind Authentik, and always opens on its verification card. A restart with changed files or dependencies needs approval again.</p>
       {!links ? <p className="empty">Loading dev links…</p> : links.length
-        ? links.map(l => <DevLinkCard key={l.Name + l.State + l.Scan.ID} l={l} act={act} reload={load} />)
+        ? links.map(l => <DevLinkCard key={l.Name + l.State + l.Scan.ID} l={l} act={act} reload={reload} />)
         : <Card variant="sunk" width="full" className="empty-card"><p className="muted">No dev links yet. Agents publish one with <code>orca-pilot dev-link publish --name NAME --port PORT</code>.</p></Card>}
     </div>
   );
