@@ -24,6 +24,8 @@ type call struct {
 	pr     int
 	task   int64
 	final  bool
+	room   string
+	thread string
 }
 
 type fakeBackend struct {
@@ -31,9 +33,9 @@ type fakeBackend struct {
 	cardErr error
 }
 
-func (f *fakeBackend) NotifyMessage(_ context.Context, c service.Caller, kind, text string, task int64, final bool) (string, error) {
-	f.calls = append(f.calls, call{caller: c, kind: kind, text: text, task: task, final: final})
-	if task == 99 {
+func (f *fakeBackend) NotifyMessage(_ context.Context, c service.Caller, n service.Note) (string, error) {
+	f.calls = append(f.calls, call{caller: c, kind: n.Kind, text: n.Text, task: n.Task, final: n.Final, room: n.Room, thread: n.Thread})
+	if n.Task == 99 {
 		return "", service.ErrUnknownTask
 	}
 	return "$e", nil
@@ -52,7 +54,7 @@ const (
 func handler(t *testing.T) (*Handler, *fakeBackend) {
 	b := &fakeBackend{}
 	h, err := New(b, []CallerConfig{
-		{Name: "orca", TokenSHA256: HashToken(orcaToken), Kinds: []string{KindMessage, KindQuestion, KindApproval}, Target: "orca", PerHour: 600},
+		{Name: "orca", TokenSHA256: HashToken(orcaToken), Kinds: AllKinds, Targets: []string{"orca"}, PerHour: 600},
 		{Name: "cell-apc", TokenSHA256: HashToken(cellToken), Room: "!apc:example.com"},
 	})
 	if err != nil {
@@ -96,6 +98,51 @@ func TestNotifyAuth(t *testing.T) {
 	}
 }
 
+// The body orca-pilot voice send posts (cluster repo, orca-pilot voice.go).
+func TestNotifyOrcaPilotShape(t *testing.T) {
+	h, b := handler(t)
+	for _, kind := range []string{"message", "question", "blocked", "done"} {
+		w := post(h, orcaToken, map[string]string{"kind": kind, "text": "Build is green.", "room": "!inbox:example.com", "thread": "$abc"})
+		var resp struct{ ID, Message string }
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		if w.Code != 202 || resp.ID != "$e" || resp.Message == "" {
+			t.Fatalf("%s: %d %s", kind, w.Code, w.Body)
+		}
+	}
+	if c := b.calls[3]; c.kind != "done" || c.room != "!inbox:example.com" || c.thread != "$abc" {
+		t.Fatalf("call %+v", c)
+	}
+	if w := post(h, orcaToken, map[string]string{"kind": "message", "text": "x", "thread": "has space"}); w.Code != 400 {
+		t.Fatalf("thread with a space: %d", w.Code)
+	}
+}
+
+func TestLoadTokenDir(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "orca-pilot"), []byte(orcaToken+"\n"), 0o600)
+	os.MkdirAll(filepath.Join(dir, "..2026_10_30"), 0o700)
+	os.Symlink("..2026_10_30", filepath.Join(dir, "..data"))
+	targets, err := ParseTargets("orca-pilot=orca|codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	callers, err := LoadTokenDir(dir, nil, targets)
+	if err != nil || len(callers) != 1 || callers[0].Name != "orca-pilot" || callers[0].TokenSHA256 != HashToken(orcaToken) || len(callers[0].Targets) != 2 {
+		t.Fatalf("%+v %v", callers, err)
+	}
+	h, _ := New(&fakeBackend{}, callers)
+	if w := post(h, orcaToken, Request{Kind: KindDone, Text: "done"}); w.Code != 202 {
+		t.Fatalf("token from the directory refused: %d", w.Code)
+	}
+	os.WriteFile(filepath.Join(dir, "short"), []byte("abc"), 0o600)
+	if _, err := LoadTokenDir(dir, nil, nil); err == nil || strings.Contains(err.Error(), "abc") {
+		t.Fatalf("short token: %v", err)
+	}
+	if _, err := ParseTargets("orca-pilot"); err == nil {
+		t.Fatal("bad targets accepted")
+	}
+}
+
 func TestNotifyKindsAndValidation(t *testing.T) {
 	h, b := handler(t)
 	if w := post(h, cellToken, Request{Kind: KindApproval, Repo: "steve/x", PR: 1}); w.Code != 403 {
@@ -133,7 +180,7 @@ func TestNotifyApprovalOnlyRequestsACard(t *testing.T) {
 	}
 	var resp map[string]string
 	json.Unmarshal(w.Body.Bytes(), &resp)
-	if len(resp) != 1 || !strings.Contains(resp["status"], "Steve decides") {
+	if len(resp) != 1 || !strings.Contains(resp["message"], "Steve decides") {
 		t.Fatalf("response leaks more than a status: %v", resp)
 	}
 	if c := b.calls[0]; c.kind != "approval" || c.repo != "steve/agent-project-controller" || c.pr != 92 {

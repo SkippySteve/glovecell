@@ -168,6 +168,8 @@ type Store interface {
 	UpdateTask(context.Context, Task) error
 	// PendingTasks are tasks still running or finished but not delivered.
 	PendingTasks(context.Context) ([]Task, error)
+	// TaskInThread returns the newest task started in the thread.
+	TaskInThread(ctx context.Context, roomID, threadRoot string) (Task, error)
 
 	// CreateCard stores a card. ErrConflict means the code is taken by
 	// another open card.

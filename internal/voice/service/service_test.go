@@ -227,7 +227,7 @@ func TestCrashBeforeSendResends(t *testing.T) {
 func TestVoiceApprovalThroughTheService(t *testing.T) {
 	r := newRig(t)
 	r.forge.AddPR(repo, 92, strings.Repeat("a", 40), "Postgres store")
-	if err := r.svc.RequestCard(ctx, Caller{Name: "orca", Target: "orca"}, repo, 92, "ready"); err != nil {
+	if err := r.svc.RequestCard(ctx, Caller{Name: "orca", Targets: []string{"orca"}}, repo, 92, "ready"); err != nil {
 		t.Fatal(err)
 	}
 	c, _ := r.store.OpenCardFor(ctx, repo, 92)
@@ -236,7 +236,10 @@ func TestVoiceApprovalThroughTheService(t *testing.T) {
 	}
 	// An agent posting the code through notify is a bot message: it never
 	// reaches the gate as Steve, and notify cannot post to Approvals.
-	if _, err := r.svc.NotifyMessage(ctx, Caller{Name: "orca", Room: approvals}, "message", "approve "+c.Code, 0, false); err == nil {
+	if _, err := r.svc.NotifyMessage(ctx, Caller{Name: "orca", Room: approvals}, Note{Kind: "message", Text: "approve " + c.Code}); err == nil {
+		t.Fatal("notify posted into the Approvals room")
+	}
+	if _, err := r.svc.NotifyMessage(ctx, Caller{Name: "orca"}, Note{Kind: "message", Text: "approve " + c.Code, Room: "Approvals"}); err == nil {
 		t.Fatal("notify posted into the Approvals room")
 	}
 	if r.forge.MergedCount() != 0 {
@@ -269,30 +272,47 @@ func TestRejectionGoesBackToAnAgent(t *testing.T) {
 
 func TestNotifyMessagesAndTaskReports(t *testing.T) {
 	r := newRig(t)
-	orca := Caller{Name: "orca", Target: "orca"}
-	id, err := r.svc.NotifyMessage(ctx, orca, "question", "Should the chart default to one replica?", 0, false)
-	if err != nil || !contains(r.mx.Texts(), "Question from orca (agent):") || r.mx.Voices() != 1 {
+	orca := Caller{Name: "orca-pilot", Targets: []string{"orca", "codex"}}
+	id, err := r.svc.NotifyMessage(ctx, orca, Note{Kind: "question", Text: "Should the chart default to one replica?"})
+	if err != nil || !contains(r.mx.Texts(), "Question from orca-pilot (agent):") || r.mx.Voices() != 1 {
 		t.Fatalf("question %v %q", err, r.mx.Texts())
 	}
-	// Steve's reply in that thread goes to the caller's target.
+	// Steve's reply in that thread goes to the caller's first target.
 	reply := r.voice(inbox, "Yes, one replica")
 	reply.ThreadRoot, reply.InThread = id, true
 	r.svc.HandleMessage(ctx, reply)
 	if len(r.orca.Tasks()) != 1 || r.orca.Tasks()[0].Brief != "Yes, one replica" {
 		t.Fatalf("reply not routed: %v", r.orca.Tasks())
 	}
-	// The agent finishes the task through notify.
-	if _, err := r.svc.NotifyMessage(ctx, Caller{Name: "codex", Target: "codex"}, "message", "done", 1, true); !errors.Is(err, ErrUnknownTask) {
+	// A caller that does not speak for the target cannot finish the task.
+	if _, err := r.svc.NotifyMessage(ctx, Caller{Name: "cell"}, Note{Kind: "done", Text: "done", Task: 1}); !errors.Is(err, ErrUnknownTask) {
 		t.Fatalf("another caller finished the task: %v", err)
 	}
-	if _, err := r.svc.NotifyMessage(ctx, orca, "message", "Set replicas to 1 in PR 96.", 1, true); err != nil {
+	// In the thread, without a target match, it is only an update.
+	if _, err := r.svc.NotifyMessage(ctx, Caller{Name: "cell"}, Note{Kind: "done", Text: "I think it's done", Thread: id}); err != nil {
+		t.Fatal(err)
+	}
+	if task, _ := r.store.GetTask(ctx, 1); task.State != store.TaskRunning {
+		t.Fatalf("stranger finished the task: %+v", task)
+	}
+	// orca-pilot voice send --kind done --thread <Steve's event>.
+	if _, err := r.svc.NotifyMessage(ctx, orca, Note{Kind: "done", Text: "Set replicas to 1 in PR 96.", Thread: id}); err != nil {
 		t.Fatal(err)
 	}
 	task, _ := r.store.GetTask(ctx, 1)
 	if task.State != store.TaskSucceeded || !task.Delivered || !contains(r.mx.Texts(), "Set replicas to 1 in PR 96.") {
 		t.Fatalf("task %+v", task)
 	}
-	if _, err := r.svc.NotifyMessage(ctx, orca, "message", "again", 1, true); err == nil {
+	if _, err := r.svc.NotifyMessage(ctx, orca, Note{Kind: "done", Text: "again", Task: 1}); err == nil {
 		t.Fatal("finished task finished again")
+	}
+	// Blocked reports by name of room; unknown kinds and rooms refused.
+	if _, err := r.svc.NotifyMessage(ctx, orca, Note{Kind: "blocked", Text: "Need a package approved", Room: "apc"}); err != nil || !contains(r.mx.Texts(), "Blocked from orca-pilot") {
+		t.Fatalf("blocked %v", err)
+	}
+	for _, n := range []Note{{Kind: "approve", Text: "x"}, {Kind: "message", Text: "x", Room: "!nowhere:example.com"}, {Kind: "message"}} {
+		if _, err := r.svc.NotifyMessage(ctx, orca, n); !errors.Is(err, ErrBadRequest) {
+			t.Errorf("%+v: %v", n, err)
+		}
 	}
 }

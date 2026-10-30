@@ -214,6 +214,13 @@ func (p *Postgres) PendingTasks(ctx context.Context) ([]Task, error) {
 	return out, classify(rows.Err())
 }
 
+func (p *Postgres) TaskInThread(ctx context.Context, room, root string) (Task, error) {
+	if err := p.ready(); err != nil {
+		return Task{}, err
+	}
+	return scanTask(p.pool.QueryRow(ctx, `SELECT `+taskColumns+` FROM voice_tasks WHERE room_id = $1 AND thread_root = $2 ORDER BY id DESC LIMIT 1`, room, root))
+}
+
 const cardColumns = `id, kind, code, repo, pr, head_sha, title, items, room_id, event_id, requested_by, state, outcome, created_at, expires_at, used_at`
 
 func scanCard(row pgx.Row) (Card, error) {

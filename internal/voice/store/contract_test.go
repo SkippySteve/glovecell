@@ -92,6 +92,13 @@ func TestContractTasks(t *testing.T) {
 		if err != nil || got.Result != "done" || got.State != store.TaskSucceeded {
 			t.Fatalf("get %+v %v", got, err)
 		}
+		second, _ := s.CreateTask(ctx, store.Task{RoomID: "!r", ThreadRoot: "$t", Origin: "text", State: store.TaskReceived})
+		if got, err := s.TaskInThread(ctx, "!r", "$t"); err != nil || got.ID != second.ID {
+			t.Fatalf("task in thread %+v %v", got, err)
+		}
+		if _, err := s.TaskInThread(ctx, "!r", "$other"); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("missing thread: %v", err)
+		}
 		task.ID = 999
 		if err := s.UpdateTask(ctx, task); !errors.Is(err, store.ErrNotFound) {
 			t.Fatalf("update missing: %v", err)

@@ -34,6 +34,7 @@ CREATE TABLE voice_tasks (
     updated_at   timestamptz NOT NULL
 );
 CREATE INDEX voice_tasks_pending ON voice_tasks (id) WHERE NOT delivered;
+CREATE INDEX voice_tasks_thread ON voice_tasks (room_id, thread_root);
 
 CREATE TABLE voice_approval_cards (
     id           bigserial PRIMARY KEY,

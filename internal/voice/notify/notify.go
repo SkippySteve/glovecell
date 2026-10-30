@@ -2,16 +2,19 @@
 //
 //	POST /v1/notify
 //	Authorization: Bearer <caller token>
-//	{"kind": "message" | "question" | "approval", "text": "...",
-//	 "task": 12, "final": true,              (message: report on a task)
-//	 "repo": "owner/name", "pr": 459}        (approval: request a card)
+//	{"kind": "message" | "question" | "blocked" | "done", "text": "...",
+//	 "room": "<room ID or name>", "thread": "<event ID>",
+//	 "task": 12, "final": true, "failed": false}
+//	{"kind": "approval", "repo": "owner/name", "pr": 459, "text": "..."}
 //
-// Each caller (an agent cell or orchestrator) has its own token. The service
-// stores only SHA-256 hashes of tokens, from a mounted Secret. message and
-// question become a text plus voice note to Steve, marked with the caller's
-// name. approval only asks the gate to post a card for a PR; the gate reads
-// the PR itself, and the response never contains the code. Nothing here can
-// approve or merge.
+// This is the shape orca-pilot voice send posts. Each caller (an agent cell
+// or orchestrator) has its own token: from a directory of token files (one
+// file per caller, as the cluster Secret mounts them; only their SHA-256
+// is kept in memory) or from a JSON file of hashes. Notes become a text
+// plus voice note to Steve, marked with the caller's name; "done" in the
+// thread of a task the caller speaks for finishes it. approval only asks
+// the gate to post a card for a PR; the gate reads the PR itself, and the
+// response never contains the code. Nothing here can approve or merge.
 package notify
 
 import (
@@ -26,10 +29,12 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/time/rate"
 
@@ -41,8 +46,16 @@ import (
 const (
 	KindMessage  = "message"
 	KindQuestion = "question"
+	KindBlocked  = "blocked"
+	KindDone     = "done"
 	KindApproval = "approval"
 )
+
+// AllKinds are every kind a caller may be allowed.
+var AllKinds = []string{KindMessage, KindQuestion, KindBlocked, KindDone, KindApproval}
+
+// noteKinds are what a caller without an explicit list may send.
+var noteKinds = []string{KindMessage, KindQuestion, KindBlocked, KindDone}
 
 // Limits.
 const (
@@ -55,12 +68,13 @@ type CallerConfig struct {
 	Name string `json:"name"`
 	// TokenSHA256 is the hex SHA-256 of the caller's bearer token.
 	TokenSHA256 string `json:"tokenSHA256"`
-	// Kinds the caller may use; empty means message and question.
+	// Kinds the caller may use; empty means message, question, blocked and
+	// done (no approval requests).
 	Kinds []string `json:"kinds,omitempty"`
 	// Room is the caller's room ID; empty means the Inbox room.
 	Room string `json:"room,omitempty"`
-	// Target is the agent target the caller speaks for.
-	Target string `json:"target,omitempty"`
+	// Targets are the agent targets the caller speaks for.
+	Targets []string `json:"targets,omitempty"`
 	// PerHour bounds the caller's requests (default 60; approvals 20).
 	PerHour int `json:"perHour,omitempty"`
 }
@@ -96,7 +110,7 @@ func ValidateCallers(callers []CallerConfig) error {
 			return fmt.Errorf("notify caller %s: tokenSHA256 must be 64 lowercase hex characters (a hash, never the token)", c.Name)
 		}
 		for _, k := range c.Kinds {
-			if k != KindMessage && k != KindQuestion && k != KindApproval {
+			if !slices.Contains(AllKinds, k) {
 				return fmt.Errorf("notify caller %s: unknown kind %q", c.Name, k)
 			}
 		}
@@ -104,9 +118,62 @@ func ValidateCallers(callers []CallerConfig) error {
 	return nil
 }
 
+// LoadTokenDir reads one plain token per file (the file name is the caller
+// name), as a Secret volume mounts them, and keeps only their hashes.
+// kinds applies to every caller (nil means all kinds: an orchestrator may
+// request approval cards, which can never approve); targets maps caller
+// names to the targets they speak for.
+func LoadTokenDir(dir string, kinds []string, targets map[string][]string) ([]CallerConfig, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, errors.New("notify token directory unreadable")
+	}
+	if kinds == nil {
+		kinds = AllKinds
+	}
+	var out []CallerConfig
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasPrefix(name, ".") || e.IsDir() {
+			continue // the Secret volume's ..data links
+		}
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			return nil, fmt.Errorf("notify token %s unreadable", name)
+		}
+		token := strings.TrimSpace(string(b))
+		if len(token) < 32 {
+			return nil, fmt.Errorf("notify token %s is shorter than 32 characters", name)
+		}
+		out = append(out, CallerConfig{Name: name, TokenSHA256: HashToken(token), Kinds: kinds, Targets: targets[name]})
+	}
+	return out, ValidateCallers(out)
+}
+
+// ParseTargets reads "caller=target|target,caller2=target".
+func ParseTargets(s string) (map[string][]string, error) {
+	out := map[string][]string{}
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		name, list, ok := strings.Cut(part, "=")
+		if !ok || !callerName.MatchString(strings.TrimSpace(name)) {
+			return nil, fmt.Errorf("notify caller targets: %q is not caller=target|target", part)
+		}
+		for _, t := range strings.Split(list, "|") {
+			if t = strings.TrimSpace(t); t != "" {
+				out[strings.TrimSpace(name)] = append(out[strings.TrimSpace(name)], t)
+			}
+		}
+	}
+	return out, nil
+}
+
 // Backend is what notify calls; service.Service implements it.
 type Backend interface {
-	NotifyMessage(ctx context.Context, c service.Caller, kind, text string, task int64, final bool) (string, error)
+	NotifyMessage(ctx context.Context, c service.Caller, n service.Note) (string, error)
 	RequestCard(ctx context.Context, c service.Caller, repo string, pr int, note string) error
 }
 
@@ -138,7 +205,7 @@ func New(b Backend, callers []CallerConfig) (*Handler, error) {
 			per = 60
 		}
 		if len(c.Kinds) == 0 {
-			c.Kinds = []string{KindMessage, KindQuestion}
+			c.Kinds = noteKinds
 		}
 		h.callers = append(h.callers, &caller{cfg: c, hash: hash,
 			limiter:  rate.NewLimiter(rate.Every(time.Hour/time.Duration(per)), max(1, per/6)),
@@ -172,10 +239,12 @@ func (h *Handler) authenticate(r *http.Request) *caller {
 
 // Request is the notify body.
 type Request struct {
-	Kind  string `json:"kind"`
-	Text  string `json:"text"`
-	Task  int64  `json:"task,omitempty"`
-	Final bool   `json:"final,omitempty"`
+	Kind   string `json:"kind"`
+	Text   string `json:"text"`
+	Room   string `json:"room,omitempty"`
+	Thread string `json:"thread,omitempty"`
+	Task   int64  `json:"task,omitempty"`
+	Final  bool   `json:"final,omitempty"`
 	// Failed marks a final task report as a failure.
 	Failed bool   `json:"failed,omitempty"`
 	Repo   string `json:"repo,omitempty"`
@@ -230,25 +299,26 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Text = strings.TrimSpace(req.Text)
-	if len(req.Text) > MaxText {
+	if utf8.RuneCountInString(req.Text) > MaxText || !utf8.ValidString(req.Text) {
 		reply(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "text too long"})
 		outcome("bad_request")
 		return
 	}
-	sc := service.Caller{Name: c.cfg.Name, Room: c.cfg.Room, Target: c.cfg.Target}
+	if len(req.Room) > 255 || len(req.Thread) > 255 || strings.ContainsFunc(req.Room+req.Thread, func(r rune) bool { return r <= ' ' || r == 0x7f }) {
+		reply(w, http.StatusBadRequest, map[string]string{"error": "room and thread must be one word of at most 255 characters"})
+		outcome("bad_request")
+		return
+	}
+	sc := service.Caller{Name: c.cfg.Name, Room: c.cfg.Room, Targets: c.cfg.Targets}
 	ctx := r.Context()
 	switch req.Kind {
-	case KindMessage, KindQuestion:
+	case KindMessage, KindQuestion, KindBlocked, KindDone:
 		if req.Text == "" || req.Repo != "" || req.PR != 0 {
-			reply(w, http.StatusBadRequest, map[string]string{"error": "message and question need text and no repo or pr"})
+			reply(w, http.StatusBadRequest, map[string]string{"error": "notes need text and no repo or pr"})
 			outcome("bad_request")
 			return
 		}
-		k := req.Kind
-		if req.Final && req.Failed {
-			k = "failure"
-		}
-		_, err := h.backend.NotifyMessage(ctx, sc, k, req.Text, req.Task, req.Final)
+		id, err := h.backend.NotifyMessage(ctx, sc, service.Note{Kind: req.Kind, Text: req.Text, Room: req.Room, Thread: req.Thread, Task: req.Task, Final: req.Final, Failed: req.Failed})
 		switch {
 		case errors.Is(err, service.ErrUnknownTask):
 			reply(w, http.StatusNotFound, map[string]string{"error": "no such task for this caller"})
@@ -261,11 +331,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			reply(w, http.StatusServiceUnavailable, map[string]string{"error": "not delivered"})
 			outcome("error")
 		default:
-			reply(w, http.StatusAccepted, map[string]string{"status": "delivered"})
+			reply(w, http.StatusAccepted, map[string]string{"id": id, "message": "sent to Steve"})
 			outcome("delivered")
 		}
 	case KindApproval:
-		if !approvalgate.ValidRepo(req.Repo) || req.PR <= 0 || req.Task != 0 || req.Final {
+		if !approvalgate.ValidRepo(req.Repo) || req.PR <= 0 || req.Task != 0 || req.Final || req.Thread != "" || req.Room != "" {
 			reply(w, http.StatusBadRequest, map[string]string{"error": "approval needs repo (OWNER/NAME) and pr"})
 			outcome("bad_request")
 			return
@@ -287,7 +357,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			outcome("error")
 		default:
 			// Deliberately no code: only Steve hears it.
-			reply(w, http.StatusAccepted, map[string]string{"status": "card posted; Steve decides"})
+			reply(w, http.StatusAccepted, map[string]string{"message": "approval card posted; Steve decides"})
 			outcome("card")
 		}
 	default:

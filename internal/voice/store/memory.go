@@ -157,6 +157,20 @@ func (m *Memory) PendingTasks(context.Context) ([]Task, error) {
 	return out, nil
 }
 
+func (m *Memory) TaskInThread(_ context.Context, room, root string) (Task, error) {
+	unlock, err := m.lock()
+	if err != nil {
+		return Task{}, err
+	}
+	defer unlock()
+	for i := len(m.tasks) - 1; i >= 0; i-- {
+		if t := m.tasks[i]; t.RoomID == room && t.ThreadRoot == root {
+			return t, nil
+		}
+	}
+	return Task{}, ErrNotFound
+}
+
 func (m *Memory) CreateCard(_ context.Context, c Card) (Card, error) {
 	if err := validCard(c); err != nil {
 		return Card{}, err

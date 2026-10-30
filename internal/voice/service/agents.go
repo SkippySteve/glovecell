@@ -43,10 +43,35 @@ type Caller struct {
 	Name string
 	// Room is where the caller's messages go ("" means the Inbox room).
 	Room string
-	// Target is the agent target the caller speaks for: Steve's replies in
-	// the caller's threads go there, and the caller may complete tasks
-	// sent to it.
-	Target string
+	// Targets are the agent targets the caller speaks for: Steve's replies
+	// in the caller's new threads go to the first, and the caller may finish
+	// tasks sent to any of them.
+	Targets []string
+}
+
+func (c Caller) speaksFor(target string) bool {
+	for _, t := range c.Targets {
+		if t == target {
+			return true
+		}
+	}
+	return false
+}
+
+// Note is one notify message.
+type Note struct {
+	// Kind is message, question, blocked or done.
+	Kind string
+	Text string
+	// Room is a configured room ID or name ("" means the caller's room).
+	Room string
+	// Thread is the event ID of the thread to post in, for example Steve's
+	// request.
+	Thread string
+	// Task names a task; with Final (or kind done) it finishes it.
+	Task   int64
+	Final  bool
+	Failed bool
 }
 
 // Errors for notify callers.
@@ -55,56 +80,89 @@ var (
 	ErrBadRequest  = errors.New("bad request")
 )
 
-// NotifyMessage posts an agent's message or question to Steve as text and
-// voice, clearly marked as coming from the caller. With task set it reports
-// that task's outcome; final finishes it. It never approves anything.
-func (s *Service) NotifyMessage(ctx context.Context, c Caller, kind, text string, taskID int64, final bool) (string, error) {
-	text = strings.TrimSpace(text)
-	if text == "" {
+var noteLabels = map[string]string{"message": "Message", "question": "Question", "blocked": "Blocked", "done": "Done"}
+
+func (s *Service) roomFor(c Caller, name string) (Room, error) {
+	if name == "" {
+		name = c.Room
+	}
+	if name == "" {
+		return s.inbox, nil
+	}
+	r, ok := s.rooms[name]
+	if !ok {
+		for _, cand := range s.cfg.Rooms {
+			if cand.Name != "" && strings.EqualFold(cand.Name, name) {
+				r, ok = cand, true
+				break
+			}
+		}
+	}
+	if !ok || r.Approvals {
+		return Room{}, fmt.Errorf("%w: room not allowed", ErrBadRequest)
+	}
+	return r, nil
+}
+
+// NotifyMessage posts an agent's note to Steve as text and voice, marked as
+// coming from the caller. In a thread it replies there; "done" (or Final)
+// on a task the caller speaks for finishes the task, and its result is read
+// out. It never approves anything.
+func (s *Service) NotifyMessage(ctx context.Context, c Caller, n Note) (string, error) {
+	n.Text = strings.TrimSpace(n.Text)
+	label, ok := noteLabels[n.Kind]
+	if !ok || n.Text == "" {
 		return "", ErrBadRequest
 	}
-	if taskID != 0 {
-		task, err := s.store.GetTask(ctx, taskID)
-		if errors.Is(err, store.ErrNotFound) || (err == nil && (c.Target == "" || task.Target != c.Target)) {
+	final := n.Final || n.Kind == "done"
+	if n.Task != 0 {
+		task, err := s.store.GetTask(ctx, n.Task)
+		if errors.Is(err, store.ErrNotFound) || (err == nil && !c.speaksFor(task.Target)) {
 			return "", ErrUnknownTask
 		}
 		if err != nil {
 			return "", err
 		}
-		if final {
-			if task.Delivered || (task.State != store.TaskRunning && task.State != store.TaskReceived) {
-				return "", fmt.Errorf("%w: task already finished", ErrBadRequest)
-			}
-			s.mu.Lock()
-			s.finish(ctx, task, kind != "failure", text)
-			s.mu.Unlock()
-			return task.ThreadRoot, nil
+		return s.onTask(ctx, c, task, label, n, final)
+	}
+	room, err := s.roomFor(c, n.Room)
+	if err != nil {
+		return "", err
+	}
+	if n.Thread != "" {
+		task, err := s.store.TaskInThread(ctx, room.ID, n.Thread)
+		if err == nil && c.speaksFor(task.Target) {
+			return s.onTask(ctx, c, task, label, n, final)
 		}
-		return s.Post(ctx, task.RoomID, task.ThreadRoot, fmt.Sprintf("Update from %s on task %d: %s", c.Name, task.ID, text), fmt.Sprintf("Update on task %d from %s. %s", task.ID, c.Name, text))
-	}
-	room := s.inbox
-	if c.Room != "" {
-		r, ok := s.rooms[c.Room]
-		if !ok || r.Approvals {
-			return "", fmt.Errorf("%w: room not allowed", ErrBadRequest)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return "", err
 		}
-		room = r
+		return s.Post(ctx, room.ID, n.Thread, fmt.Sprintf("%s from %s (agent): %s", label, c.Name, n.Text), fmt.Sprintf("%s from %s. %s", label, c.Name, n.Text))
 	}
-	label, spokenLabel := "Message", "Message"
-	if kind == "question" {
-		label, spokenLabel = "Question", "Question"
-	}
-	id, err := s.Post(ctx, room.ID, "", fmt.Sprintf("%s from %s (agent):\n%s", label, c.Name, text), fmt.Sprintf("%s from %s. %s", spokenLabel, c.Name, text))
+	id, err := s.Post(ctx, room.ID, "", fmt.Sprintf("%s from %s (agent):\n%s", label, c.Name, n.Text), fmt.Sprintf("%s from %s. %s", label, c.Name, n.Text))
 	if err != nil {
 		return "", err
 	}
 	// Steve's replies in this thread go to the caller's target.
-	if c.Target != "" {
-		if _, ok := s.targets.Get(c.Target); ok {
-			_ = s.store.UpsertThread(ctx, store.Thread{RoomID: room.ID, RootEvent: id, Target: c.Target})
+	if len(c.Targets) > 0 {
+		if _, ok := s.targets.Get(c.Targets[0]); ok {
+			_ = s.store.UpsertThread(ctx, store.Thread{RoomID: room.ID, RootEvent: id, Target: c.Targets[0]})
 		}
 	}
 	return id, nil
+}
+
+func (s *Service) onTask(ctx context.Context, c Caller, task store.Task, label string, n Note, final bool) (string, error) {
+	if final {
+		if task.Delivered || (task.State != store.TaskRunning && task.State != store.TaskReceived) {
+			return "", fmt.Errorf("%w: task already finished", ErrBadRequest)
+		}
+		s.mu.Lock()
+		s.finish(ctx, task, !n.Failed, n.Text)
+		s.mu.Unlock()
+		return task.ThreadRoot, nil
+	}
+	return s.Post(ctx, task.RoomID, task.ThreadRoot, fmt.Sprintf("%s from %s on task %d: %s", label, c.Name, task.ID, n.Text), fmt.Sprintf("%s from %s on task %d. %s", label, c.Name, task.ID, n.Text))
 }
 
 // RequestCard asks the gate for an approval card. The caller gets no code:
