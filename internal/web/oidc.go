@@ -206,6 +206,7 @@ func (o *OIDC) allowed(subject string, claims map[string]any) bool {
 	}
 	return false
 }
+
 // claimStrings reads a claim that is a list of strings or one string.
 func claimStrings(claims map[string]any, name string) []string {
 	switch v := claims[name].(type) {
