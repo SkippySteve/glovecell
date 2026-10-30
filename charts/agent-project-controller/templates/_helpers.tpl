@@ -18,3 +18,8 @@ project's Secrets and for deleting the project namespace itself. */}}
 {{- define "apc.policyPrefix" -}}
 {{- printf "%s-%s" .Release.Namespace .Release.Name | trunc 40 | trimSuffix "-" }}
 {{- end -}}
+
+{{/* Prefix for cluster-scoped objects of this release, such as default classes. */}}
+{{- define "apc.clusterPrefix" -}}
+{{- printf "%s-%s" .Release.Namespace .Release.Name | trunc 48 | trimSuffix "-" }}
+{{- end -}}

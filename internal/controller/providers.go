@@ -17,6 +17,7 @@ import (
 
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/network"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/providerbroker"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/proxy"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -96,7 +97,7 @@ func providerHosts(names []string) []string {
 
 // validateProviders is the static check run with the rest of the project
 // policy. A refused opt-in blocks the project, like an invalid HTTPS rule.
-func (r *Reconciler) validateProviders(w *api.ProjectWorkspace) error {
+func (r *Reconciler) validateProviders(ctx context.Context, w *api.ProjectWorkspace) error {
 	if len(w.Spec.Providers) == 0 {
 		return nil
 	}
@@ -118,8 +119,18 @@ func (r *Reconciler) validateProviders(w *api.ProjectWorkspace) error {
 		if len(p.AddedBy) > 512 {
 			return errors.New("brokered provider actor too long")
 		}
+		// An unknown, unsupported or ambiguous class refuses the opt-in.
+		if _, err := r.providerClasses().Resolve(ctx, p.Name, p.ProviderClassName); err != nil {
+			return fmt.Errorf("brokered provider %q: %w", p.Name, err)
+		}
 	}
 	return nil
+}
+
+// providerClasses resolves spec.providers entries through ProviderClasses
+// (providerbroker/classes.go). Bare names keep the controller's lease source.
+func (r *Reconciler) providerClasses() *providerbroker.ClassResolver {
+	return &providerbroker.ClassResolver{Client: r.Client, Leases: r.ProviderLeases}
 }
 
 // ProviderLeaseStatus reports, per brokered provider, whether the broker's
@@ -140,8 +151,26 @@ func (r *Reconciler) leases(ctx context.Context) (map[string]brokeredGrant, erro
 	if r.ProviderLeases == nil {
 		return nil, errors.New("brokered providers are not configured")
 	}
+	all, err := r.readLeases(ctx, *r.ProviderLeases)
+	if err != nil {
+		return nil, err
+	}
+	now := float64(time.Now().Unix())
+	out := map[string]brokeredGrant{}
+	for name, g := range all {
+		if g.Access.Expires <= now+60 {
+			continue
+		}
+		out[name] = g
+	}
+	return out, nil
+}
+
+// readLeases reads one lease Secret and returns each brokered provider's
+// enabled grant with access, without applying any lifetime bound.
+func (r *Reconciler) readLeases(ctx context.Context, key types.NamespacedName) (map[string]brokeredGrant, error) {
 	var secret corev1.Secret
-	if err := r.Get(ctx, *r.ProviderLeases, &secret); err != nil {
+	if err := r.Get(ctx, key, &secret); err != nil {
 		return nil, errors.New("provider leases unavailable")
 	}
 	raw := secret.Data[ProviderLeasesKey]
@@ -155,11 +184,10 @@ func (r *Reconciler) leases(ctx context.Context) (map[string]brokeredGrant, erro
 	if err := json.Unmarshal(raw, &all); err != nil {
 		return nil, errors.New("provider leases invalid")
 	}
-	now := float64(time.Now().Unix())
 	out := map[string]brokeredGrant{}
 	for name := range proxy.BrokeredProviders {
 		g, ok := all[name]
-		if !ok || !g.Enabled || g.Access == nil || math.IsNaN(g.Access.Expires) || g.Access.Expires <= now+60 {
+		if !ok || !g.Enabled || g.Access == nil || math.IsNaN(g.Access.Expires) || math.IsInf(g.Access.Expires, 0) {
 			continue
 		}
 		out[name] = brokeredGrant{Enabled: true, Access: &brokeredAccess{Token: g.Access.Token, Expires: g.Access.Expires, Issuer: g.Access.Issuer}}
@@ -174,19 +202,8 @@ func (r *Reconciler) applyProviders(ctx context.Context, w *api.ProjectWorkspace
 	if r.ProviderLeases == nil {
 		return &brokeredState{}, nil
 	}
-	var leases map[string]brokeredGrant
-	if len(names) > 0 {
-		var err error
-		if leases, err = r.leases(ctx); err != nil {
-			slog.WarnContext(ctx, "brokered provider leases unavailable; opted-in providers stay disabled", "workspace_uid", string(w.UID), "status", err.Error())
-		}
-	}
 	entries := map[string]json.RawMessage{}
-	for _, name := range names {
-		grant, ok := leases[name]
-		if !ok {
-			grant = brokeredGrant{Enabled: false}
-		}
+	for name, grant := range r.classLeases(ctx, w, names) {
 		entries[name], _ = json.Marshal(grant)
 	}
 	doc, err := r.syncModelAccess(ctx, w, entries)
@@ -221,6 +238,45 @@ func (r *Reconciler) applyProviders(ctx context.Context, w *api.ProjectWorkspace
 		}
 	}
 	return state, nil
+}
+
+// classLeases returns the grant for each opted-in provider, resolved through
+// its ProviderClass and bounded by it. A provider whose class or lease cannot
+// be resolved gets {"enabled": false}: it fails closed, the others continue.
+func (r *Reconciler) classLeases(ctx context.Context, w *api.ProjectWorkspace, names []string) map[string]brokeredGrant {
+	classes := map[string]string{}
+	for _, p := range w.Spec.Providers {
+		classes[p.Name] = p.ProviderClassName
+	}
+	resolver := r.providerClasses()
+	sources := map[types.NamespacedName]map[string]brokeredGrant{}
+	now := time.Now()
+	out := map[string]brokeredGrant{}
+	for _, name := range names {
+		out[name] = brokeredGrant{Enabled: false}
+		class, err := resolver.Resolve(ctx, name, classes[name])
+		if err != nil {
+			slog.WarnContext(ctx, "brokered provider class unavailable; provider stays disabled", "workspace_uid", string(w.UID), "provider", name, "status", err.Error())
+			continue
+		}
+		leases, ok := sources[class.Leases]
+		if !ok {
+			if leases, err = r.readLeases(ctx, class.Leases); err != nil {
+				slog.WarnContext(ctx, "brokered provider leases unavailable; opted-in providers stay disabled", "workspace_uid", string(w.UID), "status", err.Error())
+			}
+			sources[class.Leases] = leases
+		}
+		grant, ok := leases[name]
+		if !ok {
+			continue
+		}
+		bounded, ok := class.Bound(providerbroker.Access{Token: grant.Access.Token, Expires: grant.Access.Expires, Issuer: grant.Access.Issuer}, now)
+		if !ok {
+			continue
+		}
+		out[name] = brokeredGrant{Enabled: true, Access: &brokeredAccess{Token: bounded.Token, Expires: bounded.Expires, Issuer: bounded.Issuer}}
+	}
+	return out
 }
 
 // syncModelAccess sets the brokered entries of the project's provider-access

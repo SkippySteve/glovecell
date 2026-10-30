@@ -11,6 +11,18 @@
         }
       }
     },
+    "classes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "createDefaults": {
+          "type": "boolean"
+        },
+        "admissionPolicy": {
+          "type": "boolean"
+        }
+      }
+    },
     "controllerScheduling": {
       "type": "object",
       "additionalProperties": false,

@@ -60,7 +60,7 @@ func markSandboxReady(t *testing.T, r *Reconciler, w *api.ProjectWorkspace) *uns
 	return sandbox
 }
 
-func reconcileOnce(t *testing.T, r *Reconciler, w *api.ProjectWorkspace) *api.ProjectWorkspace {
+func reconcileOrchestrator(t *testing.T, r *Reconciler, w *api.ProjectWorkspace) *api.ProjectWorkspace {
 	t.Helper()
 	ctx := context.Background()
 	request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: w.Namespace, Name: w.Name}}
@@ -94,9 +94,9 @@ func TestOrchestratorClassSelectsAdapter(t *testing.T) {
 	}
 	classFixture(t, r, "orca", api.OrchestratorOrca)
 	withClass(t, r, w, "orca")
-	reconcileOnce(t, r, w)
+	reconcileOrchestrator(t, r, w)
 	sandbox := markSandboxReady(t, r, w)
-	current := reconcileOnce(t, r, w)
+	current := reconcileOrchestrator(t, r, w)
 	if current.Status.Phase != "Ready" || orca.ensure != 1 || legacy.ensure != 0 {
 		t.Fatalf("class adapter not used: phase %s, class ensure %d, default ensure %d", current.Status.Phase, orca.ensure, legacy.ensure)
 	}
@@ -108,7 +108,7 @@ func TestOrchestratorClassSelectsAdapter(t *testing.T) {
 		t.Fatal("orchestrated worker does not carry the project hostname", hostname)
 	}
 	orca.fail = true
-	current = reconcileOnce(t, r, w)
+	current = reconcileOrchestrator(t, r, w)
 	if c := readyCondition(current); current.Status.Phase == "Ready" || c.Reason != "OrchestratorPending" {
 		t.Fatal("adapter failure did not hold the workspace out of Ready", current.Status.Phase, c.Reason)
 	}
@@ -124,7 +124,7 @@ func TestUnknownOrchestratorClassFailsClosed(t *testing.T) {
 	r.Orchestrators, _ = orchestrator.NewRegistry(orca)
 	withClass(t, r, w, "chosen")
 
-	current := reconcileOnce(t, r, w)
+	current := reconcileOrchestrator(t, r, w)
 	c := readyCondition(current)
 	if current.Status.Phase != "Blocked" || c.Reason != orchestrator.ReasonClassNotFound || !strings.Contains(c.Message, `"chosen" not found`) {
 		t.Fatal("missing class not refused", current.Status.Phase, c.Reason, c.Message)
@@ -134,7 +134,7 @@ func TestUnknownOrchestratorClassFailsClosed(t *testing.T) {
 	}
 
 	unsupported := classFixture(t, r, "chosen", "projects.agentwork.dev/herdr")
-	current = reconcileOnce(t, r, w)
+	current = reconcileOrchestrator(t, r, w)
 	if c = readyCondition(current); current.Status.Phase != "Blocked" || c.Reason != orchestrator.ReasonUnsupportedController {
 		t.Fatal("class without an installed adapter not refused", current.Status.Phase, c.Reason)
 	}
@@ -144,7 +144,7 @@ func TestUnknownOrchestratorClassFailsClosed(t *testing.T) {
 	if e := r.Create(ctx, withParams); e != nil {
 		t.Fatal(e)
 	}
-	current = reconcileOnce(t, r, w)
+	current = reconcileOrchestrator(t, r, w)
 	if c = readyCondition(current); current.Status.Phase != "Blocked" || c.Reason != orchestrator.ReasonInvalidParameters {
 		t.Fatal("unsupported parameters not refused", current.Status.Phase, c.Reason)
 	}
@@ -155,9 +155,9 @@ func TestUnknownOrchestratorClassFailsClosed(t *testing.T) {
 
 	// Recovery: once the class is valid the workspace proceeds.
 	classFixture(t, r, "chosen", api.OrchestratorOrca)
-	reconcileOnce(t, r, w)
+	reconcileOrchestrator(t, r, w)
 	markSandboxReady(t, r, w)
-	current = reconcileOnce(t, r, w)
+	current = reconcileOrchestrator(t, r, w)
 	if current.Status.Phase != "Ready" || orca.ensure != 1 || legacy.ensure != 0 {
 		t.Fatal("valid class did not recover", current.Status.Phase, orca.ensure, legacy.ensure)
 	}
@@ -255,16 +255,16 @@ func TestUnresolvableClassRemoval(t *testing.T) {
 		r.Orchestrators, _ = orchestrator.NewRegistry(orca)
 		class := classFixture(t, r, "orca", api.OrchestratorOrca)
 		withClass(t, r, w, "orca")
-		reconcileOnce(t, r, w)
+		reconcileOrchestrator(t, r, w)
 		markSandboxReady(t, r, w)
-		if current := reconcileOnce(t, r, w); current.Status.Phase != "Ready" {
+		if current := reconcileOrchestrator(t, r, w); current.Status.Phase != "Ready" {
 			t.Fatal("setup", current.Status.Phase)
 		}
 		if e := r.Delete(ctx, class); e != nil {
 			t.Fatal(e)
 		}
 		before := orca.suspend
-		if current := reconcileOnce(t, r, w); current.Status.Phase != "Blocked" || orca.suspend <= before {
+		if current := reconcileOrchestrator(t, r, w); current.Status.Phase != "Blocked" || orca.suspend <= before {
 			t.Fatal("deleted class left the workspace running or its adapter unsuspended", current.Status.Phase)
 		}
 		if e := r.Get(ctx, types.NamespacedName{Namespace: w.Namespace, Name: w.Name}, w); e != nil {

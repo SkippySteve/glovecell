@@ -5,3 +5,5 @@ resources:
   - accessprofiles.yaml
   - accessgrants.yaml
   - orchestratorclasses.yaml
+  - providerclasses.yaml
+  - forgeclasses.yaml

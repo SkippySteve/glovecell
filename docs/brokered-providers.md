@@ -68,7 +68,10 @@ spec:
   - name: cursor
 ```
 
-The controller refuses an unknown or repeated name, and any opt-in when the
+Each entry may name a `providerClassName`; without one it uses the
+provider's default class, which matches the behaviour described here (see
+[provider and forge classes](classes.md)). The controller refuses an unknown or
+repeated name, an unknown or unsupported class, and any opt-in when the
 controller has no lease source or the network provider is not Cilium. A
 refused opt-in blocks the project, like an invalid HTTPS rule, and withdraws
 every brokered grant.
