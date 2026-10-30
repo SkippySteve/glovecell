@@ -60,6 +60,7 @@ func env(k, fallback string) string {
 	}
 	return v
 }
+
 // databaseFromEnv reads the controller database settings (D13 item 2,
 // docs/database.md). Without DATABASE_URL_FILE it returns nil: history stays
 // in audit ConfigMaps and approvals and access requests are refused.
