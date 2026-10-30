@@ -271,3 +271,48 @@ classes:
 tailscaleIngress:
   enabled: false
   hostname: ''
+# glovecell-voice (docs/voice.md): Matrix voice tasks, the /v1/notify API for
+# agents and the voice approval gate (docs/approval-gate.md). Off by default.
+# Build the image from the Dockerfile's voice target and pin it by digest.
+voice:
+  enabled: false
+  image: ''
+  # Existing Secret in this namespace. Keys (absent ones are optional):
+  # matrix-password or matrix-access-token, matrix-pickle-key (required),
+  # forgejo-token (the approval-gate user's token, when the gate is on),
+  # orca-handoff-token (for Orca targets), notify-callers.json (token
+  # hashes), speech-api-key, summarizer-api-key.
+  existingSecret: ''
+  # The service's JSON configuration (docs/examples/glovecell-voice-config.json):
+  # steve, matrix, rooms, speech, targets, gate, summarizer. No secrets here.
+  config: {}
+  database:
+    # shared: the controller's database (CloudNativePG or external) with
+    # its own voice_* tables and mautrix's crypto_* and mx_* tables.
+    # external: a separate PostgreSQL (existingSecret with uriKey/caKey).
+    mode: shared
+    existingSecret: ''
+    uriKey: uri
+    caKey: ''
+    maxConnections: 5
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: '1'
+      memory: 256Mi
+  scheduling:
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+  networkPolicy:
+    enabled: true
+    # NetworkPolicy peers allowed to call /v1/notify (agent cells,
+    # orchestrators) and to scrape /metrics. Empty denies all ingress.
+    notifyFrom: []
+    metricsFrom: []
+    # Egress rules beyond DNS and the shared CloudNativePG database: the
+    # Matrix homeserver, the speech server, Forgejo, the Orca intake (8791)
+    # and run records (8790). NetworkPolicy egress rules as YAML.
+    egress: []

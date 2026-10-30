@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 	"time"
@@ -165,6 +166,10 @@ func secret(env string, required bool) (string, error) {
 		return "", nil
 	}
 	b, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) && !required {
+		// Optional keys are absent from the mounted Secret.
+		return "", nil
+	}
 	if err != nil {
 		return "", fmt.Errorf("%s: file unreadable", env)
 	}

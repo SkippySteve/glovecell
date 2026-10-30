@@ -47,6 +47,9 @@ func TestSecretFiles(t *testing.T) {
 	if _, err := secret("VOICE_TEST_SECRET", true); err == nil || strings.Contains(err.Error(), dir) {
 		t.Fatalf("missing file: %v", err)
 	}
+	if v, err := secret("VOICE_TEST_SECRET", false); err != nil || v != "" {
+		t.Fatalf("optional missing file: %q %v", v, err)
+	}
 	t.Setenv("VOICE_TEST_SECRET", "")
 	if _, err := secret("VOICE_TEST_SECRET", true); err == nil {
 		t.Fatal("required secret missing")

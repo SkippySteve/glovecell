@@ -232,8 +232,12 @@ func serve() error {
 	// Notify API.
 	var callers []notify.CallerConfig
 	if path := os.Getenv(envNotifyCallers); path != "" {
-		if callers, err = notify.LoadCallers(path); err != nil {
-			return err
+		if _, statErr := os.Stat(path); statErr == nil {
+			if callers, err = notify.LoadCallers(path); err != nil {
+				return err
+			}
+		} else {
+			slog.Warn("no notify callers file; /v1/notify refuses every caller")
 		}
 	}
 	nh, err := notify.New(svc, callers)
