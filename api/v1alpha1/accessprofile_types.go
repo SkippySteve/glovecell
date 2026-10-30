@@ -83,3 +83,5 @@ func (p *AccessProfileList) DeepCopyObject() runtime.Object {
 	_ = json.Unmarshal(b, out)
 	return out
 }
+
+func init() { knownTypes = append(knownTypes, &AccessProfile{}, &AccessProfileList{}) }

@@ -4,3 +4,4 @@ resources:
   - projectworkspaces.yaml
   - accessprofiles.yaml
   - accessgrants.yaml
+  - orchestratorclasses.yaml

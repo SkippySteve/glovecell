@@ -112,3 +112,5 @@ func (g *AccessGrantList) DeepCopyObject() runtime.Object {
 	_ = json.Unmarshal(b, out)
 	return out
 }
+
+func init() { knownTypes = append(knownTypes, &AccessGrant{}, &AccessGrantList{}) }

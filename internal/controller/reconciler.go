@@ -28,6 +28,7 @@ import (
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/forgejo"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/network"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/orchestrator"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/proxy"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -126,17 +127,19 @@ func (c Config) proxyImage() string {
 }
 
 // ProjectAccess owns externally registered application access for a sandbox.
-type ProjectAccess interface {
-	Ensure(context.Context, *api.ProjectWorkspace) error
-	Suspend(context.Context, *api.ProjectWorkspace) error
-	Remove(context.Context, *api.ProjectWorkspace) error
-}
+// Orchestrator adapters (internal/orchestrator) implement it.
+type ProjectAccess = orchestrator.Access
 
 type Reconciler struct {
 	IndependentCodexWorkspaceUID string
 	ReaderWorkspaceUID           string
 	ReaderRoute                  *proxy.ReaderRoute
-	Access                       ProjectAccess
+	// Access is the deployment's default orchestrator, used by workspaces
+	// without spec.orchestratorClassName: T3 Connect when enabled, else nil.
+	Access ProjectAccess
+	// Orchestrators holds the adapters OrchestratorClasses may name. A
+	// workspace naming a class this registry cannot serve is refused.
+	Orchestrators *orchestrator.Registry
 	client.Client
 	Host    forgejo.Host
 	Network network.Provider
@@ -262,7 +265,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ct
 		if _, providerErr := r.applyProviders(ctx, w, nil); providerErr != nil {
 			return ctrl.Result{}, providerErr
 		}
-		if statusErr := r.status(ctx, w, "Blocked", false, "PolicyRejected", e.Error()); statusErr != nil {
+		if statusErr := r.status(ctx, w, "Blocked", false, classRejection(e), e.Error()); statusErr != nil {
 			return ctrl.Result{}, statusErr
 		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
@@ -307,14 +310,33 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ct
 			}
 		}
 	}
-	if r.Access != nil {
+	access, e := r.orchestratorAccess(ctx, w)
+	if e != nil {
+		// The class changed since validation; grant nothing and retry.
+		if stopErr := r.suspendOrchestrators(ctx, w, nil, e); stopErr != nil {
+			return ctrl.Result{}, stopErr
+		}
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, r.status(ctx, w, "Blocked", false, classRejection(e), e.Error())
+	}
+	if access != nil {
+		pendingReason, readyMessage := orchestrator.Wording(access)
 		if ready {
-			if e := r.Access.Ensure(ctx, w); e != nil {
-				phase, ready, reason, message = "Preparing", false, "T3ConnectPending", e.Error()
-			} else {
-				message = "Project sandbox and T3 Connect environment are ready"
+			if w.Spec.OrchestratorClassName != "" {
+				if e := r.audit(ctx, w, orchestratorBound); e != nil {
+					return ctrl.Result{}, e
+				}
+				if r.Access != nil && !sameAccess(r.Access, access) {
+					if e := r.Access.Suspend(ctx, w); e != nil {
+						return ctrl.Result{RequeueAfter: 5 * time.Second}, e
+					}
+				}
 			}
-		} else if e := r.Access.Suspend(ctx, w); e != nil {
+			if e := access.Ensure(ctx, w); e != nil {
+				phase, ready, reason, message = "Preparing", false, pendingReason, e.Error()
+			} else {
+				message = readyMessage
+			}
+		} else if e := r.suspendOrchestrators(ctx, w, access, nil); e != nil {
 			return ctrl.Result{RequeueAfter: 5 * time.Second}, e
 		}
 	}
@@ -383,7 +405,11 @@ func (r *Reconciler) validate(ctx context.Context, w *api.ProjectWorkspace) erro
 	if e := r.validateLANHosts(hosts); e != nil {
 		return e
 	}
-	return r.validateProviders(w)
+	if e := r.validateProviders(w); e != nil {
+		return e
+	}
+	_, e = r.orchestratorAccess(ctx, w)
+	return e
 }
 func (r *Reconciler) audit(ctx context.Context, w *api.ProjectWorkspace, action string) error {
 	return r.auditDetails(ctx, w, action, nil)
@@ -886,7 +912,7 @@ func (r *Reconciler) replaceWorkspaceImage(ctx context.Context, w *api.ProjectWo
 	normalizeSandboxNameservers(wantCopy)
 	normalizeSandboxWorkloadImages(gotCopy)
 	normalizeSandboxWorkloadImages(wantCopy)
-	if r.Access != nil {
+	if r.usesOrchestrator(w) {
 		existing, _, e := unstructured.NestedString(gotCopy, "podTemplate", "spec", "hostname")
 		if e != nil || existing != "" && existing != w.Name {
 			return errors.New("managed T3 hostname drift detected")
@@ -925,7 +951,7 @@ func (r *Reconciler) replaceWorkspaceImage(ctx context.Context, w *api.ProjectWo
 			return err
 		}
 	}
-	if r.Access != nil {
+	if r.usesOrchestrator(w) {
 		if err := unstructured.SetNestedField(current.Object, w.Name, "spec", "podTemplate", "spec", "hostname"); err != nil {
 			return err
 		}
@@ -1020,10 +1046,9 @@ func (r *Reconciler) current(ctx context.Context, w *api.ProjectWorkspace) error
 	return nil
 }
 func (r *Reconciler) suspend(ctx context.Context, w *api.ProjectWorkspace) error {
-	if r.Access != nil {
-		if e := r.Access.Suspend(ctx, w); e != nil {
-			return e
-		}
+	access, resolveErr := r.orchestratorAccess(ctx, w)
+	if e := r.suspendOrchestrators(ctx, w, access, resolveErr); e != nil {
+		return e
 	}
 	u := &unstructured.Unstructured{}
 	u.SetGroupVersionKind(sandboxGVK)
@@ -1076,14 +1101,15 @@ func (r *Reconciler) remove(ctx context.Context, w *api.ProjectWorkspace) error 
 	}
 	stopErr := r.stop(ctx, w)
 	var accessErr error
-	if r.Access != nil {
+	if w.Spec.OrchestratorClassName != "" {
+		accessErr = r.removeOrchestrator(ctx, w)
+		if r.Access == nil {
+			accessErr = errors.Join(accessErr, r.t3HistoryPending(ctx, w))
+		}
+	} else if r.Access != nil {
 		accessErr = r.Access.Remove(ctx, w)
-	} else if ledger, marker, e := r.t3History(ctx, w); e != nil {
-		accessErr = e
-	} else if ledger != nil && !t3Revoked(ledger, string(ledger.Data["state"]), string(ledger.Data["environment-id"])) {
-		accessErr = fmt.Errorf("T3 Connect ledger exists but registration manager is disabled; revoke the environment on T3, then annotate Secret %s/%s with %s=<its environment-id>", ledger.Namespace, ledger.Name, t3RevokedAnnotation)
-	} else if ledger == nil && marker != nil && !t3Revoked(marker, marker.Data["state"], marker.Data["environment-id"]) {
-		accessErr = fmt.Errorf("T3 registration history exists but revocation manager is disabled; revoke the environment on T3, then annotate ConfigMap %s/%s with %s=<its environment-id>", marker.Namespace, marker.Name, t3RevokedAnnotation)
+	} else {
+		accessErr = r.t3HistoryPending(ctx, w)
 	}
 	s := &corev1.Secret{}
 	e := r.Get(ctx, types.NamespacedName{Namespace: r.Config.Namespace, Name: identity(w)}, s)
@@ -1192,6 +1218,22 @@ func (r *Reconciler) remove(ctx context.Context, w *api.ProjectWorkspace) error 
 		if e = r.Delete(ctx, ledger); e != nil && !apierrors.IsNotFound(e) {
 			return e
 		}
+	}
+	return nil
+}
+
+// t3HistoryPending refuses removal while T3 history shows an unrevoked
+// environment and no registration manager is running to revoke it.
+func (r *Reconciler) t3HistoryPending(ctx context.Context, w *api.ProjectWorkspace) error {
+	ledger, marker, e := r.t3History(ctx, w)
+	if e != nil {
+		return e
+	}
+	if ledger != nil && !t3Revoked(ledger, string(ledger.Data["state"]), string(ledger.Data["environment-id"])) {
+		return fmt.Errorf("T3 Connect ledger exists but registration manager is disabled; revoke the environment on T3, then annotate Secret %s/%s with %s=<its environment-id>", ledger.Namespace, ledger.Name, t3RevokedAnnotation)
+	}
+	if ledger == nil && marker != nil && !t3Revoked(marker, marker.Data["state"], marker.Data["environment-id"]) {
+		return fmt.Errorf("T3 registration history exists but revocation manager is disabled; revoke the environment on T3, then annotate ConfigMap %s/%s with %s=<its environment-id>", marker.Namespace, marker.Name, t3RevokedAnnotation)
 	}
 	return nil
 }
@@ -1403,7 +1445,7 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 	if serviceProxy {
 		spec.HostAliases = []corev1.HostAlias{{IP: proxyAddress, Hostnames: []string{"proxy"}}}
 	}
-	if r.Access != nil {
+	if r.usesOrchestrator(w) {
 		spec.Hostname = w.Name
 	}
 	r.Config.WorkerScheduling.Apply(&spec)

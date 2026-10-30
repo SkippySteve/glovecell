@@ -158,6 +158,7 @@ func TestAuditEventReasons(t *testing.T) {
 		"ca-2":                           "CARotated",
 		"dns-abcdef012345":               "DNSUpdated",
 		"cleanup-verified":               "CleanupVerified",
+		"orchestrator-bound":             "OrchestratorBound",
 		"something-new":                  "AuditRecorded",
 	} {
 		if got, _, ok := AuditEventReason(action); !ok || got != want {

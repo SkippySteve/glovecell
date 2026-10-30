@@ -47,6 +47,7 @@ var auditEvents = []struct{ prefix, reason, action string }{
 	{"reference-rules-", "ReferenceRulesApplied", "ApplyReferenceRules"},
 	{"ca-", "CARotated", "RotateCA"},
 	{"dns-", "DNSUpdated", "UpdateDNS"},
+	{"orchestrator-bound", "OrchestratorBound", "BindOrchestrator"},
 }
 
 // AuditEventReason returns the Event reason and action for a durable audit
