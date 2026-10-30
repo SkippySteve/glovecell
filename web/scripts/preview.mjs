@@ -48,15 +48,19 @@ const lanHost = (address, all, ports, learned = []) => ({address, listed: true, 
 const W = {
   'coding-a': workspace('coding-a', {
     learning: {phase: 'Learning', minutes: 60, started: t0 - 48 * MIN, expires: t0 + 12 * MIN},
-    pending: [...observations('p', 3, 1, false), {host: 'telemetry.example.com', method: 'POST', path: '/v1/events', scheme: 'https', port: 443, queryHash: '', fingerprints: 5, requests: 17, first: t0 - 2 * HOUR, last: t0 - 52 * MIN, observation: 'p-telemetry'}],
+    pending: [...observations('p', 3, 1, false), {host: 'registry.npmjs.org', method: 'GET', path: '/left-pad-example/-/left-pad-example-2.1.0.tgz', scheme: 'https', port: 443, queryHash: '', package: {ecosystem: 'npm', name: 'left-pad-example', version: '2.1.0'}, fingerprints: 1, requests: 2, first: t0 - 35 * MIN, last: t0 - 9 * MIN, observation: 'p-pkg'}, {host: 'telemetry.example.com', method: 'POST', path: '/v1/events', scheme: 'https', port: 443, queryHash: '', fingerprints: 5, requests: 17, first: t0 - 2 * HOUR, last: t0 - 52 * MIN, observation: 'p-telemetry'}],
     approved: observations('a', 212, 3, true),
-    reports: [{id: 15, kind: 'other', resource: '192.168.1.50:1337', reason: 'TCP connect to 192.168.1.50:1337 times out', count: 3, first: iso(t0 - 41 * MIN), last: iso(t0 - 6 * MIN)}],
+    reports: [{id: 15, kind: 'other', resource: '192.168.1.50:1337', reason: 'TCP connect to 192.168.1.50:1337 times out', count: 3, first: iso(t0 - 41 * MIN), last: iso(t0 - 6 * MIN)},
+      {id: 16, kind: 'web', resource: 'https://telemetry.example.com/v1/events', reason: 'The test suite posts usage events here and fails when the request is refused', count: 1, first: iso(t0 - 52 * MIN), last: iso(t0 - 52 * MIN), requests: {filter: 'telemetry.example.com', waiting: 1, approved: 0, note: ''}}],
+    ruleHistory: [{at: iso(t0 - 26 * HOUR), action: 'added', rule: 'r1', description: 'GET, HEAD on api.github.com/repos/example/**', by: 'operator', expires: iso(t0 + 6 * DAY), detail: ''},
+      {at: iso(t0 - 3 * DAY), action: 'removed', rule: 'r0', description: 'Any method on uploads.example.com', by: 'operator', expires: '', detail: 'no longer needed'}],
     devlinks: [{Name: 'docs-preview', State: 'Pending', Port: 5173, Cwd: '/workspace/example/web', Note: 'Vite preview of the docs site', Commit: '9f3c2ab41e07aa00', Branch: 'task/example/docs', med: 2, low: 5, requested: t0 - 20 * MIN},
       {Name: 'chart-demo', State: 'Scan failed', Port: 8080, Cwd: '/workspace/example/charts', Commit: '0c4d18e2b97f3a55', Branch: 'task/example/charts', requested: t0 - 3 * HOUR, scan: 'Failed', scanError: 'the scanner timed out after 10 minutes'}],
     lan: {hosts: [lanHost('192.168.1.50', true, [], [{port: 1337, verdict: 'used', firstSeen: iso(t0 - 3 * DAY), lastSeen: iso(t0 - 2 * DAY), count: 14}, {port: 50000, verdict: 'used', firstSeen: iso(t0 - 2 * DAY), lastSeen: iso(t0 - 2 * DAY), count: 6}, {port: 50013, verdict: 'refused', firstSeen: iso(t0 - 2 * DAY), lastSeen: iso(t0 - 2 * DAY), count: 3}]), lanHost('192.168.1.60', false, [22, 2122])],
       history: [{at: iso(t0 - 2 * DAY), event: 'expired', host: '192.168.1.50', ports: 'all', by: 'sandbox-control', deadline: '', detail: 'rule removed; the workspace pod restarts'}, {at: iso(t0 - 2 * DAY - 50 * MIN), event: 'opened', host: '192.168.1.50', ports: 'all', by: 'operator', deadline: iso(t0 - 2 * DAY + 10 * MIN), detail: ''}]},
   }),
   'orca-runtime': workspace('orca-runtime', {
+    learning: {phase: 'Open', minutes: 240, started: t0 - 50 * MIN, expires: t0 + 3 * HOUR + 10 * MIN},
     pending: observations('q', 2, 5, false), approved: observations('b', 96, 5, true),
     devlinks: [{Name: 'example-docs', State: 'Approved', Live: true, Port: 4173, Cwd: '/workspace/example/docs', Commit: '51d0e9a7c2b4ee11', Branch: 'main', low: 1, requested: t0 - DAY, expires: t0 + 6 * DAY + 3 * HOUR},
       {Name: 'storybook', State: 'Scanning', Port: 6006, Cwd: '/workspace/example/ui', Note: 'Component gallery', Commit: 'a7e2c90d13f4b866', Branch: 'task/example/ui', requested: t0 - 2 * MIN, scan: 'Running'},
@@ -66,8 +70,11 @@ const W = {
       {id: 'v2', state: 'Approved', live: true, proposedName: 'admin-ui', proposedRulesText: 'GET,HEAD prefix:/', rulesText: 'GET,HEAD prefix:/', lan: true, tailscale: true, gapAcknowledged: true, seen: t0, first: t0 - 5 * HOUR, count: 120, listener: {project: 'example', worktree: 'admin', port: 8000, pid: 50112, address: '0.0.0.0', loopback: false}, urls: {lan: 'https://preview-v2.example.com', tailnet: 'https://preview-v2-ts.example.com'}},
       {id: 'v3', state: 'Needs network binding', proposedName: 'notebook', proposedRulesText: 'GET,HEAD prefix:/', rulesText: '', lan: false, tailscale: false, gapAcknowledged: false, seen: t0 - MIN, first: t0 - 20 * MIN, count: 7, listener: {project: 'example', worktree: 'research', port: 8888, pid: 51200, address: '127.0.0.1', loopback: true}, urls: {lan: 'https://preview-v3.example.com', tailnet: 'https://preview-v3-ts.example.com'}},
       {id: 'v0', state: 'Expired', proposedName: 'old-api', proposedRulesText: 'GET prefix:/', rulesText: 'GET prefix:/', lan: true, tailscale: false, gapAcknowledged: true, seen: t0 - 2 * DAY, first: t0 - 3 * DAY, count: 300, listener: {project: 'example', worktree: 'api', port: 9000, pid: 40001, address: '0.0.0.0', loopback: false}, urls: {lan: 'https://preview-v0.example.com', tailnet: 'https://preview-v0-ts.example.com'}}],
-    lan: {hosts: [lanHost('192.168.1.50', true, [])], history: []},
+    lan: {hosts: [{...lanHost('192.168.1.50', true, []), grant: {mode: 'ports', ports: [22], openedBy: 'operator', openedAt: iso(t0 - 52 * MIN), deadline: iso(t0 + 8 * MIN), state: 'Open', reason: ''}}], history: [{at: iso(t0 - 52 * MIN), event: 'opened', host: '192.168.1.50', ports: '22', by: 'operator', deadline: iso(t0 + 8 * MIN), detail: ''}]},
   }),
+  'build-box': workspace('build-box', {status: 'Failed', learningEgress: false, learning: null,
+    revisions: [{id: 4, status: 'Rejected', error: 'policy rejected: profile "builder" names unknown service "artifact-cache"', actor: 'operator', at: t0 - 3 * HOUR}, {id: 3, status: 'Active', actor: 'operator', at: t0 - 6 * DAY}],
+    lan: {hosts: [], history: []}}),
   'research': workspace('research', {learningEgress: false, learning: null, mode: 'Suspended', lan: 'research'}),
 };
 
@@ -78,7 +85,7 @@ function apiWorkspace(w) {
 }
 function summary(w) {
   const phase = w.learning?.phase;
-  return {id: w.id, namespace: w.namespace, sandbox: w.sandbox, mode: w.mode, revision: w.revisions[0].id, status: 'Active', learning: phase || '', learningExpires: w.learning?.expires || 0, egress: phase || '', egressExpires: w.learning?.expires || 0, egressControl: w.learningEgress, pending: w.pending.length, approvals: w.previews.filter(p => p.state === 'Pending').length + w.devlinks.filter(d => d.State === 'Pending').length};
+  return {id: w.id, namespace: w.namespace, sandbox: w.sandbox, mode: w.mode, revision: w.revisions[0].id, status: w.status || 'Active', learning: phase || '', learningExpires: w.learning?.expires || 0, egress: phase || '', egressExpires: w.learning?.expires || 0, egressControl: w.learningEgress, pending: w.pending.length, approvals: w.previews.filter(p => p.state === 'Pending').length + w.devlinks.filter(d => d.State === 'Pending').length};
 }
 function apiLan(w) {
   if (w.lan === 'research') return {workspace: w.id, enabled: false, reason: 'LAN host grants are not available for the research workspace', error: '', running: false, podUid: '', windows: [900, 3600, 14400], limits: {grantsPerWorkspace: 8, portsPerGrant: 32}, hosts: [], history: []};
@@ -99,6 +106,49 @@ const project = {metadata: {name: 'demo-project', uid: 'u1', generation: 3, reso
 
 // A second, paused project so Home's filters and sort orders have something to sort.
 const pausedProject = {metadata: {name: 'docs-site', uid: 'u2', generation: 2, resourceVersion: '17'}, spec: {repository: 'example/docs-site', desiredState: 'Paused', https: []}, status: {phase: 'Paused', namespace: 'apc-docs-site', observedGeneration: 2, conditions: [{type: 'Ready', status: 'False', reason: 'Paused', message: 'Paused by operator', observedGeneration: 2}]}};
+const blockedProject = {metadata: {name: 'handbook', uid: 'u3', generation: 2, resourceVersion: '23'}, spec: {repository: 'example/handbook', desiredState: 'Running', https: []}, status: {phase: 'Preparing', namespace: 'apc-handbook', observedGeneration: 2, conditions: [{type: 'Ready', status: 'False', reason: 'PreparationPending', message: 'Forgejo branch rule for main on example/handbook falls short: require at least 1 approval (currently 0). Fix it in Settings > Branches.', observedGeneration: 2}]}};
+
+// Run records (invented), with times relative to now so the inbox shows them.
+const at = s => iso(t0 - s);
+const attempt = (agent, extra) => ({dispatchId: 'ctx_' + agent + '_' + Math.abs(extra.startedAt ? Date.parse(extra.startedAt) % 9973 : 1), agent, state: 'running', ...extra});
+const task = (id, title, status, attempts, extra = {}) => ({id, title, spec: title + '.', status, deps: [], attempts, checks: [], ...extra});
+const RUNS = [
+  {version: 1, run: {id: 'run_csv_export', objective: 'Add CSV export to the reports page', host: 'agent-workspace-coding-a/workspace', createdAt: at(2 * HOUR), collectedAt: at(12 * MIN)},
+    tasks: [task('task_csv_api', 'CSV endpoint', 'completed', [attempt('codex', {state: 'settled', outcome: 'succeeded', startedAt: at(2 * HOUR - 2 * MIN), endedAt: at(HOUR + 20 * MIN)})], {checks: [{name: 'unit tests', status: 'passed', source: 'ci'}]}),
+      task('task_csv_ui', 'Export button and download', 'failed', [attempt('claude', {state: 'failed', outcome: 'failed', failedStage: 'checks', lastError: 'npm test exited 1: 3 failing tests in export.test.ts (expected header row)', startedAt: at(HOUR + 15 * MIN), endedAt: at(25 * MIN)})], {checks: [{name: 'unit tests', status: 'failed', source: 'ci', detail: 'FAIL export.test.ts > writes a header row'}]})],
+    gates: [], agentReports: []},
+  {version: 1, run: {id: 'run_dep_upgrade', objective: 'Upgrade the build to Node 24 and refresh the lockfile', host: 'agent-workspace-coding-a/workspace', createdAt: at(6 * HOUR), collectedAt: at(8 * MIN)},
+    tasks: [task('task_node24', 'Bump Node and fix build', 'running', [attempt('codex', {state: 'running', startedAt: at(5 * HOUR + 30 * MIN)})])], gates: [], agentReports: []},
+  {version: 1, run: {id: 'run_textkit_cli', objective: 'textkit helpers and a CLI', host: 'agent-workspace-orca-runtime/workspace', createdAt: at(90 * MIN), collectedAt: at(4 * MIN)},
+    tasks: [task('task_slugify', 'slugify helper', 'completed', [attempt('codex', {state: 'settled', outcome: 'succeeded', startedAt: at(88 * MIN), endedAt: at(70 * MIN)})], {checks: [{name: 'unit tests', status: 'passed', source: 'ci'}]}),
+      task('task_cli', 'Integrate helpers into a CLI', 'blocked', [attempt('claude', {state: 'running', startedAt: at(40 * MIN)})])],
+    gates: [{id: 'gate_cli_output', taskId: 'task_cli', question: 'Should `textkit top` print a trailing newline after the last line?', options: ['Keep the newline', 'Drop the newline'], status: 'pending'}], agentReports: []},
+  {version: 1, run: {id: 'run_docs_links', objective: 'Fix broken links in the docs site', host: 'agent-workspace-orca-runtime/workspace', createdAt: at(DAY + 2 * HOUR), collectedAt: at(DAY)},
+    tasks: [task('task_links', 'Link checker and fixes', 'completed', [attempt('claude', {state: 'settled', outcome: 'succeeded', startedAt: at(DAY + 2 * HOUR), endedAt: at(DAY + HOUR + 12 * MIN)})], {checks: [{name: 'link check', status: 'passed', source: 'collector'}]})],
+    gates: [], agentReports: []},
+  {version: 1, run: {id: 'run_old_trial', objective: 'Orchestration trial: parallel helpers on separate worktrees', host: 'agent-workspace-coding-a/workspace', createdAt: at(6 * DAY), collectedAt: at(5 * DAY)},
+    tasks: [task('task_old', 'slugify helper', 'failed', [attempt('codex', {state: 'failed', failedStage: 'agent_readiness', lastError: 'Agent startup blocked: agent-update-prompt', startedAt: at(6 * DAY), endedAt: at(6 * DAY - 4 * MIN)})])],
+    gates: [], agentReports: []},
+];
+// Mirrors summarizeRun in internal/web/runs.go.
+function runSummary(rec) {
+  const s = {id: rec.run.id, objective: rec.run.objective, host: rec.run.host, createdAt: rec.run.createdAt, collectedAt: rec.run.collectedAt, tasks: rec.tasks.length, failed: 0, succeeded: 0, running: 0, pendingGates: rec.gates.filter(g => g.status === 'pending').length};
+  const starts = [], ends = [];
+  for (const t of rec.tasks) {
+    const last = t.attempts.at(-1);
+    for (const a of t.attempts) { if (a.startedAt) starts.push(a.startedAt); if (a.endedAt) ends.push(a.endedAt); }
+    if (last?.outcome === 'succeeded') s.succeeded++;
+    else if (last?.outcome === 'failed' || last?.state === 'failed' || t.status === 'failed') { s.failed++; s.failure ??= {task: t.id, title: t.title, stage: last?.failedStage, error: last?.lastError}; }
+    else if (last && !last.endedAt) s.running++;
+  }
+  s.status = s.failed ? 'failed' : s.pendingGates ? 'waiting' : s.running ? 'running' : s.tasks && s.succeeded === s.tasks ? 'succeeded' : 'pending';
+  starts.sort(); ends.sort();
+  if (starts.length) s.startedAt = starts[0];
+  if (ends.length && !s.running) s.endedAt = ends.at(-1);
+  const all = [...starts, ...ends].sort();
+  if (all.length) s.lastActivity = all.at(-1);
+  return s;
+}
 
 function act(w, path, f) {
   const action = f.get('action') || '';
@@ -264,12 +314,14 @@ createServer(async (req, res) => {
         const b = req.method === 'POST' ? JSON.parse((await body(req)) || '{}') : {};
         try { const [status, out] = downloads(decodeURIComponent(dl[1]), dl[2], req.method, b); return json(res, status, out); } catch (e) { return json(res, 409, {error: e.message}); }
       }
-      if (r === 'workspaces') return json(res, 200, [project, pausedProject]);
+      if (r === 'workspaces') return json(res, 200, [project, pausedProject, blockedProject]);
       if (r === 'repositories') return json(res, 200, [{full_name: 'example/demo-project'}]);
       if (r === 'orca-projects') return json(res, 200, [{name: 'demo-project', repo: 'example/demo-project', status: 'registered', clone: '/workspace/demo-project'}, {name: 'docs', repo: 'example/docs', status: 'published', actor: 'operator', requestedAt: new Date().toISOString()}]);
-      if (r === 'runs') return json(res, 200, []);
+      if (r === 'runs') return json(res, 200, RUNS.map(runSummary).sort((a, b) => b.collectedAt.localeCompare(a.collectedAt)));
+      if (r.startsWith('runs/')) { const rec = RUNS.find(x => x.run.id === decodeURIComponent(r.slice(5))); return rec ? json(res, 200, rec) : json(res, 404, {error: 'run record unavailable'}); }
       if (r.endsWith('/audit')) return json(res, 200, [...downloadAudit, {time: new Date((t0 - 3 * DAY) * 1000).toISOString(), action: 'lan-host-granted', message: '192.168.1.31 TCP 22 by operator'}, {time: new Date((t0 - 4 * DAY) * 1000).toISOString(), action: 'created', message: 'example/demo-project'}]);
       if (r.endsWith('/clients')) return json(res, 200, {clients: []});
+      if (req.method === 'GET') return json(res, 404, {error: 'not served by the preview'});
       return json(res, 403, {error: 'the preview does not change console projects'});
     }
     if (p.startsWith('/sandboxes/')) {
@@ -287,7 +339,7 @@ createServer(async (req, res) => {
       if (r.startsWith('/api/') && !w) return json(res, 404, {error: 'workspace not enrolled'});
       switch (r) {
         case '/api/workspace': return json(res, 200, apiWorkspace(w), headers);
-        case '/api/egress': return w.learningEgress ? json(res, 200, {filter: q.get('q') || '', pending: page(w.pending, q.get('q')), approved: page(w.approved, q.get('q'))}, headers) : json(res, 409, {error: 'learning is not enrolled for this workspace'});
+        case '/api/egress': return w.learningEgress ? json(res, 200, {filter: q.get('q') || '', pending: page(w.pending, q.get('q')), approved: page(w.approved, q.get('q')), ...(w.ruleHistory ? {rules: [], ruleHistory: w.ruleHistory} : {})}, headers) : json(res, 409, {error: 'learning is not enrolled for this workspace'});
         case '/api/lan': return json(res, 200, apiLan(w), headers);
         case '/api/devlinks': return json(res, 200, apiDevLinks(w), headers);
         case '/api/previews': {

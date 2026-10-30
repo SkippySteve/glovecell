@@ -9,14 +9,13 @@ import './workspace/workspace.css';
 import './shell/shell.css';
 import {DataProvider, useData} from './data';
 import {Home} from './Home';
+import {Attention} from './attention/Attention';
 import {NewSandbox} from './NewSandbox';
 import {OrcaProjects} from './OrcaProjects';
 import {ConfirmProvider} from './workspace/Confirm';
 import {ProjectWorkspace, SandboxWorkspace} from './workspace/Workspace';
 import {useRoute} from './router';
 import {AppShell} from './shell/Shell';
-// The "Needs attention" inbox replaces this placeholder when it lands.
-import {AttentionPlaceholder as Attention} from './shell/AttentionPlaceholder';
 import {ShellProvider} from './shell/state';
 import {Callout} from './ui';
 

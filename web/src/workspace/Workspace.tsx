@@ -5,7 +5,7 @@ import {useEffect, useMemo, useState, type ReactNode} from 'react';
 import {useData} from '../data';
 import {SandboxRuns} from '../factory/SandboxRuns';
 import {existingKind, orcaRuntimeId} from '../orca';
-import {LifecycleButton, ProjectHistory, ProjectInternet, ProjectOverview, ProjectRepositories} from '../Project';
+import {LifecycleButton, ProjectInternet, ProjectOverview, ProjectRepositories} from '../Project';
 import {LanHosts} from '../LanHosts';
 import {Providers} from '../Providers';
 import {navigate, projectHref, sandboxHref, SECTIONS, sectionsFor, type Section} from '../router';
@@ -19,7 +19,7 @@ import {Credentials} from './sections/Credentials';
 import {Files} from './sections/Files';
 import {projectDownloads, sandboxDownloads} from './sources/downloads';
 import {projectUploads, sandboxUploads} from './sources/uploads';
-import {History} from './sections/History';
+import {History, ProjectHistory} from './sections/History';
 import {Internet} from './sections/Internet';
 import {Lan, useRestrict} from './sections/Lan';
 import {Overview} from './sections/Overview';
@@ -190,7 +190,7 @@ export function ProjectWorkspace({name, section}: {name: string; section: Sectio
     : section === 'downloads' ? <Files key={p.metadata.name} downloads={downloads} uploads={uploads} workspace={p.metadata.name} />
     : section === 'previews' ? <ProjectPreviews />
     : section === 'credentials' ? <div className="stack"><SectionIntro title="Credentials">Repositories this sandbox can push task branches to, and the subscription providers it may use. Secret values are never shown.</SectionIntro><ProjectRepositories p={p} /><Providers p={p} /></div>
-    : section === 'history' ? <div className="stack"><SectionIntro title="History" /><ProjectHistory p={p} /></div>
+    : section === 'history' ? <ProjectHistory key={p.metadata.name} p={p} />
     : <ProjectOverview p={p} />;
   return (
     <Shell current={'p:' + name} section={section} kind="project" badges={projectBadges} header={header}>

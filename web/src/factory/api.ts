@@ -3,7 +3,15 @@
 import {api} from '../api';
 import {RunRecordSchema, type RunRecord} from './record';
 
-export interface RunSummary { id: string; objective: string; host: string; collectedAt: string; tasks: number }
+// Status, counts, times and the first failure come from controllers that derive
+// them from the record (internal/web/runs.go); older ones send only the first five.
+export type RunStatus = 'failed' | 'waiting' | 'running' | 'succeeded' | 'pending';
+export interface RunFailure { task: string; title: string; stage?: string; error?: string }
+export interface RunSummary {
+  id: string; objective: string; host: string; collectedAt: string; tasks: number;
+  createdAt?: string; status?: RunStatus; failed?: number; succeeded?: number; running?: number; pendingGates?: number;
+  startedAt?: string; endedAt?: string; lastActivity?: string; failure?: RunFailure;
+}
 
 export const listRuns = () => api<RunSummary[]>('runs');
 
