@@ -16,10 +16,11 @@
 //  5. CI is green, unless Steve said "despite failing checks";
 //  6. Forgejo says the PR is mergeable;
 //
-// and merges are not paused and under the hourly cap. Then the gate sets the
-// voice-approval commit status, merges with a merge commit (pinned to the
-// SHA), comments, confirms by voice and writes an audit row. Every refusal
-// is audited too.
+// and merges are not paused and under the hourly cap. Then the gate submits
+// an APPROVED review as approval-gate (branch protection still requires
+// one), sets the voice-approval commit status, merges with a merge commit
+// (pinned to the SHA), comments, confirms by voice and writes an audit row.
+// Every refusal is audited too.
 //
 // Nothing else can approve: the notify API only requests cards, agents and
 // bots are not Steve, and the gate never reverts (it asks an agent for a
@@ -334,6 +335,10 @@ func (g *Gate) merge(ctx context.Context, msg matrix.Message, base store.AuditEn
 	}
 	stamp := now.UTC().Format(time.RFC3339)
 	desc := fmt.Sprintf("Approved by Steve by voice at %s (code %s)", stamp, card.Code)
+	review := fmt.Sprintf("%s.\n\nApproved by voice from Steve's verified device `%s`; head `%s`. Transcript: %q", desc, msg.DeviceID, card.HeadSHA, base.Transcript)
+	if err := g.forge.Approve(ctx, card.Repo, card.PR, card.HeadSHA, review); err != nil {
+		return g.mergeFailed(ctx, msg, base, card, "could not submit the approving review: "+err.Error())
+	}
 	if err := g.forge.SetStatus(ctx, card.Repo, card.HeadSHA, Check{Context: g.cfg.StatusContext, State: "success", Description: desc}); err != nil {
 		return g.mergeFailed(ctx, msg, base, card, "could not set the voice-approval status: "+err.Error())
 	}

@@ -61,6 +61,10 @@ type Forge interface {
 	Files(ctx context.Context, repo string, number int) ([]File, error)
 	Checks(ctx context.Context, repo, sha string) ([]Check, error)
 	SetStatus(ctx context.Context, repo, sha string, c Check) error
+	// Approve submits an APPROVED review at sha as the gate's user, unless
+	// one is already there. Branch protection still requires an approving
+	// review, so the gate approves on Steve's behalf before merging.
+	Approve(ctx context.Context, repo string, number int, sha, body string) error
 	// Merge merges with a merge commit, only if the head is still sha.
 	Merge(ctx context.Context, repo string, number int, sha, title, message string) error
 	Comment(ctx context.Context, repo string, number int, body string) error
@@ -82,15 +86,20 @@ type Forgejo struct {
 	Origin string
 	token  string
 	HTTP   *http.Client
+	login  string
 }
 
 var _ Forge = (*Forgejo)(nil)
 
 // NewForgejo returns a client for origin with the approval-gate token.
+// The origin must be HTTPS, except for an in-cluster Service name
+// (host.namespace.svc[.cluster domain]), which may use plain HTTP inside the
+// cluster network.
 func NewForgejo(origin, token string) (*Forgejo, error) {
 	u, err := url.Parse(origin)
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" {
-		return nil, errors.New("forgejo origin must be an HTTPS origin")
+	if err != nil || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" ||
+		!(u.Scheme == "https" || u.Scheme == "http" && clusterService(u.Hostname())) {
+		return nil, errors.New("forgejo origin must be an HTTPS origin (plain HTTP only for an in-cluster Service)")
 	}
 	if strings.TrimSpace(token) == "" {
 		return nil, errors.New("approval-gate token is empty")
@@ -266,6 +275,57 @@ func (f *Forgejo) SetStatus(ctx context.Context, repo, sha string, c Check) erro
 		body["target_url"] = c.URL
 	}
 	return f.call(ctx, http.MethodPost, fmt.Sprintf("%s/statuses/%s", p, url.PathEscape(sha)), body, nil)
+}
+
+// clusterService reports a Kubernetes Service DNS name.
+func clusterService(host string) bool {
+	return strings.HasSuffix(host, ".svc") || strings.Contains(host, ".svc.")
+}
+
+func (f *Forgejo) self(ctx context.Context) (string, error) {
+	if f.login != "" {
+		return f.login, nil
+	}
+	var u struct {
+		Login string `json:"login"`
+	}
+	if err := f.call(ctx, http.MethodGet, "/user", nil, &u); err != nil {
+		return "", err
+	}
+	if u.Login == "" {
+		return "", errors.New("Forgejo did not name the token's user")
+	}
+	f.login = u.Login
+	return u.Login, nil
+}
+
+func (f *Forgejo) Approve(ctx context.Context, repo string, n int, sha, body string) error {
+	p, err := repoPath(repo)
+	if err != nil {
+		return err
+	}
+	login, err := f.self(ctx)
+	if err != nil {
+		return err
+	}
+	var reviews []struct {
+		State     string `json:"state"`
+		CommitID  string `json:"commit_id"`
+		Dismissed bool   `json:"dismissed"`
+		Stale     bool   `json:"stale"`
+		User      struct {
+			Login string `json:"login"`
+		} `json:"user"`
+	}
+	if err := f.call(ctx, http.MethodGet, fmt.Sprintf("%s/pulls/%d/reviews?limit=50", p, n), nil, &reviews); err != nil {
+		return err
+	}
+	for _, r := range reviews {
+		if r.State == "APPROVED" && r.CommitID == sha && !r.Dismissed && !r.Stale && r.User.Login == login {
+			return nil
+		}
+	}
+	return f.call(ctx, http.MethodPost, fmt.Sprintf("%s/pulls/%d/reviews", p, n), map[string]string{"event": "APPROVED", "commit_id": sha, "body": body}, nil)
 }
 
 func (f *Forgejo) Merge(ctx context.Context, repo string, n int, sha, title, message string) error {

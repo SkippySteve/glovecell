@@ -97,7 +97,7 @@ func (b *Bot) Run(ctx context.Context) error {
 	// Show Steve's current master key so the operator can compare it with
 	// his own client before pinning it. It is public key material.
 	if msk := b.masterKey(ctx, id.UserID(b.cfg.Steve)); msk != "" {
-		slog.Info("Steve's cross-signing master key as the bot sees it", "masterKey", msk, "pinned", b.cfg.Trust.PinnedMasterKey != "", "matchesPin", msk == b.cfg.Trust.PinnedMasterKey)
+		slog.Info("Steve's cross-signing master key as the bot sees it", "masterKey", msk, "matchesPin", msk == NormalizeKey(b.cfg.Trust.PinnedMasterKey))
 	} else {
 		slog.Warn("Steve has no cross-signing master key yet; no device of his counts as verified")
 	}

@@ -15,8 +15,12 @@ type FakeForge struct {
 	Statuses map[string][]Check // sha -> checks (latest per context)
 	Merged   []string
 	Comments []string
-	MergeErr error
-	Down     bool
+	// Approvals are "repo#n@sha" reviews; Merge requires one, as branch
+	// protection does.
+	Approvals  []string
+	ApproveErr error
+	MergeErr   error
+	Down       bool
 }
 
 var _ Forge = (*FakeForge)(nil)
@@ -144,11 +148,31 @@ func (f *FakeForge) Merge(_ context.Context, repo string, n int, sha, _, _ strin
 	if pr.HeadSHA != sha {
 		return ErrHeadChanged
 	}
+	approved := false
+	for _, a := range f.Approvals {
+		approved = approved || a == key(repo, n)+"@"+sha
+	}
+	if !approved {
+		return errors.New("Forgejo returned HTTP 405: Does not have enough approvals")
+	}
 	if !pr.Mergeable || pr.Merged {
 		return ErrNotMergeable
 	}
 	pr.Merged, pr.State = true, "closed"
 	f.Merged = append(f.Merged, key(repo, n)+"@"+sha)
+	return nil
+}
+
+func (f *FakeForge) Approve(_ context.Context, repo string, n int, sha, _ string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, err := f.get(repo, n); err != nil {
+		return err
+	}
+	if f.ApproveErr != nil {
+		return f.ApproveErr
+	}
+	f.Approvals = append(f.Approvals, key(repo, n)+"@"+sha)
 	return nil
 }
 

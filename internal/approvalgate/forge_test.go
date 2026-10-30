@@ -12,6 +12,8 @@ import (
 func TestForgejoClient(t *testing.T) {
 	var merged map[string]any
 	var status map[string]string
+	var review map[string]string
+	reviews := `[{"state":"APPROVED","commit_id":"old","user":{"login":"approval-gate"}},{"state":"APPROVED","commit_id":"abc","user":{"login":"steve"}}]`
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "token gate-token" {
 			w.WriteHeader(401)
@@ -38,6 +40,13 @@ func TestForgejoClient(t *testing.T) {
 		case r.Method == "POST" && p == "/api/v1/repos/steve/apc/pulls/93/merge":
 			w.WriteHeader(405)
 			w.Write([]byte(`{"message":"Please try again later"}`))
+		case r.Method == "GET" && p == "/api/v1/user":
+			w.Write([]byte(`{"login":"approval-gate"}`))
+		case r.Method == "GET" && p == "/api/v1/repos/steve/apc/pulls/92/reviews":
+			w.Write([]byte(reviews))
+		case r.Method == "POST" && p == "/api/v1/repos/steve/apc/pulls/92/reviews":
+			json.NewDecoder(r.Body).Decode(&review)
+			w.WriteHeader(200)
 		case r.Method == "POST" && p == "/api/v1/repos/steve/apc/issues/92/comments":
 			w.WriteHeader(201)
 		default:
@@ -68,6 +77,14 @@ func TestForgejoClient(t *testing.T) {
 	if err := f.SetStatus(ctx, "steve/apc", "abc", Check{Context: "voice-approval", State: "success", Description: strings.Repeat("d", 300)}); err != nil || status["context"] != "voice-approval" || len(status["description"]) > 145 {
 		t.Fatalf("status %v %v", status, err)
 	}
+	if err := f.Approve(ctx, "steve/apc", 92, "abc", "voice"); err != nil || review["event"] != "APPROVED" || review["commit_id"] != "abc" {
+		t.Fatalf("review %v %v", review, err)
+	}
+	review = nil
+	reviews = `[{"state":"APPROVED","commit_id":"abc","user":{"login":"approval-gate"}}]`
+	if err := f.Approve(ctx, "steve/apc", 92, "abc", "voice"); err != nil || review != nil {
+		t.Fatalf("duplicate review posted: %v %v", review, err)
+	}
 	if err := f.Merge(ctx, "steve/apc", 92, "abc", "t", "m"); err != nil || merged["Do"] != "merge" {
 		t.Fatalf("merge %v %v", merged, err)
 	}
@@ -88,7 +105,10 @@ func TestForgejoClient(t *testing.T) {
 	if _, err := bad.PullRequest(ctx, "steve/apc", 92); err == nil || strings.Contains(err.Error(), "wrong") {
 		t.Fatalf("auth error %v", err)
 	}
-	for _, o := range []string{"http://git.example.com", "https://git.example.com/sub", ""} {
+	if _, err := NewForgejo("http://forgejo-http.forgejo.svc.cluster.local:3000", "t"); err != nil {
+		t.Fatalf("in-cluster Service refused: %v", err)
+	}
+	for _, o := range []string{"http://git.example.com", "https://git.example.com/sub", "", "http://svc.example.com"} {
 		if _, err := NewForgejo(o, "t"); err == nil {
 			t.Errorf("origin %q accepted", o)
 		}

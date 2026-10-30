@@ -103,14 +103,18 @@ func TestTrustPolicy(t *testing.T) {
 		msk    string
 		want   bool
 	}{
-		{"cross-signed verified", TrustPolicy{}, base(id.TrustStateCrossSignedVerified), "", true},
+		{"verified but no pin", TrustPolicy{}, base(id.TrustStateCrossSignedVerified), "MSKsteve", false},
 		{"tofu without pin", TrustPolicy{}, base(id.TrustStateCrossSignedTOFU), "", false},
+		{"verified with pin", TrustPolicy{PinnedMasterKey: pinned}, base(id.TrustStateCrossSignedVerified), pinned, true},
+		{"pin with spaces", TrustPolicy{PinnedMasterKey: "MSK steve"}, base(id.TrustStateCrossSignedTOFU), pinned, true},
+		{"local verification only", TrustPolicy{PinnedMasterKey: pinned}, base(id.TrustStateVerified), pinned, false},
+		{"unknown master key", TrustPolicy{PinnedMasterKey: pinned}, base(id.TrustStateCrossSignedTOFU), "", false},
 		{"tofu with pin", TrustPolicy{PinnedMasterKey: pinned}, base(id.TrustStateCrossSignedTOFU), pinned, true},
 		{"pin mismatch", TrustPolicy{PinnedMasterKey: pinned}, base(id.TrustStateCrossSignedVerified), "MSKattacker", false},
 		{"unknown device", TrustPolicy{PinnedMasterKey: pinned}, base(id.TrustStateUnknownDevice), pinned, false},
 		{"not cross-signed", TrustPolicy{}, base(id.TrustStateUnset), "", false},
 		{"key backup", TrustPolicy{PinnedMasterKey: pinned}, base(id.TrustStateBackup), pinned, false},
-		{"unencrypted", TrustPolicy{}, func() *event.Event {
+		{"unencrypted", TrustPolicy{PinnedMasterKey: pinned}, func() *event.Event {
 			e := base(id.TrustStateCrossSignedVerified)
 			e.Mautrix.WasEncrypted = false
 			return e
@@ -134,7 +138,7 @@ func TestTrustPolicy(t *testing.T) {
 }
 
 func TestConfigValidate(t *testing.T) {
-	good := Config{Homeserver: "https://matrix.example.com", UserID: string(bot), Password: "pw", PickleKey: []byte(strings.Repeat("k", 32)), Steve: string(steve), Rooms: []string{string(room)}}
+	good := Config{Homeserver: "https://matrix.example.com", UserID: string(bot), Password: "pw", PickleKey: []byte(strings.Repeat("k", 32)), Steve: string(steve), Rooms: []string{string(room)}, Trust: TrustPolicy{PinnedMasterKey: "MSK"}}
 	if err := good.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -146,6 +150,7 @@ func TestConfigValidate(t *testing.T) {
 		"no rooms":   func(c *Config) { c.Rooms = nil },
 		"alias room": func(c *Config) { c.Rooms = []string{"#inbox:example.com"} },
 		"bad steve":  func(c *Config) { c.Steve = "steve" },
+		"no pin":     func(c *Config) { c.Trust.PinnedMasterKey = " " },
 	} {
 		c := good
 		mutate(&c)

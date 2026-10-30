@@ -53,6 +53,9 @@ func (c Config) Validate() error {
 	if c.Password == "" && (c.AccessToken == "" || c.DeviceID == "") {
 		return errors.New("matrix bot needs a password, or an access token with its device ID")
 	}
+	if NormalizeKey(c.Trust.PinnedMasterKey) == "" {
+		return errors.New("Steve's cross-signing master key must be pinned (owner master_key)")
+	}
 	if len(c.PickleKey) < 32 {
 		return errors.New("matrix pickle key must be at least 32 bytes")
 	}

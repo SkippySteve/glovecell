@@ -133,6 +133,9 @@ func TestHappyPathMerges(t *testing.T) {
 	if r.forge.Status(sha1, "voice-approval") != "success" {
 		t.Fatal("voice-approval status not success")
 	}
+	if len(r.forge.Approvals) != 1 || r.forge.Approvals[0] != repo+"#459@"+sha1 {
+		t.Fatalf("approving review %v", r.forge.Approvals)
+	}
 	if len(r.forge.Comments) != 1 || !strings.Contains(r.forge.Comments[0], "Approved by Steve by voice") || !strings.Contains(r.forge.Comments[0], msg.AudioSHA256) || !strings.Contains(r.forge.Comments[0], "code "+c.Code) {
 		t.Fatalf("comment %v", r.forge.Comments)
 	}
@@ -451,6 +454,19 @@ func TestMergeFailureIsReportedAndAudited(t *testing.T) {
 	}
 	if got, _ := r.store.GetCard(ctx, c.ID); got.State != store.CardFailed {
 		t.Fatalf("card %s", got.State)
+	}
+}
+
+func TestReviewFailureStopsTheMerge(t *testing.T) {
+	r := newRig(t)
+	c := r.card(t, 1, sha1)
+	r.forge.ApproveErr = errors.New("Forgejo returned HTTP 403")
+	d := r.gate.Handle(ctx, steveSays(), "approve "+c.Code)
+	if d.Outcome != store.DecisionMergeFailed || r.forge.MergedCount() != 0 || !strings.Contains(d.Reason, "approving review") {
+		t.Fatalf("decision %+v", d)
+	}
+	if r.forge.Status(sha1, "voice-approval") == "success" {
+		t.Fatal("voice-approval success without a review")
 	}
 }
 

@@ -194,34 +194,38 @@ func trustLabel(t id.TrustState) string {
 }
 
 // TrustPolicy decides whether a decrypted event's sending device counts as
-// cross-signed and verified.
+// cross-signed and verified. Trust is pinned: the device must be
+// cross-signed by Steve's self-signing key under exactly the pinned master
+// key. "Verified by someone" is not enough, and a reset or replaced identity
+// (a new master key) is never trusted until the pin is changed.
 type TrustPolicy struct {
-	// PinnedMasterKey is Steve's cross-signing master key (unpadded base64,
-	// as Element shows it). When set, a device cross-signed by a
-	// self-signing key under exactly this master key is verified, without
-	// the bot having to verify Steve interactively.
+	// PinnedMasterKey is Steve's cross-signing master key, unpadded base64
+	// as /keys/query returns it. Required: without it nothing is verified.
 	PinnedMasterKey string
 }
+
+// NormalizeKey strips the whitespace clients use to group key characters.
+func NormalizeKey(k string) string { return strings.Join(strings.Fields(k), "") }
 
 // Verified applies the policy. currentMasterKey is the master key the bot's
 // crypto store holds for the sender now ("" if unknown).
 func (p TrustPolicy) Verified(evt *event.Event, currentMasterKey string) bool {
+	pin := NormalizeKey(p.PinnedMasterKey)
+	if pin == "" || currentMasterKey == "" || currentMasterKey != pin {
+		return false
+	}
 	if !evt.Mautrix.WasEncrypted || evt.Mautrix.ForwardedKeys || evt.Mautrix.TrustSource == nil {
 		return false
 	}
-	if p.PinnedMasterKey != "" && currentMasterKey != p.PinnedMasterKey {
-		// A reset or replaced identity is never trusted, whatever the bot
-		// verified before.
-		return false
-	}
 	switch evt.Mautrix.TrustState {
-	case id.TrustStateCrossSignedVerified, id.TrustStateVerified:
+	case id.TrustStateCrossSignedVerified, id.TrustStateCrossSignedTOFU, id.TrustStateCrossSignedUntrusted:
+		// Cross-signed by the self-signing key under the current master
+		// key, which equals the pin (checked above).
 		return true
-	case id.TrustStateCrossSignedTOFU, id.TrustStateCrossSignedUntrusted:
-		// Cross-signed under the current master key; trusted only when that
-		// key is pinned (checked above).
-		return p.PinnedMasterKey != ""
 	}
+	// Unset (not cross-signed), unknown device, key backup, forwarded keys,
+	// key mismatch, blacklisted, and TrustStateVerified (a local
+	// verification, not cross-signing) all fail.
 	return false
 }
 
