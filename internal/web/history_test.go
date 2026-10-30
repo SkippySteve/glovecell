@@ -11,6 +11,8 @@ import (
 	"time"
 
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/auditlog"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/store"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -78,9 +80,9 @@ type stubHistory struct {
 	asked types.UID
 }
 
-func (s *stubHistory) History(_ context.Context, w *api.ProjectWorkspace) ([]map[string]string, error) {
+func (s *stubHistory) History(_ context.Context, w *api.ProjectWorkspace, _ store.HistoryFilter) ([]map[string]string, auditlog.Source, error) {
 	s.asked = w.UID
-	return s.items, s.err
+	return s.items, auditlog.SourceDatabase, s.err
 }
 
 func TestHistoryUsesConfiguredStore(t *testing.T) {
@@ -88,13 +90,13 @@ func TestHistoryUsesConfiguredStore(t *testing.T) {
 	_ = api.AddToScheme(scheme)
 	uid := types.UID("12345678-1234-1234-1234-123456789012")
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(historyWorkspace(uid)).Build()
-	store := &stubHistory{items: []map[string]string{{"time": "2026-10-29T10:00:00Z", "action": "from-store"}}}
-	rec := historyRequest(t, &Server{Client: c, History: store})
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "from-store") || store.asked != uid {
-		t.Fatalf("history: %d %s (asked %q)", rec.Code, rec.Body.String(), store.asked)
+	stub := &stubHistory{items: []map[string]string{{"time": "2026-10-29T10:00:00Z", "action": "from-store"}}}
+	rec := historyRequest(t, &Server{Client: c, History: stub})
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "from-store") || stub.asked != uid || rec.Header().Get("X-History-Source") != "database" {
+		t.Fatalf("history: %d %s (asked %q)", rec.Code, rec.Body.String(), stub.asked)
 	}
-	store.err = errors.New("store down")
-	if rec = historyRequest(t, &Server{Client: c, History: store}); rec.Code != 503 {
+	stub.err = errors.New("store down")
+	if rec = historyRequest(t, &Server{Client: c, History: stub}); rec.Code != 503 {
 		t.Fatalf("store failure served as %d", rec.Code)
 	}
 }

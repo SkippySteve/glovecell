@@ -3,79 +3,95 @@ package web
 import (
 	"context"
 	"net/http"
-	"sort"
-	"strings"
+	"strconv"
 	"time"
 
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
-	corev1 "k8s.io/api/core/v1"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/auditlog"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/store"
 	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // HistoryStore reads one project's access history, newest first. Each entry
 // has at least "time" (RFC 3339) and "action"; "message" is optional.
 //
-// The history is the durable operational record. Kubernetes Events are not a
-// source: kube-apiserver expires them (--event-ttl, 1h by default), so they
-// only serve `kubectl describe` recency. status.audit is deprecated and not
-// read either.
-//
-// TODO(D13 item 2): a PostgreSQL implementation becomes the durable history
-// store in a separate pull request; ConfigMapHistory stays until it lands.
+// The history is the durable operational record: PostgreSQL when a database
+// is configured (D13 item 2), with audit ConfigMaps merged in until they are
+// imported, and read alone as a fallback while the database is down.
+// Kubernetes Events are not a source: kube-apiserver expires them
+// (--event-ttl, 1h by default). status.audit is deprecated and not read.
 type HistoryStore interface {
-	History(ctx context.Context, w *api.ProjectWorkspace) ([]map[string]string, error)
+	History(ctx context.Context, w *api.ProjectWorkspace, f store.HistoryFilter) ([]map[string]string, auditlog.Source, error)
 }
 
-// ConfigMapHistory reads the immutable audit-* ConfigMaps the controller and
-// console write in the control namespace, labelled with the workspace UID.
-type ConfigMapHistory struct {
-	Reader    client.Reader
-	Namespace string
-}
+// logHistory reads history from the audit log.
+type logHistory struct{ log *auditlog.Log }
 
-func (h ConfigMapHistory) History(ctx context.Context, w *api.ProjectWorkspace) ([]map[string]string, error) {
-	var list corev1.ConfigMapList
-	if e := h.Reader.List(ctx, &list, client.InNamespace(h.Namespace), client.MatchingLabels{api.OwnerLabel: string(w.UID)}); e != nil {
-		return nil, e
-	}
-	type entry struct {
-		at   time.Time
-		data map[string]string
-	}
-	var entries []entry
-	for _, cm := range list.Items {
-		if strings.HasPrefix(cm.Name, "audit-") {
-			at, _ := time.Parse(time.RFC3339Nano, cm.Data["time"])
-			entries = append(entries, entry{at, cm.Data})
-		}
-	}
-	sort.SliceStable(entries, func(i, j int) bool { return entries[i].at.After(entries[j].at) })
-	items := make([]map[string]string, 0, len(entries))
-	for _, e := range entries {
-		items = append(items, e.data)
-	}
-	return items, nil
+func (h logHistory) History(ctx context.Context, w *api.ProjectWorkspace, f store.HistoryFilter) ([]map[string]string, auditlog.Source, error) {
+	return h.log.History(ctx, string(w.UID), f)
 }
 
 func (s *Server) historyStore() HistoryStore {
 	if s.History != nil {
 		return s.History
 	}
-	return ConfigMapHistory{Reader: s.Client, Namespace: s.Namespace}
+	return logHistory{s.auditLog()}
+}
+
+// auditLog is where console actions are recorded: s.Audit, or the audit
+// ConfigMaps in Namespace when no database is configured.
+func (s *Server) auditLog() *auditlog.Log {
+	if s.Audit != nil {
+		return s.Audit
+	}
+	return &auditlog.Log{Client: s.Client, Namespace: s.Namespace}
+}
+
+// historyFilter reads ?action=<prefix>&actor=&since=&before=&limit= (times
+// in RFC 3339; limit at most store.MaxPageSize).
+func historyFilter(r *http.Request) (store.HistoryFilter, bool) {
+	q := r.URL.Query()
+	f := store.HistoryFilter{ActionPrefix: q.Get("action"), Actor: q.Get("actor")}
+	for key, dst := range map[string]*time.Time{"since": &f.Since, "before": &f.Before} {
+		if v := q.Get(key); v != "" {
+			t, err := time.Parse(time.RFC3339Nano, v)
+			if err != nil {
+				return f, false
+			}
+			*dst = t
+		}
+	}
+	if v := q.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > store.MaxPageSize {
+			return f, false
+		}
+		f.Limit = n
+	}
+	return f, len(f.ActionPrefix) <= 128 && len(f.Actor) <= 512
 }
 
 // audit serves GET /api/v1/workspaces/{name}/audit, the console's history.
+// X-History-Source says where it came from; configmaps-fallback means the
+// database was unavailable and newer records may be missing.
 func (s *Server) audit(w http.ResponseWriter, r *http.Request) {
 	obj := &api.ProjectWorkspace{}
 	if e := s.Client.Get(r.Context(), types.NamespacedName{Namespace: s.Namespace, Name: r.PathValue("name")}, obj); e != nil {
 		http.Error(w, "project unavailable", 404)
 		return
 	}
-	items, e := s.historyStore().History(r.Context(), obj)
+	f, ok := historyFilter(r)
+	if !ok {
+		http.Error(w, "invalid history filter", 400)
+		return
+	}
+	items, source, e := s.historyStore().History(r.Context(), obj, f)
 	if e != nil {
 		http.Error(w, "audit unavailable", 503)
 		return
+	}
+	if source != "" {
+		w.Header().Set("X-History-Source", string(source))
 	}
 	writeJSON(w, items)
 }

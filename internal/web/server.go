@@ -16,6 +16,7 @@ import (
 	"time"
 
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/auditlog"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/forgejo"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/registration"
 	corev1 "k8s.io/api/core/v1"
@@ -59,9 +60,14 @@ type Server struct {
 	// Reference is the deployment's reference rules, shown read only next to
 	// every project's own rules (README "Reference rules").
 	Reference Reference
-	// History reads each project's access history. Nil reads the audit
-	// records in Namespace (ConfigMapHistory).
+	// History reads each project's access history. Nil reads Audit.
 	History HistoryStore
+	// Audit records console actions in each project's history: PostgreSQL
+	// when configured, else audit ConfigMaps in Namespace.
+	Audit *auditlog.Log
+	// Database serves access requests, exact approvals and proxy summaries
+	// (D13). Nil refuses those endpoints with an explanation.
+	Database *Database
 }
 
 // Reference is the reference list as the console shows it.
@@ -76,6 +82,9 @@ type Reference struct {
 const openUISpinnerStyle = "'sha256-vai9tBS1dbqDlLt2vYYQwJl16j1hMfOCO5KhCK8LRBg='"
 
 type actorKey struct{}
+
+// approverKey holds the approver group of an OIDC session ("" otherwise).
+type approverKey struct{}
 
 func equal(a, b string) bool {
 	aHash := sha256.Sum256([]byte(a))
@@ -143,6 +152,10 @@ func (s *Server) Handler() (http.Handler, error) {
 		if s.Providers != nil {
 			session["providers"] = []string{"grok", "cursor"}
 		}
+		db := s.Database.status()
+		session["database"] = map[string]any{"configured": db.Configured, "ready": db.Ready, "reason": db.Reason}
+		approver, _ := r.Context().Value(approverKey{}).(string)
+		session["approver"] = approver != ""
 		if s.Downloads != nil {
 			session["downloads"] = true
 			session["downloadMaxBytes"] = s.Downloads.MaxBytes
@@ -200,6 +213,13 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.HandleFunc("POST /api/v1/workspaces/{name}/providers", s.addProvider)
 	mux.HandleFunc("DELETE /api/v1/workspaces/{name}/providers/{provider}", s.removeProvider)
 	mux.HandleFunc("GET /api/v1/workspaces/{name}/audit", s.audit)
+	mux.HandleFunc("GET /api/v1/database", s.databaseStatus)
+	mux.HandleFunc("GET /api/v1/workspaces/{name}/access-requests", s.listRequests)
+	mux.HandleFunc("POST /api/v1/workspaces/{name}/access-requests", s.createRequest)
+	mux.HandleFunc("POST /api/v1/workspaces/{name}/access-requests/{id}/decision", s.decide)
+	mux.HandleFunc("GET /api/v1/workspaces/{name}/approvals", s.listApprovals)
+	mux.HandleFunc("DELETE /api/v1/workspaces/{name}/approvals/{id}", s.revokeApproval)
+	mux.HandleFunc("GET /api/v1/workspaces/{name}/proxy-requests", s.listProxyRequests)
 	mux.HandleFunc("GET /api/v1/workspaces/{name}/clients", s.clients)
 	if s.Downloads != nil {
 		mux.HandleFunc("POST /api/v1/workspaces/{name}/download-checks", s.startDownloadCheck)
@@ -297,7 +317,13 @@ func (s *Server) Handler() (http.Handler, error) {
 			_ = rc.SetReadDeadline(time.Now().Add(chunkDeadline))
 			_ = rc.SetWriteDeadline(time.Now().Add(timeout + 30*time.Second))
 		}
-		ctx, cancel := context.WithTimeout(context.WithValue(context.WithValue(r.Context(), actorKey{}, subject), authKey{}, method), timeout)
+		approver := ""
+		if method == "oidc" && s.OIDC != nil {
+			// Only an OIDC sign-in carries group membership: the automation
+			// token and static login never approve (D13).
+			approver = s.OIDC.ApproverGroup(r)
+		}
+		ctx, cancel := context.WithTimeout(context.WithValue(context.WithValue(context.WithValue(r.Context(), actorKey{}, subject), authKey{}, method), approverKey{}, approver), timeout)
 		defer cancel()
 		mux.ServeHTTP(w, r.WithContext(ctx))
 	}), nil

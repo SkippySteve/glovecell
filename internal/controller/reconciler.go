@@ -26,6 +26,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/auditlog"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/forge"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/forgejo"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/network"
@@ -155,6 +156,9 @@ type Reconciler struct {
 	// Events publishes lifecycle Events (events.k8s.io/v1) regarding each
 	// workspace (events.go). Nil publishes nothing.
 	Events events.EventRecorder
+	// AuditLog keeps the durable history (D13: PostgreSQL). Nil writes the
+	// audit ConfigMaps in Config.Namespace, as before.
+	AuditLog *auditlog.Log
 	// Forges resolves spec.forgeClassName (forge_class.go). Nil allows only
 	// the configured forge (Host and Config).
 	Forges *forge.Resolver
@@ -428,16 +432,6 @@ func (r *Reconciler) audit(ctx context.Context, w *api.ProjectWorkspace, action 
 }
 func (r *Reconciler) auditDetails(ctx context.Context, w *api.ProjectWorkspace, action string, details map[string]string) error {
 	name := fmt.Sprintf("audit-%s-%d-%s", strings.ReplaceAll(string(w.UID), "-", ""), w.Generation, action)
-	cm := &corev1.ConfigMap{}
-	key := types.NamespacedName{Namespace: r.Config.Namespace, Name: name}
-	e := r.Get(ctx, key, cm)
-	if e == nil {
-		return owner(w, cm)
-	}
-	if !apierrors.IsNotFound(e) {
-		return e
-	}
-	immutable := true
 	actor := w.Annotations["projects.agentwork.dev/requested-by"]
 	if actor == "" {
 		actor = "kubernetes-api-client"
@@ -446,8 +440,16 @@ func (r *Reconciler) auditDetails(ctx context.Context, w *api.ProjectWorkspace, 
 	for key, value := range details {
 		data[key] = value
 	}
-	record := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: r.Config.Namespace, Labels: labels(w)}, Immutable: &immutable, Data: data}
-	return r.Create(ctx, record)
+	return r.auditLog().Record(ctx, string(w.UID), name, data, "controller")
+}
+
+// auditLog is the durable history: PostgreSQL when configured, else the
+// audit ConfigMaps in the control namespace (internal/auditlog).
+func (r *Reconciler) auditLog() *auditlog.Log {
+	if r.AuditLog != nil {
+		return r.AuditLog
+	}
+	return &auditlog.Log{Client: r.Client, Namespace: r.Config.Namespace}
 }
 func (r *Reconciler) status(ctx context.Context, w *api.ProjectWorkspace, phase string, ready bool, reason, message string) error {
 	old := w.DeepCopyObject().(*api.ProjectWorkspace)
@@ -1138,20 +1140,14 @@ func (r *Reconciler) remove(ctx context.Context, w *api.ProjectWorkspace) error 
 	} else if !apierrors.IsNotFound(e) {
 		return e
 	} else { // Missing ledger is safe only when no identity was ever created.
-		cm := &corev1.ConfigMap{}
-		auditName := fmt.Sprintf("audit-%s-%d-access-granted", strings.ReplaceAll(string(w.UID), "-", ""), w.Generation)
-		if e = r.Get(ctx, types.NamespacedName{Namespace: r.Config.Namespace, Name: auditName}, cm); e == nil {
-			return errors.New("credential ledger missing; operator recovery required")
-		}
-		// Check all generations, since a pause changes generation.
-		var records corev1.ConfigMapList
-		if e = r.List(ctx, &records, client.InNamespace(r.Config.Namespace), client.MatchingLabels{api.OwnerLabel: string(w.UID)}); e != nil {
+		// Check all generations, since a pause changes generation. An
+		// unreadable history is an error, never "no identity".
+		granted, e := r.auditLog().Has(ctx, string(w.UID), "access-granted", "grant-requested")
+		if e != nil {
 			return e
 		}
-		for _, record := range records.Items {
-			if record.Data["action"] == "access-granted" || record.Data["action"] == "grant-requested" {
-				return errors.New("credential ledger missing; operator recovery required")
-			}
+		if granted {
+			return errors.New("credential ledger missing; operator recovery required")
 		}
 	}
 	if e := errors.Join(stopErr, accessErr); e != nil {

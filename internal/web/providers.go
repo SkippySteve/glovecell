@@ -10,7 +10,6 @@ import (
 
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/proxy"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -148,13 +147,11 @@ func (s *Server) providerAudit(ctx context.Context, obj *api.ProjectWorkspace, a
 	verb := map[string]string{"provider-enabled": "enabled", "provider-revoked": "revoked"}[action]
 	now := time.Now().UTC().Format(time.RFC3339)
 	slog.InfoContext(ctx, "brokered provider "+verb, "workspace", obj.Name, "workspace_uid", string(obj.UID), "generation", obj.Generation, "actor", actor, "provider", provider, "time", now)
-	immutable := true
 	name := fmt.Sprintf("audit-%s-%d-%s-%s", stringUID(obj), obj.Generation, action, provider)
 	data := map[string]string{
 		"workspace": obj.Name, "workspaceUID": string(obj.UID), "generation": fmt.Sprint(obj.Generation),
 		"action": action, "actor": actor, "time": now, "provider": provider,
 		"message": fmt.Sprintf("%s access %s by %s", provider, verb, actor),
 	}
-	return s.Client.Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: s.Namespace, Labels: map[string]string{api.OwnerLabel: string(obj.UID)}}, Immutable: &immutable, Data: data})
+	return s.auditLog().Record(ctx, string(obj.UID), name, data, "console")
 }
-
