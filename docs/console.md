@@ -60,7 +60,8 @@ stylesheets use only these tokens and never their own colour values or
 
 Every page shares one shell. The top bar holds the brand, a **Search or jump
 to** button, the theme switcher and Sign out. On desktop a sidebar lists
-**Home**, **Needs attention** (with the number of requests waiting on you),
+**Home**, **Needs attention** (with the inbox's count of what waits on you,
+shown in the danger colour when something needs action now),
 **Sandboxes** and **Projects** with each workspace under them (counts of what
 waits on you, a **LAN** badge while LAN access is open, and the state of a
 stopped or paused one), then **Runs**, **Orca projects** and **New sandbox**.
@@ -86,7 +87,18 @@ web access state (Open, Learning, Locked) or, for projects, their fixed rules;
 when the API reports a named access level it is shown instead. Recent activity
 merges policy revisions (including start and stop) and LAN grant history for
 sandboxes and the audit trail for projects. `#/sandboxes` and `#/projects` are
-the same view for one kind. `#/attention` is the Needs attention inbox.
+the same view for one kind. Home's Access column and a sandbox's Overview use
+one shared summary (`web/src/access.ts`), so both name access the same way.
+
+**Needs attention** (`#/attention`) collects everything across sandboxes,
+projects and runs that waits on you, most urgent first: **Act now** (errors,
+agents that report being blocked, and grants ending within 15 minutes),
+**Waiting on your decision** (requests, packages, previews, dev links and run
+decisions), **Failed or stuck runs** (from the last 3 days) and **Open access**
+(grants that end on their own). A kind filter is kept in the address
+(`?show=approvals|blocked|grants|errors|runs`). The inbox and the sidebar badge
+share one poller that reads the existing APIs every 30 seconds while the tab is
+visible; open access that is not ending soon is listed but not counted.
 
 ### Sandbox workspace view
 

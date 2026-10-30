@@ -13,7 +13,7 @@
 /* A long OIDC subject (issuer#sub) must not push Sign out off a phone screen. */
 .console-actor { margin-left: auto; font: var(--openui-text-body-sm); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Phones: the theme switcher needs the room more than the actor name does. */
-@media (max-width: 480px) { .console-actor { visibility: hidden; } .console-bar .console-nav-link { white-space: nowrap; } }
+@media (max-width: 480px) { .console-actor { visibility: hidden; } }
 
 .page { max-width: 1120px; margin: 0 auto; padding: var(--openui-space-2xl) var(--openui-space-xl) 96px; display: flex; flex-direction: column; gap: var(--openui-space-xl); outline: none; }
 .page-head, .detail-head { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--openui-space-l); flex-wrap: wrap; }

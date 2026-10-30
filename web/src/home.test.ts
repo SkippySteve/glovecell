@@ -14,7 +14,7 @@ describe('access', () => {
     expect(sandboxAccess(sandbox('a', {egress: 'Learning'}))).toMatchObject({label: 'Learning', rank: 1});
     expect(sandboxAccess(sandbox('a'))).toMatchObject({label: 'Locked', variant: 'success', rank: 3});
     expect(sandboxAccess(sandbox('a', {egress: '', learning: 'Learning'}))).toMatchObject({label: 'Learning'});
-    expect(sandboxAccess(sandbox('a', {egress: '', egressControl: false}))).toMatchObject({label: 'Policy rules', rank: 2});
+    expect(sandboxAccess(sandbox('a', {egress: '', egressControl: false}))).toMatchObject({label: 'Fixed policy rules', rank: 2});
   });
 
   it('shows a named access level when the API reports one', () => {

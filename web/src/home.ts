@@ -1,37 +1,11 @@
 // The Home dashboard's rows, filters and sort orders, kept free of React so they are testable.
-import {egressExpires, egressState, type ExistingSandbox, type Project} from './api';
+import {projectAccess, sandboxAccess, type Access} from './access';
+import type {ExistingSandbox, Project} from './api';
 import {projectHref, sandboxHref} from './router';
 import {existingState, projectState, type Status} from './state';
-import type {TagVariant} from './ui';
 
-// How far a workspace can reach. rank orders the widest first: 0 open to the
-// public web, 1 learning, 2 a named level or fixed rules, 3 locked.
-export interface Access { label: string; variant: TagVariant; rank: number; expires?: number; level?: string }
-
-// A named access level, when the API reports one. Older releases have none;
-// then the web access state (Open, Learning, Locked) stands in.
-type Leveled = {accessLevel?: unknown; level?: unknown; status?: unknown};
-function namedLevel(item: Leveled): string | undefined {
-  const status = (item.status && typeof item.status === 'object' ? item.status : {}) as Leveled;
-  const value = item.accessLevel ?? item.level ?? status.accessLevel ?? status.level;
-  return typeof value === 'string' && /^[a-z][a-z0-9-]{0,39}$/i.test(value) ? value : undefined;
-}
-const LEVEL_LABEL = (level: string) => level.charAt(0).toUpperCase() + level.slice(1).replace(/-/g, ' ');
-
-export function sandboxAccess(s: ExistingSandbox): Access {
-  const state = egressState(s), expires = egressExpires(s) || undefined, level = namedLevel(s as unknown as Leveled);
-  if (state === 'Open') return {label: 'Open to the web', variant: 'danger', rank: 0, expires, level};
-  if (state === 'Learning') return {label: 'Learning', variant: 'warning', rank: 1, expires, level};
-  if (level) return {label: LEVEL_LABEL(level), variant: /locked/i.test(level) ? 'success' : 'info', rank: /locked/i.test(level) ? 3 : 2, level};
-  if (state === 'Locked') return {label: 'Locked', variant: 'success', rank: 3};
-  return {label: 'Policy rules', variant: 'neutral', rank: 2};
-}
-
-export function projectAccess(p: Project): Access {
-  const level = namedLevel(p as unknown as Leveled), rules = (p.spec.https || []).length;
-  if (level) return {label: LEVEL_LABEL(level), variant: /locked/i.test(level) ? 'success' : 'info', rank: /locked/i.test(level) ? 3 : 2, level};
-  return rules ? {label: `${rules} fixed rule${rules === 1 ? '' : 's'}`, variant: 'neutral', rank: 2} : {label: 'Repositories only', variant: 'success', rank: 3};
-}
+// Access summaries live in ./access so Home and the sandbox Overview use the same words.
+export {projectAccess, sandboxAccess, type Access} from './access';
 
 export interface Row {
   key: string; kind: 'sandbox' | 'project'; name: string; kindLabel: string; sub: string; href: string;

@@ -20,6 +20,7 @@ import {dismissReport, reportLanHost, reportRequests, reportTime, type AgentRepo
 import type {SandboxState} from '../useSandbox';
 import {ago, clockAt, left, stamp} from '../time';
 import type {SandboxDetail} from '../../api';
+import {detailAccess, type AccessTone} from '../../access';
 
 const SHOWN_REQUESTS = 3;
 
@@ -53,17 +54,17 @@ function useOrca(enabled: boolean) {
   return records;
 }
 
-// The sandbox's access in one phrase, from the state the console already reads.
-// TODO(control): use accessLevel() from the access-control work once it lands, so
-// the Overview names the same level as the Internet and LAN pages.
-export function accessSummary(d: SandboxDetail, lan: LanView | null | undefined, now: number): {label: string; tone: 'danger' | 'warn' | 'ok' | 'neutral'; detail: string} {
-  const web = webAccess(d);
+// The sandbox's access in one phrase: the shared summary (the same words as
+// Home), plus open LAN grants and what the window means right now.
+export function accessSummary(d: SandboxDetail, lan: LanView | null | undefined, now: number): {label: string; tone: AccessTone; detail: string} {
+  const a = detailAccess(d), web = webAccess(d);
   const lanOpen = lan?.open || 0;
-  const lanText = lanOpen ? `, plus ${plural(lanOpen, 'LAN grant')}` : '';
-  if (!web) return {label: 'Fixed policy rules' + lanText, tone: lanOpen ? 'danger' : 'neutral', detail: 'Requests follow the policy profile; there is no web window to open.'};
-  if (web.phase === 'Open') return {label: 'Open web' + lanText, tone: 'danger', detail: `Any public destination until ${clockAt(web.expires)}, ${left(web.expires, now)} left.`};
-  if (web.phase === 'Learning') return {label: 'Learning' + lanText, tone: 'warn', detail: `Every request becomes an approval until ${clockAt(web.expires)}, ${left(web.expires, now)} left.`};
-  return {label: 'Locked' + lanText, tone: lanOpen ? 'danger' : 'ok', detail: `Approved requests and provider hosts only (${plural(d.egressCounts?.approved || 0, 'approved request')}).`};
+  const label = a.label + (lanOpen ? `, plus ${plural(lanOpen, 'LAN grant')}` : '');
+  const tone: AccessTone = lanOpen ? 'danger' : a.tone;
+  if (web?.phase === 'Open') return {label, tone, detail: `Any public destination until ${clockAt(web.expires)}, ${left(web.expires, now)} left.`};
+  if (web?.phase === 'Learning') return {label, tone, detail: `Every request becomes an approval until ${clockAt(web.expires)}, ${left(web.expires, now)} left.`};
+  if (!web) return {label, tone, detail: 'Requests follow the policy profile; there is no web window to open.'};
+  return {label, tone, detail: `Approved requests and provider hosts only (${plural(d.egressCounts?.approved || 0, 'approved request')}).`};
 }
 
 // What the sandbox is doing now, from facts the console has: its runs, live dev

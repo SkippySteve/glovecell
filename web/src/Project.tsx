@@ -1,5 +1,5 @@
 import {useEffect, useState, type FormEvent} from 'react';
-import {api, type AuditRecord, type Project as ProjectWorkspace} from './api';
+import {api, type Project as ProjectWorkspace} from './api';
 import {useData} from './data';
 import {LanHostList} from './LanHosts';
 import {ReferenceRules} from './Reference';
@@ -177,26 +177,5 @@ export function ProjectInternet({p}: {p: ProjectWorkspace}) {
       </form>
       <ReferenceRules />
     </div>
-  );
-}
-
-export function ProjectHistory({p}: {p: ProjectWorkspace}) {
-  const {toast} = useData();
-  const [records, setRecords] = useState<AuditRecord[] | null>(null);
-  useEffect(() => {
-    let live = true;
-    api<AuditRecord[]>('workspaces/' + encodeURIComponent(p.metadata.name) + '/audit')
-      .then(list => { if (live) setRecords([...(list || [])].sort((a, b) => b.time.localeCompare(a.time))); }, (error: Error) => toast(error.message, true));
-    return () => { live = false; };
-  }, [p.metadata.name, toast]);
-  return (
-    <Card variant="sunk" width="full">
-      <CardHeader title="Access history" subtitle="Lifecycle, access and preparation changes, newest first." />
-      <ol className="timeline" aria-label="Access history">
-        {records === null ? <li className="timeline-empty"><p>Loading history…</p></li> : records.length ? records.map((r, i) => (
-          <li key={i}><time dateTime={r.time}>{new Date(r.time).toLocaleString([], {dateStyle: 'medium', timeStyle: 'short'})}</time><div><strong>{r.action}</strong>{r.message ? <p>{r.message}</p> : null}</div></li>
-        )) : <li className="timeline-empty"><p>No audit records yet.</p></li>}
-      </ol>
-    </Card>
   );
 }

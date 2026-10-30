@@ -168,8 +168,8 @@ strong, b { font-weight: var(--console-weight-bold); }
   box-shadow: var(--console-shadow-1);
 }
 .openui-card-clear { border-radius: var(--console-radius-lg); }
-.card, .tile, .health-card, .facts div, .factory-facts div { border-color: var(--console-border); }
-.card, .tile { box-shadow: var(--console-shadow-1); }
+.card, .health-card, .facts div, .factory-facts div { border-color: var(--console-border); }
+.card { box-shadow: var(--console-shadow-1); }
 
 /* ---------- Callouts ---------- */
 .openui-callout { border-left-width: 3px; padding: 10px 14px; border-radius: 0 var(--console-radius) var(--console-radius) 0; gap: 2px; }

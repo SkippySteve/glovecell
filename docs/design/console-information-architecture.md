@@ -65,8 +65,8 @@ The top bar had only the brand (Home), Runs and Orca projects.
   state and sort in the URL, an access column, last activity per row and a
   recent activity list. `#/sandboxes` and `#/projects` are the same view for
   one kind.
-- **`#/attention`** route and sidebar link for the Needs attention inbox (a
-  placeholder lists waiting requests and blocked projects until the inbox lands).
+- **`#/attention`** route and sidebar link for the Needs attention inbox; the
+  sidebar badge is the inbox's own count (`useAttentionCount()`).
 - The workspace view no longer draws its own sidebar or picker; it publishes
   its section badges to the shell. Section pills stay on phones.
 - Legacy and typed hashes (`access`, `devlinks`, `activity`, `repositories`,

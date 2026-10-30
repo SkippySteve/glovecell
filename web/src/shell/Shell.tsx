@@ -2,7 +2,7 @@
 // desktop that becomes a collapsible menu on phones, and breadcrumbs.
 // The sidebar lists every sandbox and project and, for the one on screen, its sections.
 import {useEffect, useRef, useState, type MouseEvent, type ReactNode, type RefObject} from 'react';
-import type {ExistingSandbox, Project} from '../api';
+import {useAttentionCount} from '../attention/store';
 import {useData} from '../data';
 import {attentionHref, breadcrumbs, homeHref, newSandboxHref, orcaHref, projectHref, projectsHref, sandboxesHref, sandboxHref, sectionsFor, type Route, type Section} from '../router';
 import {existingState, projectState} from '../state';
@@ -14,14 +14,7 @@ import {useShell} from './state';
 // How many workspaces each sidebar group lists before linking to the full list.
 const SIDEBAR_LIMIT = 8;
 
-// What the Attention link counts until the inbox reports its own total:
-// requests waiting on the operator and projects whose preparation is blocked.
-export function attentionCount(existing: ExistingSandbox[], projects: Project[]): number {
-  return existing.reduce((n, s) => n + (s.pending || 0) + (s.approvals || 0), 0)
-    + projects.filter(p => p.status?.phase !== 'Removed' && projectState(p).attention).length;
-}
-
-function Count({n, label, tone}: {n: number; label: string; tone?: 'warn' | 'live' | 'plain'}) {
+function Count({n, label, tone}: {n: number; label: string; tone?: 'warn' | 'live' | 'urgent' | 'plain'}) {
   if (!n) return null;
   return <span className={'side-badge' + (tone ? ' ' + tone : '')}>{n}<span className="visually-hidden"> {label}</span></span>;
 }
@@ -85,17 +78,18 @@ function WorkspaceGroup({label, href, items, current, section, here, labelId}: {
 }
 
 export function SideNav({route}: {route: Route}) {
-  const {existing, projects, session} = useData();
+  const {existing, session} = useData();
   const {sandboxes, projects: projectItems} = useItems();
   const current = route.view === 'sandbox' ? 's:' + route.id : route.view === 'project' ? 'p:' + route.name : '';
   const section: Section = route.view === 'sandbox' || route.view === 'project' ? route.section : 'overview';
-  const attention = attentionCount(existing, projects);
+  // The inbox's own total (shared poller), so the badge and the page agree.
+  const attention = useAttentionCount();
   const page = (view: Route['view']) => route.view === view ? 'page' as const : undefined;
   return (
     <nav className="side-nav" aria-label="Main">
       <ul className="side-list">
         <li><a className="side-link" href={homeHref()} aria-current={page('home')}>Home</a></li>
-        <li><a className="side-link" href={attentionHref()} aria-current={page('attention')}>Needs attention<span className="side-end"><Count n={attention} label="items" tone="warn" /></span></a></li>
+        <li><a className="side-link" href={attentionHref()} aria-current={page('attention')}>Needs attention<span className="side-end">{attention.loaded ? <Count n={attention.count} label={attention.urgent ? `items, ${attention.urgent} to act on now` : 'items'} tone={attention.urgent ? 'urgent' : 'warn'} /> : null}</span></a></li>
       </ul>
       <ul className="side-list">
         {session.sandboxControl || existing.length ? <WorkspaceGroup label="Sandboxes" href={sandboxesHref()} items={sandboxes} current={current} section={section} here={route.view === 'sandboxes'} labelId="side-sandboxes" /> : null}
