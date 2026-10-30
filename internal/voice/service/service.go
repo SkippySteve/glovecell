@@ -261,7 +261,7 @@ func (s *Service) send(ctx context.Context, task store.Task) {
 		s.fail(ctx, task, fmt.Sprintf("there is no target called %s", task.Target))
 		return
 	}
-	id, err := t.Send(ctx, targets.Task{ID: task.ID, Brief: task.Transcript, Repo: task.Repo, Actor: s.cfg.Steve})
+	id, err := t.Send(ctx, targets.Task{ID: task.ID, Brief: task.Transcript, Repo: task.Repo, Actor: s.cfg.Steve, Thread: task.ThreadRoot})
 	if err != nil {
 		s.fail(ctx, task, fmt.Sprintf("%s didn't take the task: %v", task.Target, err))
 		return

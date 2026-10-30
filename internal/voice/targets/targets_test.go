@@ -125,16 +125,20 @@ func TestOrcaHandoffLifecycle(t *testing.T) {
 	in := &intake{handoffs: map[string]handoffRecord{}, runs: map[string]string{}}
 	srv := in.server(t, token)
 	defer srv.Close()
-	o, err := NewOrca(OrcaConfig{Name: "codex", Agent: "codex", HandoffURL: srv.URL, RunRecordsURL: srv.URL, Token: token, DefaultRepo: "steve/agent-project-controller"})
+	o, err := NewOrca(OrcaConfig{Name: "codex", Agent: "codex", HandoffURL: srv.URL, RunRecordsURL: srv.URL, Token: token, DefaultRepo: "steve/agent-project-controller",
+		BriefFooter: "Report with: orca-pilot voice send --kind done --thread {thread} --text ..."})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	id, err := o.Send(ctx, Task{ID: 42, Brief: "fix the flaky test", Actor: "@steve:example.com"})
+	id, err := o.Send(ctx, Task{ID: 42, Brief: "fix the flaky test", Actor: "@steve:example.com", Thread: "$root"})
 	if err != nil || id != "voice-codex-42" {
 		t.Fatalf("send %q %v", id, err)
 	}
 	req := in.got[0]
+	if !strings.Contains(req.Brief, "--thread $root --text") {
+		t.Fatalf("footer not filled: %q", req.Brief)
+	}
 	if req.Agent != "codex" || req.Repo != "steve/agent-project-controller" || !strings.Contains(req.Brief, "fix the flaky test") || !strings.Contains(req.Brief, "never merge") || req.Actor != "glovecell-voice:@steve:example.com" {
 		t.Fatalf("request %+v", req)
 	}

@@ -64,10 +64,13 @@ func TestHelmVoice(t *testing.T) {
 		t.Fatal(err)
 	}
 	voice := map[string]any{
-		"enabled":        true,
-		"image":          "registry.example.com/glovecell-voice@sha256:" + strings.Repeat("c", 64),
-		"existingSecret": "glovecell-voice",
-		"config":         cfg,
+		"enabled":    true,
+		"image":      "registry.example.com/glovecell-voice@sha256:" + strings.Repeat("c", 64),
+		"homeserver": "https://matrix.example.com",
+		"speech":     map[string]any{"baseURL": "http://speaches.speaches.svc:8000/v1"},
+		"orca":       map[string]any{"handoffURL": "http://orca-handoff.orca.svc:8791"},
+		"approval":   map[string]any{"repos": []string{"steve/*"}},
+		"config":     cfg,
 		"networkPolicy": map[string]any{
 			"enabled":    true,
 			"notifyFrom": []any{map[string]any{"namespaceSelector": map[string]any{"matchLabels": map[string]any{"kubernetes.io/metadata.name": "agent-workspace-orca-pilot"}}}},
@@ -98,14 +101,18 @@ func TestHelmVoice(t *testing.T) {
 	}
 	text := string(out)
 	for _, want := range []string{
-		"secretName: \"glovecell-voice\"",
+		"secretName: \"glovecell-voice-matrix\"",
+		"secretName: \"glovecell-voice-owner\"",
 		"secretName: \"qualification-db-app\"",
 		"secretName: \"qualification-db-ca\"",
-		"VOICE_FORGEJO_TOKEN_FILE",
-		"/var/run/glovecell-voice/secrets/forgejo-token",
+		"{name: FORGEJO_TOKEN_FILE, value: /var/run/glovecell-voice/forgejo/token}",
+		"{name: FORGEJO_URL, value: \"https://git.example.com\"}",
+		"{name: APPROVAL_REPOS, value: \"steve/*\"}",
+		"{name: VOICE_HEALTH_ADDR, value: \":8081\"}",
+		"{name: NOTIFY_TOKENS_DIR, value: /var/run/glovecell-voice/notify}",
 		"kind: NetworkPolicy",
 		"agent-workspace-orca-pilot",
-		"\\\"voice-approval\\\"",
+		"\\\"codecs\\\"",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("voice render lacks %s", want)
@@ -123,8 +130,9 @@ func TestHelmVoice(t *testing.T) {
 	}
 	for name, mutate := range map[string]func(map[string]any){
 		"mutable image":           func(v map[string]any) { v["image"] = "registry.example.com/glovecell-voice:latest" },
-		"no secret":               func(v map[string]any) { v["existingSecret"] = "" },
-		"no config":               func(v map[string]any) { v["config"] = map[string]any{} },
+		"no owner secret":         func(v map[string]any) { v["secrets"] = map[string]any{"owner": ""} },
+		"http homeserver":         func(v map[string]any) { v["homeserver"] = "http://matrix.example.com" },
+		"no speech":               func(v map[string]any) { v["speech"] = map[string]any{"baseURL": ""} },
 		"external without secret": func(v map[string]any) { v["database"] = map[string]any{"mode": "external"} },
 		"unknown database mode":   func(v map[string]any) { v["database"] = map[string]any{"mode": "sqlite"} },
 	} {

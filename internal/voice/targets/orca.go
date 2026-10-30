@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -57,7 +58,7 @@ type OrcaConfig struct {
 	// Base is an optional base branch.
 	Base string
 	// BriefFooter is appended to every brief (for example how to report
-	// back through the notify API).
+	// back through the notify API); {thread} and {task} are replaced.
 	BriefFooter string
 	Timeout     time.Duration
 }
@@ -240,6 +241,7 @@ func buildBrief(t Task, footer string) string {
 	b.WriteString("\n\nWork through a pull request as usual; never merge. ")
 	b.WriteString("Finish with a short plain-language summary (two to five sentences) of what you did and anything Steve must do; it will be read aloud to him.\n")
 	if footer = strings.TrimSpace(footer); footer != "" {
+		footer = strings.NewReplacer("{thread}", t.Thread, "{task}", strconv.FormatInt(t.ID, 10)).Replace(footer)
 		b.WriteString("\n" + footer + "\n")
 	}
 	return b.String()

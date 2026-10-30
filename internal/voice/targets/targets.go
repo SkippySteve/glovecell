@@ -43,6 +43,9 @@ type Task struct {
 	Repo string
 	// Actor says who asked (Steve's MXID).
 	Actor string
+	// Thread is the Matrix event ID of the thread the task lives in, so an
+	// agent can report back into it.
+	Thread string
 }
 
 // Status is a task's progress.

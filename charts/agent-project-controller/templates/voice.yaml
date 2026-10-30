@@ -9,11 +9,14 @@ holds the Matrix bot's credentials and the approval-gate Forgejo token.
 {{- if not (regexMatch "^.+@sha256:[a-f0-9]{64}$" (toString $v.image)) }}
 {{- fail "voice.image must be a digest-pinned image (@sha256:...)" }}
 {{- end }}
-{{- if not $v.existingSecret }}
-{{- fail "voice.existingSecret is required (docs/voice.md lists its keys)" }}
+{{- if not (and $v.secrets.matrix $v.secrets.owner) }}
+{{- fail "voice.secrets.matrix and voice.secrets.owner are required (docs/voice.md lists their keys)" }}
 {{- end }}
-{{- if not $v.config }}
-{{- fail "voice.config is required (docs/examples/glovecell-voice-config.json)" }}
+{{- if not (regexMatch "^https://" (toString $v.homeserver)) }}
+{{- fail "voice.homeserver must be the homeserver's https URL" }}
+{{- end }}
+{{- if not $v.speech.baseURL }}
+{{- fail "voice.speech.baseURL is required" }}
 {{- end }}
 {{- if not (has $v.database.mode (list "shared" "external")) }}
 {{- fail "voice.database.mode must be shared or external" }}
@@ -37,6 +40,7 @@ holds the Matrix bot's credentials and the approval-gate Forgejo token.
 {{- $caSecret = $dbSecret }}
 {{- $caKey = $v.database.caKey }}
 {{- end }}
+{{- if $v.config }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -47,6 +51,7 @@ metadata:
 data:
   config.json: {{ toJson $v.config | quote }}
 ---
+{{- end }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -74,13 +79,14 @@ spec:
   template:
     metadata:
       annotations:
-        checksum/config: {{ toJson $v.config | sha256sum }}
+        checksum/config: {{ toJson (omit $v "networkPolicy" "resources" "scheduling") | sha256sum }}
       labels:
         app.kubernetes.io/name: glovecell-voice
         app.kubernetes.io/part-of: agent-project-controller
     spec:
       serviceAccountName: glovecell-voice
       automountServiceAccountToken: false
+      enableServiceLinks: false
 {{- with $v.scheduling.nodeSelector }}
       nodeSelector:
 {{ toYaml . | indent 8 }}
@@ -108,36 +114,76 @@ spec:
         - name: voice
           image: {{ $v.image | quote }}
           args: [serve]
+          # The cluster contract (infra/agent-workplace/glovecell-voice in the
+          # deployment repository uses the same names). Credentials are files.
           env:
-            - name: VOICE_CONFIG_FILE
-              value: /etc/glovecell-voice/config.json
-            - name: VOICE_LISTEN
-              value: ":8080"
-            - name: VOICE_DATABASE_URL_FILE
-              value: /var/run/glovecell-voice/database/uri
-{{- if $caKey }}
-            - name: VOICE_DATABASE_CA_FILE
-              value: /var/run/glovecell-voice/database-ca/ca.crt
+            - {name: VOICE_LISTEN_ADDR, value: ":8080"}
+            - {name: VOICE_HEALTH_ADDR, value: ":8081"}
+            - {name: MATRIX_HOMESERVER, value: {{ $v.homeserver | quote }}}
+            - {name: MATRIX_DEVICE_NAME, value: glovecell-voice}
+            - {name: MATRIX_CREDENTIALS_DIR, value: /var/run/glovecell-voice/matrix}
+            - {name: VOICE_OWNER_DIR, value: /var/run/glovecell-voice/owner}
+            - {name: SPEECH_BASE_URL, value: {{ $v.speech.baseURL | quote }}}
+{{- range $env, $key := dict "SPEECH_STT_MODEL" "sttModel" "SPEECH_TTS_MODEL" "ttsModel" "SPEECH_VOICE" "voice" "SPEECH_LANGUAGE" "language" }}
+{{- with index $v.speech $key }}
+            - {name: {{ $env }}, value: {{ . | quote }}}
 {{- end }}
-            - name: VOICE_DATABASE_MAX_CONNS
-              value: {{ $v.database.maxConnections | toString | quote }}
-{{- range $env, $key := dict "VOICE_MATRIX_PASSWORD_FILE" "matrix-password" "VOICE_MATRIX_ACCESS_TOKEN_FILE" "matrix-access-token" "VOICE_MATRIX_PICKLE_KEY_FILE" "matrix-pickle-key" "VOICE_FORGEJO_TOKEN_FILE" "forgejo-token" "VOICE_ORCA_TOKEN_FILE" "orca-handoff-token" "VOICE_SPEECH_API_KEY_FILE" "speech-api-key" "VOICE_SUMMARIZER_API_KEY_FILE" "summarizer-api-key" "VOICE_NOTIFY_CALLERS_FILE" "notify-callers.json" }}
-            - name: {{ $env }}
-              value: {{ printf "/var/run/glovecell-voice/secrets/%s" $key | quote }}
+{{- end }}
+{{- with $v.speech.apiKeySecret }}
+            - {name: SPEECH_API_KEY_FILE, value: /var/run/glovecell-voice/speech/api-key}
+{{- end }}
+{{- with (default .Values.config.FORGEJO_ORIGIN $v.forgejoURL) }}
+            - {name: FORGEJO_URL, value: {{ . | quote }}}
+{{- end }}
+{{- if $v.secrets.forgejo }}
+            - {name: FORGEJO_TOKEN_FILE, value: /var/run/glovecell-voice/forgejo/token}
+{{- end }}
+{{- with $v.orca.handoffURL }}
+            - {name: ORCA_HANDOFF_URL, value: {{ . | quote }}}
+{{- end }}
+{{- with $v.orca.runRecordsURL }}
+            - {name: ORCA_RUN_RECORDS_URL, value: {{ . | quote }}}
+{{- end }}
+{{- if $v.secrets.handoff }}
+            - {name: ORCA_HANDOFF_TOKEN_FILE, value: /var/run/glovecell-voice/handoff/token}
+{{- end }}
+{{- if $v.secrets.notify }}
+            - {name: NOTIFY_TOKENS_DIR, value: /var/run/glovecell-voice/notify}
+{{- end }}
+{{- with $v.notifyCallerTargets }}
+            - {name: NOTIFY_CALLER_TARGETS, value: {{ . | quote }}}
+{{- end }}
+            - {name: DATABASE_URL_FILE, value: /var/run/glovecell-voice/database/uri}
+{{- if $caKey }}
+            - {name: DATABASE_CA_FILE, value: /var/run/glovecell-voice/database-ca/ca.crt}
+{{- end }}
+            - {name: DATABASE_MAX_CONNS, value: {{ $v.database.maxConnections | toString | quote }}}
+            - {name: APPROVAL_CODE_TTL, value: {{ $v.approval.codeTTL | quote }}}
+            - {name: APPROVAL_MAX_MERGES_PER_HOUR, value: {{ $v.approval.maxMergesPerHour | toString | quote }}}
+{{- with $v.approval.repos }}
+            - {name: APPROVAL_REPOS, value: {{ join "," . | quote }}}
+{{- end }}
+{{- with $v.defaultRepo }}
+            - {name: VOICE_DEFAULT_REPO, value: {{ . | quote }}}
+{{- end }}
+{{- if $v.config }}
+            - {name: VOICE_CONFIG_FILE, value: /etc/glovecell-voice/config.json}
 {{- end }}
           ports:
             - name: http
               containerPort: 8080
+            - name: health
+              containerPort: 8081
           readinessProbe:
             httpGet:
               path: /readyz
-              port: http
+              port: health
             periodSeconds: 10
             failureThreshold: 3
           livenessProbe:
             httpGet:
               path: /healthz
-              port: http
+              port: health
             periodSeconds: 20
             failureThreshold: 6
           securityContext:
@@ -150,32 +196,44 @@ spec:
 {{ toYaml . | indent 12 }}
 {{- end }}
           volumeMounts:
-            - name: config
-              mountPath: /etc/glovecell-voice
-              readOnly: true
-            - name: secrets
-              mountPath: /var/run/glovecell-voice/secrets
-              readOnly: true
-            - name: database
-              mountPath: /var/run/glovecell-voice/database
-              readOnly: true
-{{- if $caKey }}
-            - name: database-ca
-              mountPath: /var/run/glovecell-voice/database-ca
-              readOnly: true
+{{- if $v.config }}
+            - {name: config, mountPath: /etc/glovecell-voice, readOnly: true}
 {{- end }}
-            - name: tmp
-              mountPath: /tmp
+{{- range $name := list "matrix" "owner" "forgejo" "handoff" "notify" }}
+{{- if index $v.secrets $name }}
+            - {name: {{ $name }}, mountPath: /var/run/glovecell-voice/{{ $name }}, readOnly: true}
+{{- end }}
+{{- end }}
+{{- if $v.speech.apiKeySecret }}
+            - {name: speech, mountPath: /var/run/glovecell-voice/speech, readOnly: true}
+{{- end }}
+            - {name: database, mountPath: /var/run/glovecell-voice/database, readOnly: true}
+{{- if $caKey }}
+            - {name: database-ca, mountPath: /var/run/glovecell-voice/database-ca, readOnly: true}
+{{- end }}
+            - {name: tmp, mountPath: /tmp}
       volumes:
+{{- if $v.config }}
         - name: config
           configMap:
             name: glovecell-voice
-        # Optional keys are simply absent; the service requires the ones
-        # its configuration needs and refuses to start without them.
-        - name: secrets
+{{- end }}
+{{- range $name := list "matrix" "owner" "forgejo" "handoff" "notify" }}
+{{- with index $v.secrets $name }}
+        - name: {{ $name }}
           secret:
-            secretName: {{ $v.existingSecret | quote }}
+            secretName: {{ . | quote }}
             defaultMode: 0440
+{{- end }}
+{{- end }}
+{{- with $v.speech.apiKeySecret }}
+        - name: speech
+          secret:
+            secretName: {{ . | quote }}
+            defaultMode: 0440
+            items:
+              - {key: api-key, path: api-key}
+{{- end }}
         - name: database
           secret:
             secretName: {{ $dbSecret | quote }}
@@ -187,14 +245,14 @@ spec:
         - name: database-ca
           secret:
             secretName: {{ $caSecret | quote }}
-            defaultMode: 0440
+            defaultMode: 0444
             items:
               - key: {{ $caKey | quote }}
                 path: ca.crt
 {{- end }}
         - name: tmp
           emptyDir:
-            sizeLimit: 64Mi
+            sizeLimit: 256Mi
 ---
 apiVersion: v1
 kind: Service
@@ -212,7 +270,8 @@ spec:
       targetPort: http
 {{- if $v.networkPolicy.enabled }}
 ---
-# Ingress only from the notify callers and metrics scrapers named in values;
+# Ingress only from the notify callers (8080) and metrics scrapers (8081)
+# named in values;
 # egress only to DNS, the database and the destinations named in values
 # (homeserver, speech server, Forgejo, the Orca intake and run records).
 apiVersion: networking.k8s.io/v1
@@ -228,16 +287,20 @@ spec:
   policyTypes: [Ingress, Egress]
   ingress:
 {{- if or $v.networkPolicy.notifyFrom $v.networkPolicy.metricsFrom }}
-    - from:
 {{- with $v.networkPolicy.notifyFrom }}
+    - from:
 {{ toYaml . | indent 8 }}
-{{- end }}
-{{- with $v.networkPolicy.metricsFrom }}
-{{ toYaml . | indent 8 }}
-{{- end }}
       ports:
         - protocol: TCP
           port: 8080
+{{- end }}
+{{- with $v.networkPolicy.metricsFrom }}
+    - from:
+{{ toYaml . | indent 8 }}
+      ports:
+        - protocol: TCP
+          port: 8081
+{{- end }}
 {{- end }}
     # Kubelet probes are not subject to NetworkPolicy on most providers.
   egress:

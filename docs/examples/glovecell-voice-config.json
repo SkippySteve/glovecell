@@ -1,49 +1,14 @@
 {
-  "steve": "@steve:matrix.example.com",
-  "matrix": {
-    "homeserver": "https://matrix.example.com",
-    "userID": "@glovecell:matrix.example.com",
-    "deviceName": "glovecell-voice",
-    "pinnedMasterKey": "",
-    "maxEventAge": "1h"
-  },
   "rooms": [
-    {"id": "!inbox:matrix.example.com", "name": "Inbox", "target": "orca", "repo": "steve/agent-project-controller", "inbox": true},
-    {"id": "!apc:matrix.example.com", "name": "APC", "target": "codex", "repo": "steve/agent-project-controller"},
-    {"id": "!approvals:matrix.example.com", "name": "Approvals", "target": "orca", "repo": "steve/agent-project-controller", "approvals": true}
+    {"id": "!apc:matrix.example.com", "name": "APC", "target": "codex", "repo": "steve/agent-project-controller"}
   ],
-  "speech": {
-    "baseURL": "http://speaches.speech.svc.cluster.local:8000",
-    "sttModel": "Systran/faster-distil-whisper-small.en",
-    "ttsModel": "speaches-ai/Kokoro-82M-v1.0-ONNX",
-    "voice": "af_heart",
-    "language": "en"
-  },
   "targets": {
-    "orca": {
-      "kind": "orca",
-      "handoffURL": "http://orca-handoff.agent-workspace-orca-pilot.svc.cluster.local:8791",
-      "runRecordsURL": "http://orca-run-records.agent-workspace-orca-pilot.svc.cluster.local:8790",
-      "agent": "claude",
-      "aliases": ["orka", "claude"]
-    },
-    "codex": {
-      "kind": "orca",
-      "handoffURL": "http://orca-handoff.agent-workspace-orca-pilot.svc.cluster.local:8791",
-      "runRecordsURL": "http://orca-run-records.agent-workspace-orca-pilot.svc.cluster.local:8790",
-      "agent": "codex",
-      "aliases": ["codecs", "code x"]
-    },
+    "orca": {"kind": "orca", "agent": "claude", "aliases": ["orka", "claude"]},
+    "codex": {"kind": "orca", "agent": "codex", "aliases": ["codecs", "code x", "codec"]},
     "archon": {"kind": "archon", "aliases": ["arkon"]}
   },
-  "gate": {
-    "enabled": true,
-    "forgejoOrigin": "https://git.example.com",
-    "repos": ["steve/*"],
-    "maxMergesPerHour": 10,
-    "codeTTL": "24h",
-    "statusContext": "voice-approval"
-  },
+  "speech": {"speed": 1.0},
+  "matrix": {"maxEventAge": "1h"},
   "summarizer": {"enabled": false},
   "pollInterval": "30s"
 }
