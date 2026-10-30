@@ -59,6 +59,9 @@ type Server struct {
 	// Reference is the deployment's reference rules, shown read only next to
 	// every project's own rules (README "Reference rules").
 	Reference Reference
+	// History reads each project's access history. Nil reads the audit
+	// records in Namespace (ConfigMapHistory).
+	History HistoryStore
 }
 
 // Reference is the reference list as the console shows it.
@@ -422,26 +425,6 @@ func (s *Server) change(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, obj)
 }
-func (s *Server) audit(w http.ResponseWriter, r *http.Request) {
-	obj := &api.ProjectWorkspace{}
-	if e := s.Client.Get(r.Context(), types.NamespacedName{Namespace: s.Namespace, Name: r.PathValue("name")}, obj); e != nil {
-		http.Error(w, "project unavailable", 404)
-		return
-	}
-	var list corev1.ConfigMapList
-	if e := s.Client.List(r.Context(), &list, client.InNamespace(s.Namespace), client.MatchingLabels{api.OwnerLabel: string(obj.UID)}); e != nil {
-		http.Error(w, "audit unavailable", 503)
-		return
-	}
-	items := []map[string]string{}
-	for _, cm := range list.Items {
-		if strings.HasPrefix(cm.Name, "audit-") {
-			items = append(items, cm.Data)
-		}
-	}
-	writeJSON(w, items)
-}
-
 func (s *Server) clients(w http.ResponseWriter, r *http.Request) {
 	obj := &api.ProjectWorkspace{}
 	if e := s.Client.Get(r.Context(), types.NamespacedName{Namespace: s.Namespace, Name: r.PathValue("name")}, obj); e != nil {

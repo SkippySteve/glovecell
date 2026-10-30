@@ -41,6 +41,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -145,6 +146,9 @@ type Reconciler struct {
 	// ProviderLeases is the trusted Secret the provider broker writes; nil
 	// turns spec.providers off (see providers.go).
 	ProviderLeases *types.NamespacedName
+	// Events publishes lifecycle Events (events.k8s.io/v1) regarding each
+	// workspace (events.go). Nil publishes nothing.
+	Events events.EventRecorder
 }
 
 var duration, _ = otel.Meter("agent-project-controller").Float64Histogram("workspace.reconcile.duration", metric.WithUnit("s"))
@@ -374,7 +378,13 @@ func (r *Reconciler) auditDetails(ctx context.Context, w *api.ProjectWorkspace, 
 	for key, value := range details {
 		data[key] = value
 	}
-	return r.Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: r.Config.Namespace, Labels: labels(w)}, Immutable: &immutable, Data: data})
+	record := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: r.Config.Namespace, Labels: labels(w)}, Immutable: &immutable, Data: data}
+	if e = r.Create(ctx, record); e != nil {
+		return e
+	}
+	// Published once, when the durable record is first written.
+	r.auditRecordEvent(w, record, action, details["message"])
+	return nil
 }
 func (r *Reconciler) status(ctx context.Context, w *api.ProjectWorkspace, phase string, ready bool, reason, message string) error {
 	old := w.DeepCopyObject().(*api.ProjectWorkspace)
@@ -385,15 +395,21 @@ func (r *Reconciler) status(ctx context.Context, w *api.ProjectWorkspace, phase 
 			return e
 		}
 	}
+	// Lifecycle history goes to Events, not status.audit (deprecated: kept
+	// readable, never appended). One Event per transition: a phase change,
+	// or a new reason or message on a not-ready condition in the same phase.
 	if w.Status.Phase != phase {
 		if e := r.audit(ctx, w, "phase-"+strings.ToLower(phase)); e != nil {
 			return e
 		}
-		w.Status.Audit = append(w.Status.Audit, api.AuditEvent{Time: metav1.Now(), Action: phase, Generation: w.Generation})
 		slog.InfoContext(ctx, "workspace phase changed", "workspace_uid", string(w.UID), "generation", w.Generation, "phase", phase, "trace_id", trace.SpanContextFromContext(ctx).TraceID().String())
-		if len(w.Status.Audit) > 32 {
-			w.Status.Audit = w.Status.Audit[len(w.Status.Audit)-32:]
+		from := w.Status.Phase
+		if from == "" {
+			from = "Requested"
 		}
+		r.event(w, nil, phaseEventType(phase, reason), reason, ActionChangePhase, fmt.Sprintf("Phase %s -> %s (generation %d): %s", from, phase, w.Generation, message))
+	} else if !ready && (previous == nil || previous.Reason != reason || previous.Message != message) {
+		r.event(w, nil, phaseEventType(phase, reason), reason, ActionUpdateCondition, fmt.Sprintf("%s (generation %d): %s", phase, w.Generation, message))
 	}
 	w.Status.Phase = phase
 	w.Status.Namespace = namespace(w)

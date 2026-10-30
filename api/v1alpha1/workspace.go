@@ -65,17 +65,30 @@ type RepositoryProject struct {
 	Repository string `json:"repository"`
 	Public     bool   `json:"public,omitempty"`
 }
+
+// AuditEvent is one entry of the deprecated status.audit list.
+//
+// Deprecated: recent lifecycle transitions are Kubernetes Events
+// (events.k8s.io/v1) regarding the workspace (`kubectl events --for
+// projectworkspace/<name>`); the durable history is the console's History.
 type AuditEvent struct {
 	Time       metav1.Time `json:"time"`
 	Action     string      `json:"action"`
 	Generation int64       `json:"generation"`
 }
 type WorkspaceStatus struct {
-	Phase              string             `json:"phase,omitempty"`
-	Namespace          string             `json:"namespace,omitempty"`
-	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
-	Conditions         []metav1.Condition `json:"conditions,omitempty"`
-	Audit              []AuditEvent       `json:"audit,omitempty"`
+	Phase              string `json:"phase,omitempty"`
+	Namespace          string `json:"namespace,omitempty"`
+	ObservedGeneration int64  `json:"observedGeneration,omitempty"`
+	// Conditions carry the current state; each records the generation it
+	// was computed from (observedGeneration).
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	// Audit is the old in-object phase history.
+	//
+	// Deprecated: the controller no longer appends to it. Existing entries
+	// stay readable for one release. Use Events for recent transitions and
+	// the console's History for the durable record.
+	Audit []AuditEvent `json:"audit,omitempty"`
 }
 
 // +kubebuilder:object:root=true

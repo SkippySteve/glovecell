@@ -195,6 +195,7 @@ spec:
                         type: integer
                         format: int64
                 audit:
+                  description: 'Deprecated: no longer appended; existing entries stay readable for one release. Recent lifecycle transitions are events.k8s.io/v1 Events regarding the workspace (kubectl events --for projectworkspace/NAME); the durable history is the console History.'
                   type: array
                   maxItems: 32
                   items:

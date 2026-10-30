@@ -155,3 +155,29 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: controller
+---
+# Workspace lifecycle Events (events.k8s.io/v1) in the control namespace,
+# where every ProjectWorkspace lives: create, and patch for repeated Events
+# in a series. Nothing cluster-wide and no read: Events expire, so the
+# console's history does not read them (it reads the audit records).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: workspace-events
+rules:
+  - apiGroups: [events.k8s.io]
+    resources: [events]
+    verbs: [create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: workspace-events
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: workspace-events
+subjects:
+  - kind: ServiceAccount
+    name: controller
+    namespace: agent-project-controller
