@@ -86,15 +86,18 @@ Then the gate:
 
 1. consumes the code, atomically (`UPDATE … WHERE state = 'open'`), so
    exactly one approval wins;
-2. sets `voice-approval` = success on the head SHA;
-3. merges with a merge commit, pinned to the SHA (`head_commit_id`, so a
+2. submits an **APPROVED review** as `approval-gate` at the head SHA, unless
+   its own approval is already there. Branch protection still requires one
+   approving review; the request sequence is the same as promote-merger's;
+3. sets `voice-approval` = success on the head SHA;
+4. merges with a merge commit, pinned to the SHA (`head_commit_id`, so a
    push in between makes Forgejo refuse);
-4. comments on the PR: "Approved by Steve by voice at <time>, code, head",
+5. comments on the PR: "Approved by Steve by voice at <time>, code, head",
    the transcript, the audio SHA-256 and the device ID;
-5. confirms by voice in the thread;
-6. writes an audit row.
+6. confirms by voice in the thread;
+7. writes an audit row.
 
-If the merge fails, `voice-approval` is set to failure, the card is marked
+If the review or the merge fails, `voice-approval` is set to failure, the card is marked
 failed, and Steve hears why. A new card is needed.
 
 The audit table `voice_approval_audit` records every card, approval,
@@ -120,32 +123,30 @@ be checked or consumed.
 
 ## Configuration
 
-```json
-"gate": {
-  "enabled": true,
-  "forgejoOrigin": "https://git.example.com",
-  "repos": ["steve/*"],
-  "maxMergesPerHour": 10,
-  "codeTTL": "24h",
-  "statusContext": "voice-approval"
-}
-```
+| Variable | Meaning |
+|---|---|
+| `FORGEJO_URL` | The Forgejo API origin. HTTPS, or plain HTTP to an in-cluster Service. |
+| `FORGEJO_TOKEN_FILE` | The `approval-gate` user's token. The gate is on when this file exists and an Approvals room is configured. |
+| `APPROVAL_REPOS` | `OWNER/NAME` or `OWNER/*`, comma-separated, that the gate may act on. Required. A bare `*` is refused. |
+| `APPROVAL_CODE_TTL` | Code lifetime (`24h`). |
+| `APPROVAL_MAX_MERGES_PER_HOUR` | Hourly merge cap (`10`). |
+| `APPROVAL_STATUS_CONTEXT` | The commit status context (`voice-approval`). |
 
-`repos` lists the `OWNER/NAME` repositories or `OWNER/*` owners the gate may
-act on. A bare `*` is refused. The Approvals room is the configured room
-with `approvals: true`. The `forgejo-token` Secret key holds the
-`approval-gate` user's token.
+The Approvals room is the second room in the owner Secret's `rooms`, or the
+one marked `approvals`.
 
 ## Forgejo setup (Steve's hand steps)
 
 1. Create the `approval-gate` user. Give it write access to the covered
    repositories, and create a token with `write:repository` and
-   `write:issue`. Store the token in OpenBao or in the `glovecell-voice`
-   Secret in the control namespace (key `forgejo-token`), never in a sandbox.
+   `write:issue`. Store the token in the `glovecell-voice-forgejo` Secret
+   (key `token`) in the service's trusted namespace, never in a sandbox.
 2. In each repository's branch protection for `main`:
-   - add `approval-gate` to the merge whitelist;
+   - add `approval-gate` to the merge whitelist and to the approvals
+     whitelist, because its review is the required approval;
    - add `voice-approval` to the required status checks;
-   - keep the existing required checks.
+   - keep the existing required checks;
+   - keep "dismiss stale approvals" on.
 3. Keep agents (`orca-agent`) unable to merge: they stay off the merge
    whitelist and keep only their PR permissions.
 4. Point agents that ask for cards at the notify API with an `approval`
