@@ -31,9 +31,30 @@ paused, as described below.
 The UI is a React app built with OpenUI components (`@openuidev/react-ui`) in
 `web/`. `npm ci && npm run build` there writes `internal/web/dist`, which the
 Go binary embeds; the container build regenerates it from the lockfile.
-Dependencies are pinned exactly. The OpenUI theme tokens are generated into
-static CSS because the console's CSP forbids injected styles, and dark mode
-follows the operating system.
+Dependencies are pinned exactly. The theme is generated into static CSS
+(`web/scripts/theme-css.mjs` writes `web/src/theme.css`) because the console's
+CSP forbids injected styles.
+
+### Theme
+
+The console is dark by default. The switcher at the right of the header picks
+**Dark**, **Light** or **System** (follows the operating system) and keeps the
+choice in the browser's local storage (`console-theme`). It sets
+`<html data-theme>`; `web/public/assets/theme-init.js`, a separate same-origin
+file because the CSP allows no inline script, applies the saved choice before
+the first paint so the page never flashes the other theme.
+
+`theme-css.mjs` holds the palette for both themes, re-derives every OpenUI
+variable from it and adds the console's own `--console-*` tokens (surfaces,
+text, accent, ok/warn/danger/info/neutral status colours, focus ring, type
+scale, spacing, radii, control sizes and motion). The build fails if any
+checked text, status, focus or control-border pair falls below WCAG AA in
+either theme; `node scripts/theme-css.mjs --check` prints every ratio.
+`web/src/base.css` styles the base elements and the shared OpenUI primitives
+(buttons, inputs, tables, tags, cards, callouts, tabs) once for every page,
+with a visible focus ring and no motion under `prefers-reduced-motion`. Page
+stylesheets use only these tokens and never their own colour values or
+`prefers-color-scheme` queries.
 
 ### Sandbox workspace view
 

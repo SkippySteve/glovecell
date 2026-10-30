@@ -2,6 +2,7 @@ import {lazy, StrictMode, Suspense, useEffect} from 'react';
 import {createRoot} from 'react-dom/client';
 import '@openuidev/react-ui/components.css';
 import './theme.css';
+import './base.css';
 import './console.css';
 import './factory/factory.css';
 import './workspace/workspace.css';
@@ -13,6 +14,7 @@ import {OrcaProjects} from './OrcaProjects';
 import {ConfirmProvider} from './workspace/Confirm';
 import {ProjectWorkspace, SandboxWorkspace} from './workspace/Workspace';
 import {orcaHref, useRoute} from './router';
+import {ThemeSwitcher} from './ThemeSwitcher';
 import {Button, Callout} from './ui';
 
 // Reports pull in the OpenUI Lang parser and renderer, so they load on first use.
@@ -31,6 +33,7 @@ function Bar() {
       {session.runRecords ? <a className="console-nav-link" href={runHref()}>Runs</a> : null}
       {session.orcaProjects ? <a className="console-nav-link" href={orcaHref()}>Orca projects</a> : null}
       <span className="console-actor subtle">{session.actor || ''}</span>
+      <ThemeSwitcher />
       {session.oidc ? <Button variant="tertiary" size="small" onClick={logout}>Sign out</Button> : null}
     </header>
   );
