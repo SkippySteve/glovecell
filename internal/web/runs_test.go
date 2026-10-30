@@ -116,3 +116,69 @@ func TestBrowserRuns(t *testing.T) {
 	}
 	t.Log(string(out))
 }
+
+func TestRunSummaryDerivesStatusDurationAndFailure(t *testing.T) {
+	dir := t.TempDir()
+	records := map[string]string{
+		// Mirrors the 2026-10-17 trial: both tasks failed; the first failure is surfaced.
+		"run_failed": `{"version":1,"run":{"id":"run_failed","objective":"o","host":"ns/pod","createdAt":"2026-10-17T13:33:48Z","collectedAt":"2026-10-18T14:00:00Z"},"tasks":[` +
+			`{"id":"t1","title":"slugify","status":"failed","attempts":[{"dispatchId":"d1","agent":"codex","state":"failed","failedStage":"agent_readiness","lastError":"Agent startup blocked","startedAt":"2026-10-17T13:34:00Z","endedAt":"2026-10-17T13:40:00Z"}]},` +
+			`{"id":"t2","title":"wordfreq","status":"failed","attempts":[{"dispatchId":"d2","agent":"claude","state":"failed","lastError":"` + strings.Repeat("x", 900) + `"}]}],"gates":[]}`,
+		"run_waiting": `{"version":1,"run":{"id":"run_waiting","objective":"o","host":"ns/pod","createdAt":"2026-10-18T09:00:00Z","collectedAt":"2026-10-18T09:42:00Z"},"tasks":[` +
+			`{"id":"t1","title":"a","status":"completed","attempts":[{"dispatchId":"d1","agent":"codex","state":"settled","outcome":"succeeded","startedAt":"2026-10-18T09:01:00Z","endedAt":"2026-10-18T09:12:00Z"}]},` +
+			`{"id":"t2","title":"b","status":"blocked","attempts":[{"dispatchId":"d2","agent":"claude","state":"running","startedAt":"2026-10-18T09:30:00Z"}]}],` +
+			`"gates":[{"id":"g","taskId":"t2","question":"q","options":["a"],"status":"pending"},{"id":"g2","taskId":"t2","question":"q","options":["a"],"status":"resolved"}]}`,
+		"run_done": `{"version":1,"run":{"id":"run_done","objective":"o","host":"ns/pod","createdAt":"2026-10-18T09:00:00Z","collectedAt":"2026-10-18T10:00:00Z"},"tasks":[` +
+			`{"id":"t1","title":"a","status":"completed","attempts":[{"dispatchId":"d1","agent":"codex","state":"settled","outcome":"succeeded","startedAt":"2026-10-18T09:01:00Z","endedAt":"2026-10-18T09:12:00Z"}]}]}`,
+		// Tasks and gates the summary cannot read still list the run, as before.
+		"run_odd": `{"version":1,"run":{"id":"run_odd","objective":"o","host":"ns/pod","createdAt":"x","collectedAt":"2026-10-18T08:00:00Z"},"tasks":[{"attempts":"nope"},{}],"gates":{"not":"a list"}}`,
+	}
+	for id, body := range records {
+		if err := os.WriteFile(filepath.Join(dir, id+".json"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s, _, _ := accessFixture(t)
+	s.RunRecords = &RunRecords{Dir: dir}
+	h, err := s.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("GET", "/api/v1/runs", nil)
+	req.Header.Set("Authorization", "Bearer "+s.Password)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	var runs []runSummary
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &runs) != nil {
+		t.Fatal(rec.Code, rec.Body.String())
+	}
+	byID := map[string]runSummary{}
+	for _, r := range runs {
+		byID[r.ID] = r
+	}
+	if len(byID) != 4 {
+		t.Fatal("every valid record must stay listed", runs)
+	}
+	f := byID["run_failed"]
+	if f.Status != "failed" || f.Failed != 2 || f.Failure == nil || f.Failure.Task != "t1" || f.Failure.Stage != "agent_readiness" || f.Failure.Error != "Agent startup blocked" {
+		t.Fatalf("failed run summary: %+v %+v", f, f.Failure)
+	}
+	if f.StartedAt != "2026-10-17T13:34:00Z" || f.EndedAt != "2026-10-17T13:40:00Z" {
+		t.Fatalf("failed run times: %+v", f)
+	}
+	w := byID["run_waiting"]
+	if w.Status != "waiting" || w.PendingGates != 1 || w.Running != 1 || w.Succeeded != 1 || w.EndedAt != "" || w.LastActivity != "2026-10-18T09:30:00Z" || w.Failure != nil {
+		t.Fatalf("waiting run summary: %+v", w)
+	}
+	if d := byID["run_done"]; d.Status != "succeeded" || d.EndedAt != "2026-10-18T09:12:00Z" {
+		t.Fatalf("succeeded run summary: %+v", d)
+	}
+	if o := byID["run_odd"]; o.Status != "pending" || o.Tasks != 2 || o.StartedAt != "" || o.PendingGates != 0 {
+		t.Fatalf("unreadable tasks must not fail the list: %+v", o)
+	}
+	// Long failure text is clipped in the list; the full record still has it.
+	failed2 := summarizeRun(runHeader{Tasks: []json.RawMessage{json.RawMessage(`{"id":"t","status":"failed","attempts":[{"lastError":"` + strings.Repeat("é", 900) + `"}]}`)}})
+	if n := len([]rune(failed2.Failure.Error)); n != maxSummaryText {
+		t.Fatal("failure text not clipped", n)
+	}
+}
