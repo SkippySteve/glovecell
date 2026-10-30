@@ -23,3 +23,13 @@ project's Secrets and for deleting the project namespace itself. */}}
 {{- define "apc.clusterPrefix" -}}
 {{- printf "%s-%s" .Release.Namespace .Release.Name | trunc 48 | trimSuffix "-" }}
 {{- end -}}
+
+{{/* CloudNativePG Cluster name for the controller database. */}}
+{{- define "apc.databaseCluster" -}}
+{{- default (printf "%s-db" .Release.Name) .Values.database.cloudnativepg.name | trunc 50 | trimSuffix "-" }}
+{{- end -}}
+
+{{/* Secret with the database URI, and the key. */}}
+{{- define "apc.databaseSecret" -}}
+{{- if eq .Values.database.mode "external" }}{{ required "database.external.existingSecret is required" .Values.database.external.existingSecret }}{{ else }}{{ include "apc.databaseCluster" . }}-app{{ end }}
+{{- end -}}
