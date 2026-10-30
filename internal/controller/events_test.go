@@ -114,7 +114,9 @@ func TestLifecycleTransitionsPublishEventsNotAudit(t *testing.T) {
 	}
 }
 
-func TestAuditRecordsPublishOneEventWithRelatedRecord(t *testing.T) {
+// Audit records are durable history (HistoryStore), not Events: granting
+// access publishes no Event of its own.
+func TestAuditRecordsPublishNoEvent(t *testing.T) {
 	ctx := context.Background()
 	r, w, _ := fixture(t)
 	rec := &captureRecorder{}
@@ -122,54 +124,12 @@ func TestAuditRecordsPublishOneEventWithRelatedRecord(t *testing.T) {
 	if err := r.ensure(ctx, w); err != nil {
 		t.Fatal(err)
 	}
-	got := rec.take()
-	reasons := map[string]recordedEvent{}
-	for _, e := range got {
-		reasons[e.reason] = e
-	}
-	for _, want := range []struct{ reason, action string }{{"GrantRequested", "RequestGrant"}, {"AccessGranted", "GrantAccess"}} {
-		e, ok := reasons[want.reason]
-		if !ok || e.action != want.action || e.eventtype != corev1.EventTypeNormal {
-			t.Fatalf("missing %s Event: %#v", want.reason, got)
-		}
-		cm, ok := e.related.(*corev1.ConfigMap)
-		if !ok || !strings.HasPrefix(cm.Name, "audit-") || cm.Namespace != "control" {
-			t.Fatalf("%s Event does not name its audit record: %#v", want.reason, e.related)
-		}
-		if e.regarding.(*api.ProjectWorkspace).UID != w.UID {
-			t.Fatal("Event not regarding the workspace")
-		}
-	}
-	// A retry finds the records and publishes nothing again.
-	if err := r.ensure(ctx, w); err != nil {
-		t.Fatal(err)
-	}
-	if again := rec.take(); len(again) != 0 {
-		t.Fatalf("retry republished: %#v", again)
+	if got := rec.take(); len(got) != 0 {
+		t.Fatalf("audit records published Events: %#v", got)
 	}
 }
 
-func TestAuditEventReasons(t *testing.T) {
-	for action, want := range map[string]string{
-		"lan-hosts-applied-0123456789ab": "LANHostsApplied",
-		"lan-hosts-withdrawn":            "LANHostsWithdrawn",
-		"providers-applied-abcdef":       "ProvidersApplied",
-		"reference-rules-0123":           "ReferenceRulesApplied",
-		"ca-2":                           "CARotated",
-		"dns-abcdef012345":               "DNSUpdated",
-		"cleanup-verified":               "CleanupVerified",
-		"orchestrator-bound":             "OrchestratorBound",
-		"something-new":                  "AuditRecorded",
-	} {
-		if got, _, ok := AuditEventReason(action); !ok || got != want {
-			t.Errorf("%s: %s, want %s", action, got, want)
-		}
-	}
-	for _, action := range []string{"phase-ready", "condition-0123456789abcdef"} {
-		if _, _, ok := AuditEventReason(action); ok {
-			t.Errorf("%s published twice", action)
-		}
-	}
+func TestEventNoteBounded(t *testing.T) {
 	long := strings.Repeat("é", MaxEventNote)
 	if n := truncateNote(long); len(n) > MaxEventNote || !strings.HasSuffix(n, "…") {
 		t.Fatalf("note not bounded: %d bytes", len(n))

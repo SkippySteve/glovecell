@@ -447,12 +447,7 @@ func (r *Reconciler) auditDetails(ctx context.Context, w *api.ProjectWorkspace, 
 		data[key] = value
 	}
 	record := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: r.Config.Namespace, Labels: labels(w)}, Immutable: &immutable, Data: data}
-	if e = r.Create(ctx, record); e != nil {
-		return e
-	}
-	// Published once, when the durable record is first written.
-	r.auditRecordEvent(w, record, action, details["message"])
-	return nil
+	return r.Create(ctx, record)
 }
 func (r *Reconciler) status(ctx context.Context, w *api.ProjectWorkspace, phase string, ready bool, reason, message string) error {
 	old := w.DeepCopyObject().(*api.ProjectWorkspace)
@@ -475,9 +470,9 @@ func (r *Reconciler) status(ctx context.Context, w *api.ProjectWorkspace, phase 
 		if from == "" {
 			from = "Requested"
 		}
-		r.event(w, nil, phaseEventType(phase, reason), reason, ActionChangePhase, fmt.Sprintf("Phase %s -> %s (generation %d): %s", from, phase, w.Generation, message))
+		r.event(w, phaseEventType(phase, reason), reason, ActionChangePhase, fmt.Sprintf("Phase %s -> %s (generation %d): %s", from, phase, w.Generation, message))
 	} else if !ready && (previous == nil || previous.Reason != reason || previous.Message != message) {
-		r.event(w, nil, phaseEventType(phase, reason), reason, ActionUpdateCondition, fmt.Sprintf("%s (generation %d): %s", phase, w.Generation, message))
+		r.event(w, phaseEventType(phase, reason), reason, ActionUpdateCondition, fmt.Sprintf("%s (generation %d): %s", phase, w.Generation, message))
 	}
 	w.Status.Phase = phase
 	w.Status.Namespace = namespace(w)
