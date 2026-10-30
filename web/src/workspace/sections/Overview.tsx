@@ -20,7 +20,9 @@ import {dismissReport, reportLanHost, reportRequests, reportTime, type AgentRepo
 import type {SandboxState} from '../useSandbox';
 import {ago, clockAt, left, stamp} from '../time';
 import type {SandboxDetail} from '../../api';
-import {detailAccess, type AccessTone} from '../../access';
+import {AccessLevelTag} from '../../access/AccessLevels';
+import {levelText, type LevelState, type SandboxRules} from '../../access/levels';
+import {detailLevel} from '../../access/summary';
 
 const SHOWN_REQUESTS = 3;
 
@@ -54,17 +56,18 @@ function useOrca(enabled: boolean) {
   return records;
 }
 
-// The sandbox's access in one phrase: the shared summary (the same words as
-// Home), plus open LAN grants and what the window means right now.
-export function accessSummary(d: SandboxDetail, lan: LanView | null | undefined, now: number): {label: string; tone: AccessTone; detail: string} {
-  const a = detailAccess(d), web = webAccess(d);
+// The sandbox's access: its level (the same as the Internet page's level
+// control and Home), open LAN grants, and what that means right now.
+export function accessSummary(d: SandboxDetail, lan: LanView | null | undefined, now: number, rules: SandboxRules['rules']): {state: LevelState; lan: string; detail: string} {
+  const state = detailLevel(d, rules), web = webAccess(d);
   const lanOpen = lan?.open || 0;
-  const label = a.label + (lanOpen ? `, plus ${plural(lanOpen, 'LAN grant')}` : '');
-  const tone: AccessTone = lanOpen ? 'danger' : a.tone;
-  if (web?.phase === 'Open') return {label, tone, detail: `Any public destination until ${clockAt(web.expires)}, ${left(web.expires, now)} left.`};
-  if (web?.phase === 'Learning') return {label, tone, detail: `Every request becomes an approval until ${clockAt(web.expires)}, ${left(web.expires, now)} left.`};
-  if (!web) return {label, tone, detail: 'Requests follow the policy profile; there is no web window to open.'};
-  return {label, tone, detail: `Approved requests and provider hosts only (${plural(d.egressCounts?.approved || 0, 'approved request')}).`};
+  const lanText = lanOpen ? `Plus ${plural(lanOpen, 'open LAN grant')}.` : '';
+  if (!state.supported) return {state, lan: lanText, detail: 'Requests follow the policy profile; there is no web window to open.'};
+  if (web && state.level === 'open') return {state, lan: lanText, detail: state.learning
+    ? `Every request becomes an approval until ${clockAt(web.expires)}, ${left(web.expires, now)} left.`
+    : `Any public destination until ${clockAt(web.expires)}, ${left(web.expires, now)} left.`};
+  const approved = d.egressCounts?.approved || 0;
+  return {state, lan: lanText, detail: state.level ? `${levelText(state.level, 'sandbox').summary}${approved ? ` ${plural(approved, 'approved request')}.` : ''}` : state.note || ''};
 }
 
 // What the sandbox is doing now, from facts the console has: its runs, live dev
@@ -75,12 +78,12 @@ function useRuns(namespace: string, enabled: boolean) {
   return runs;
 }
 
-function Summary({ws, now, waitingCount}: {ws: SandboxState; now: number; waitingCount: number}) {
+function Summary({ws, now, waitingCount, rules}: {ws: SandboxState; now: number; waitingCount: number; rules: SandboxRules['rules']}) {
   const d = ws.detail!, lan = ws.lan, web = webAccess(d);
   const {session, egress, busy} = useData();
   const restrict = useRestrict(ws);
   const runs = useRuns(d.namespace, Boolean(session.runRecords));
-  const access = accessSummary(d, lan, now);
+  const access = accessSummary(d, lan, now, rules);
   const running = d.mode === 'Running';
   const active = (runs || []).filter(r => r.status === 'running' || r.status === 'waiting');
   const live = liveLinks(ws.devlinks);
@@ -103,7 +106,7 @@ function Summary({ws, now, waitingCount}: {ws: SandboxState; now: number; waitin
           <dt>State</dt>
           <dd><Tag size="sm" variant={d.revision.error ? 'danger' : running ? 'success' : 'neutral'} text={d.revision.error ? 'Policy error' : running ? 'Running' : 'Stopped'} /><span className="ov-meta">Policy revision {d.revision.id}, {d.revision.status.toLowerCase()}</span></dd>
           <dt>Access</dt>
-          <dd><span className={'ov-access tone-' + access.tone}>{access.label}</span><span className="ov-meta">{access.detail}</span></dd>
+          <dd><AccessLevelTag state={access.state} now={now} />{access.lan ? <span className="ov-access-lan">{access.lan}</span> : null}<span className="ov-meta">{access.detail}</span></dd>
           <dt>Doing now</dt>
           <dd><ul className="ov-now">{doing}</ul></dd>
           <dt>Waiting on you</dt>
@@ -164,7 +167,7 @@ export function Overview({ws, runtime, now}: {ws: SandboxState; runtime: boolean
   const orcaList = orca ? projectPreview(orca) : null;
   return (
     <div className="stack">
-      <Summary ws={ws} now={now} waitingCount={waiting(detail) + reports.length} />
+      <Summary ws={ws} now={now} waitingCount={waiting(detail) + reports.length} rules={requests ? (requests.rules ?? null) : undefined} />
       <Card variant="sunk" width="full" className="decisions" data-testid="needs-decision">
         <CardHeader title="Needs a decision" subtitle={decisions ? `${decisions} item${decisions === 1 ? '' : 's'} waiting on you in ${ws.id}.` : undefined} />
         <ul className="items decision-list">

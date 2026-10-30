@@ -8,7 +8,9 @@ import {ago, filterRows, projectRow, sandboxRow, SHOWS, sortRows, SORTS, toKind,
 import {existingKind, orcaRuntimeId, projectPreview} from './orca';
 import {hashQuery, navigate, newSandboxHref, orcaHref, projectHref, replaceHashQuery, sandboxHref} from './router';
 import {useShell} from './shell/state';
-import {clock, type Status} from './state';
+import {type Status} from './state';
+import {AccessLevelTag} from './access/AccessLevels';
+import {useStandingAccess} from './access/standing';
 import {mergeHistory} from './workspace/sources/history';
 import {loadLan} from './workspace/sources/lan';
 import {Button, Callout, Card, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tag, ToggleGroup, ToggleItem} from './ui';
@@ -111,11 +113,10 @@ function EgressPanel({minutes, setMinutes}: {minutes: string; setMinutes: (value
   );
 }
 
-function AccessCell({row}: {row: Row}) {
-  const a = row.access;
+function AccessCell({row, now}: {row: Row; now: number}) {
   return (
     <span className="access-cell">
-      <Tag size="sm" variant={a.variant} text={a.label + (a.expires && a.rank <= 1 ? ' until ' + clock(a.expires) : '')} />
+      <AccessLevelTag state={row.access.state} now={now} />
       {row.lan ? <span className={'access-lan' + (row.kind === 'sandbox' ? ' live' : '')}>{row.kind === 'sandbox' ? `LAN open (${row.lan})` : `LAN: ${row.lan} host${row.lan === 1 ? '' : 's'}`}</span> : null}
     </span>
   );
@@ -137,7 +138,7 @@ function WorkspaceRow({row, sandbox, minutes, orca, now, loadingActivity}: {row:
     <TableRow data-sandbox={row.kind === 'sandbox' ? row.name : undefined} data-project={row.kind === 'project' ? row.name : undefined}>
       <TableCell data-label="Name"><a className="row-title" href={row.href}>{row.name}</a><span className="row-kind">{row.kindLabel}</span><span className="row-sub">{row.sub}</span>{orca ? <OrcaProjectList records={orca} /> : null}</TableCell>
       <TableCell data-label="Status"><StatusTag state={row.state} /></TableCell>
-      <TableCell data-label="Access"><AccessCell row={row} /></TableCell>
+      <TableCell data-label="Access"><AccessCell row={row} now={now} /></TableCell>
       <TableCell data-label="Waiting on you">{row.waiting ? <a href={review} className="count-link"><span className="count num">{row.waiting}</span> to review</a>
         : row.attention ? <a href={review} className="attention">{row.attention}</a> : <span className="subtle">None</span>}</TableCell>
       <TableCell data-label="Last activity">{row.lastActivity ? <a className="row-when" href={row.kind === 'sandbox' ? sandboxHref(row.name, 'history') : projectHref(row.name, 'history')}><time dateTime={new Date(row.lastActivity).toISOString()}>{ago(row.lastActivity, now)}</time></a> : <span className="subtle">{loadingActivity ? 'Loading…' : 'None recorded'}</span>}</TableCell>
@@ -192,6 +193,7 @@ const SCOPES: Record<Kind, {title: string; lead: string; doc: string}> = {
 export function Home({scope = 'all'}: {scope?: Kind}) {
   const {loaded, projects, existing, session} = useData();
   const {lanOpen} = useShell();
+  const levels = useStandingAccess();
   const [minutes, setMinutes] = useState('60');
   const [filters, setFilters] = useFilters();
   const [showRemoved, setShowRemoved] = useState(false);
@@ -209,9 +211,9 @@ export function Home({scope = 'all'}: {scope?: Kind}) {
     return out;
   }, [activity.items]);
   const all = useMemo(() => [
-    ...existing.map(s => sandboxRow(s, existingKind(s, runtime), lanOpen[s.id] || 0)),
-    ...active.map(projectRow),
-  ].map(r => ({...r, lastActivity: last[r.key]})), [existing, active, runtime, lanOpen, last]);
+    ...existing.map(s => sandboxRow(s, existingKind(s, runtime), lanOpen[s.id] || 0, levels.rules[s.id])),
+    ...active.map(p => projectRow(p, levels.profiles)),
+  ].map(r => ({...r, lastActivity: last[r.key]})), [existing, active, runtime, lanOpen, last, levels]);
   const scoped = all.filter(r => kind === 'all' || r.kind === kind);
   const rows = sortRows(filterRows(scoped, {q: filters.q, show: filters.show}), filters.sort);
   const t = totals(scoped);

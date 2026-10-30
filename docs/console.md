@@ -82,13 +82,17 @@ open or learning on the web, how many requests wait on you and how many need
 attention (each also a filter), the Web access panel, and a table with state,
 access, what waits on you and the last recorded activity. A text filter, kind,
 state and sort order (most urgent, name, running first, widest access, recent
-activity) are kept in the address (`#/?q=…&show=…&sort=…`). Access shows the
-web access state (Open, Learning, Locked) or, for projects, their fixed rules;
-when the API reports a named access level it is shown instead. Recent activity
+activity) are kept in the address (`#/?q=…&show=…&sort=…`). Access shows each
+workspace's access level (Locked, Ask, Standard, Open with its countdown, or
+Custom; **Fixed policy** for sandboxes without learning egress). Levels come
+from `accessLevel()`, read from each sandbox's own web rules and approvals and
+each project's AccessProfile; until those are read a closed sandbox shows
+**Closed**. Recent activity
 merges policy revisions (including start and stop) and LAN grant history for
 sandboxes and the audit trail for projects. `#/sandboxes` and `#/projects` are
-the same view for one kind. Home's Access column and a sandbox's Overview use
-one shared summary (`web/src/access.ts`), so both name access the same way.
+the same view for one kind. Home's Access column, a sandbox's Overview and the
+command palette (which also finds workspaces by level, e.g. `standard`) name
+access through `web/src/access/summary.ts`, so they match the Internet page.
 
 **Needs attention** (`#/attention`) collects everything across sandboxes,
 projects and runs that waits on you, most urgent first: **Act now** (errors,

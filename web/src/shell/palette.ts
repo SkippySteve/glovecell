@@ -34,12 +34,17 @@ export const SECTION_KEYWORDS: Record<Section, string> = {
 };
 
 export interface CommandSource {
-  sandboxes: {id: string; kind: string}[];
-  projects: {name: string; repository?: string}[];
+  // level: the workspace's access level in a word ("Standard", "Open", "Fixed policy"), when known.
+  sandboxes: {id: string; kind: string; level?: string}[];
+  projects: {name: string; repository?: string; level?: string}[];
   runs: boolean;
   orca: boolean;
   sandboxControl?: boolean;
 }
+
+// A workspace entry names its access level, and the level's word finds it ("standard", "open").
+const withLevel = (context: string, level?: string) => level ? `${context} · ${level}` : context;
+const levelWords = (level?: string) => level ? 'access level ' + level.toLowerCase() : undefined;
 
 export function buildCommands(src: CommandSource): Command[] {
   const out: Command[] = [
@@ -58,7 +63,7 @@ export function buildCommands(src: CommandSource): Command[] {
   }
   for (const s of src.sandboxes) {
     const key = 's:' + s.id;
-    out.push({id: 'sandbox:' + s.id, kind: 'sandbox', title: s.id, context: s.kind, href: sandboxHref(s.id), workspace: key});
+    out.push({id: 'sandbox:' + s.id, kind: 'sandbox', title: s.id, context: withLevel(s.kind, s.level), keywords: levelWords(s.level), href: sandboxHref(s.id), workspace: key});
     for (const [section, label] of sectionsFor('sandbox', src.runs)) {
       if (section === 'overview') continue;
       out.push({id: `section:${key}:${section}`, kind: 'section', title: label, context: s.id, keywords: SECTION_KEYWORDS[section], href: sandboxHref(s.id, section), workspace: key});
@@ -66,7 +71,7 @@ export function buildCommands(src: CommandSource): Command[] {
   }
   for (const p of src.projects) {
     const key = 'p:' + p.name;
-    out.push({id: 'project:' + p.name, kind: 'project', title: p.name, context: p.repository || 'Project sandbox', href: projectHref(p.name), workspace: key});
+    out.push({id: 'project:' + p.name, kind: 'project', title: p.name, context: withLevel(p.repository || 'Project sandbox', p.level), keywords: levelWords(p.level), href: projectHref(p.name), workspace: key});
     for (const [section, label] of sectionsFor('project', src.runs)) {
       if (section === 'overview') continue;
       out.push({id: `section:${key}:${section}`, kind: 'section', title: label, context: p.name, keywords: SECTION_KEYWORDS[section], href: projectHref(p.name, section), workspace: key});

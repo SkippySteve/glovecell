@@ -74,8 +74,9 @@ The top bar had only the brand (Home), Runs and Orca projects.
 
 ## Still open
 
-- A named access level per sandbox needs the control work's API; Home reads
-  `accessLevel` or `level` from summaries or project status when present.
+- Home and the palette read each sandbox-control sandbox's web rules (one
+  small `/api/egress` read per sandbox, once a minute while shown) to name its
+  standing level; a summary field from sandbox-control would make that free.
 - History has no server-side feed across workspaces; recent activity polls
   each workspace once a minute, which is fine for a handful and should become
   one API call if the number grows.

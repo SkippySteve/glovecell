@@ -2,6 +2,8 @@
 // section. A native modal <dialog> keeps focus inside and makes the page inert;
 // the input is an ARIA combobox over a listbox of results. Entries only navigate.
 import {useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent} from 'react';
+import {useStandingAccess} from '../access/standing';
+import {levelWord, projectAccess, sandboxAccess} from '../access/summary';
 import {useData} from '../data';
 import {existingKind, orcaRuntimeId} from '../orca';
 import {navigate, type Route} from '../router';
@@ -35,11 +37,13 @@ export function CommandPalette({route}: {route: Route}) {
   const listId = id + '-list', optionId = (i: number) => `${id}-opt-${i}`;
 
   const runtime = orcaRuntimeId(session, existing);
+  // Each workspace's access level, read only while the palette is open.
+  const levels = useStandingAccess(open);
   const commands = useMemo(() => buildCommands({
-    sandboxes: existing.map(s => ({id: s.id, kind: existingKind(s, runtime)})),
-    projects: projects.filter(p => p.status?.phase !== 'Removed').map(p => ({name: p.metadata.name, repository: p.spec.repository})),
+    sandboxes: existing.map(s => ({id: s.id, kind: existingKind(s, runtime), level: levelWord(sandboxAccess(s, levels.rules[s.id]).state)})),
+    projects: projects.filter(p => p.status?.phase !== 'Removed').map(p => ({name: p.metadata.name, repository: p.spec.repository, level: levelWord(projectAccess(p, levels.profiles).state)})),
     runs: Boolean(session.runRecords), orca: Boolean(session.orcaProjects), sandboxControl: Boolean(session.sandboxControl),
-  }), [existing, projects, session, runtime]);
+  }), [existing, projects, session, runtime, levels]);
   const current = route.view === 'sandbox' ? 's:' + route.id : route.view === 'project' ? 'p:' + route.name : undefined;
   const results = useMemo(() => searchCommands(query, commands, {current, recent}), [query, commands, current, recent]);
   const recentSet = useMemo(() => new Set(recent), [recent]);

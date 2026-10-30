@@ -9,31 +9,23 @@ const project = (name: string, over: Partial<Project['spec']> = {}, phase = 'Rea
 });
 
 describe('access', () => {
-  it('falls back to the web access state', () => {
-    expect(sandboxAccess(sandbox('a', {egress: 'Open', egressExpires: 100}))).toMatchObject({label: 'Open to the web', variant: 'danger', rank: 0, expires: 100});
-    expect(sandboxAccess(sandbox('a', {egress: 'Learning'}))).toMatchObject({label: 'Learning', rank: 1});
-    expect(sandboxAccess(sandbox('a'))).toMatchObject({label: 'Locked', variant: 'success', rank: 3});
-    expect(sandboxAccess(sandbox('a', {egress: '', learning: 'Learning'}))).toMatchObject({label: 'Learning'});
-    expect(sandboxAccess(sandbox('a', {egress: '', egressControl: false}))).toMatchObject({label: 'Fixed policy rules', rank: 2});
+  const none = {rules: [], approved: 0};
+  it('names the access level of a sandbox', () => {
+    expect(sandboxAccess(sandbox('a', {egress: 'Open', egressExpires: 100}))).toMatchObject({rank: 0, expires: 100000, state: {level: 'open', learning: false}});
+    expect(sandboxAccess(sandbox('a', {egress: 'Learning', egressExpires: 100}))).toMatchObject({rank: 1, state: {level: 'open', learning: true}});
+    expect(sandboxAccess(sandbox('a'), none)).toMatchObject({label: 'Locked', rank: 6});
+    expect(sandboxAccess(sandbox('a'), {rules: [], approved: 3})).toMatchObject({label: 'Ask', rank: 4});
+    expect(sandboxAccess(sandbox('a', {egress: '', egressControl: false}))).toMatchObject({label: 'Fixed policy', rank: 5, state: {supported: false}});
   });
 
-  it('shows a named access level when the API reports one', () => {
-    const leveled = {...sandbox('a'), accessLevel: 'standard'} as ExistingSandbox;
-    expect(sandboxAccess(leveled)).toMatchObject({label: 'Standard', level: 'standard', rank: 2});
-    // An open window still wins: it is the widest access in force.
-    expect(sandboxAccess({...leveled, egress: 'Open'} as ExistingSandbox)).toMatchObject({label: 'Open to the web', level: 'standard'});
-    const p = {...project('p'), status: {phase: 'Ready', level: 'locked'}} as unknown as Project;
-    expect(projectAccess(p)).toMatchObject({label: 'Locked', variant: 'success'});
+  it('leaves a closed sandbox unknown until its rules are read', () => {
+    expect(sandboxAccess(sandbox('a'))).toMatchObject({rank: 5, state: {level: null}});
   });
 
-  it('ignores a level that is not a plain name', () => {
-    expect(sandboxAccess({...sandbox('a'), accessLevel: '<b>x</b>'} as ExistingSandbox).label).toBe('Locked');
-    expect(sandboxAccess({...sandbox('a'), accessLevel: 7} as unknown as ExistingSandbox).label).toBe('Locked');
-  });
-
-  it('describes project rules', () => {
-    expect(projectAccess(project('p'))).toMatchObject({label: 'Repositories only', rank: 3});
-    expect(projectAccess(project('p', {https: [{host: 'a', methods: ['GET'], paths: ['/']}]}))).toMatchObject({label: '1 fixed rule'});
+  it('names the level of a project from its profile and rules', () => {
+    expect(projectAccess(project('p'))).toMatchObject({label: 'Locked', rank: 6});
+    expect(projectAccess(project('p', {accessProfileName: 'standard'}))).toMatchObject({label: 'Standard', rank: 3});
+    expect(projectAccess(project('p', {https: [{host: 'a', methods: ['GET'], paths: ['/']}]}))).toMatchObject({label: 'Custom', rank: 2});
   });
 });
 

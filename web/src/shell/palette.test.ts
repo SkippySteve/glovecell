@@ -136,3 +136,13 @@ describe('shortcut', () => {
     expect(shortcutLabel('Linux x86_64')).toBe('Ctrl K');
   });
 });
+
+describe('access levels in the palette', () => {
+  it('shows a workspace level and finds workspaces by it', () => {
+    const commands = buildCommands({sandboxes: [{id: 'box-a', kind: 'Coding sandbox', level: 'Standard'}, {id: 'box-b', kind: 'Coding sandbox', level: 'Open'}], projects: [{name: 'site', repository: 'example/site', level: 'Locked'}], runs: false, orca: false});
+    expect(commands.find(c => c.id === 'sandbox:box-a')?.context).toBe('Coding sandbox · Standard');
+    expect(commands.find(c => c.id === 'project:site')?.context).toBe('example/site · Locked');
+    const hits = searchCommands('standard', commands).filter(c => c.kind === 'sandbox' || c.kind === 'project').map(c => c.id);
+    expect(hits).toEqual(['sandbox:box-a']);
+  });
+});

@@ -136,13 +136,9 @@
 
 /* Native sandbox pages */
 .egress-secondary { display: flex; gap: var(--openui-space-s); justify-content: flex-end; flex-wrap: wrap; }
-.chip-list { display: flex; flex-wrap: wrap; gap: var(--openui-space-xs); }
-.chip-list code { padding: 2px 8px; border: 1px solid var(--openui-border-default); border-radius: var(--openui-radius-m); }
 .check { display: inline-flex; align-items: center; gap: 6px; font: var(--openui-text-body-sm); }
 .service { display: flex; flex-direction: column; gap: var(--openui-space-s); padding: var(--openui-space-m) 0; border-top: 1px solid var(--openui-border-default); }
 .service:first-of-type { border-top: 0; }
-.observation-filter { display: flex; gap: var(--openui-space-m); align-items: flex-end; flex-wrap: wrap; }
-.observation-filter .field { flex: 1 1 280px; }
 .request { display: flex; gap: var(--openui-space-s); align-items: baseline; min-width: 0; }
 .request code { overflow-wrap: anywhere; }
 .method { font: var(--openui-text-body-xs-heavy, var(--openui-text-body-xs)); color: var(--openui-text-neutral-secondary); min-width: 4.5em; }

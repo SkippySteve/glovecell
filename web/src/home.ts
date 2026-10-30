@@ -1,11 +1,12 @@
 // The Home dashboard's rows, filters and sort orders, kept free of React so they are testable.
-import {projectAccess, sandboxAccess, type Access} from './access';
+import {projectAccess, sandboxAccess, type Access} from './access/summary';
+import type {Profiles, SandboxRules} from './access/levels';
 import type {ExistingSandbox, Project} from './api';
 import {projectHref, sandboxHref} from './router';
 import {existingState, projectState, type Status} from './state';
 
-// Access summaries live in ./access so Home and the sandbox Overview use the same words.
-export {projectAccess, sandboxAccess, type Access} from './access';
+// Access comes from access/summary (the access level), shared with the sandbox Overview and the palette.
+export {projectAccess, sandboxAccess, type Access} from './access/summary';
 
 export interface Row {
   key: string; kind: 'sandbox' | 'project'; name: string; kindLabel: string; sub: string; href: string;
@@ -15,16 +16,16 @@ export interface Row {
   lastActivity?: number;
 }
 
-export function sandboxRow(s: ExistingSandbox, kindLabel: string, lanOpen = 0): Row {
+export function sandboxRow(s: ExistingSandbox, kindLabel: string, lanOpen = 0, rules?: SandboxRules): Row {
   const state = existingState(s);
   return {key: 's:' + s.id, kind: 'sandbox', name: s.id, kindLabel, sub: s.namespace, href: sandboxHref(s.id), state, running: state.label === 'Running',
-    access: sandboxAccess(s), waiting: (s.pending || 0) + (s.approvals || 0), attention: state.variant === 'danger' ? state.label : '', lan: lanOpen};
+    access: sandboxAccess(s, rules), waiting: (s.pending || 0) + (s.approvals || 0), attention: state.variant === 'danger' ? state.label : '', lan: lanOpen};
 }
 
-export function projectRow(p: Project): Row {
+export function projectRow(p: Project, profiles?: Profiles): Row {
   const state = projectState(p);
   return {key: 'p:' + p.metadata.name, kind: 'project', name: p.metadata.name, kindLabel: 'Project sandbox', sub: p.spec.repository, href: projectHref(p.metadata.name), state, running: state.label === 'Ready',
-    access: projectAccess(p), waiting: 0, attention: state.attention || '', lan: (p.spec.lanHosts || []).length};
+    access: projectAccess(p, profiles), waiting: 0, attention: state.attention || '', lan: (p.spec.lanHosts || []).length};
 }
 
 // Open or exposed first, then anything waiting on a decision, then the rest.

@@ -81,11 +81,7 @@ code.attn-detail { font-family: var(--console-font-mono); background: none; padd
 .ov-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--console-space-2) var(--console-space-4); margin: 0; align-items: baseline; }
 .ov-facts dt { color: var(--console-text-muted); font-size: var(--console-text-sm); }
 .ov-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; display: flex; flex-wrap: wrap; gap: var(--console-space-1) var(--console-space-2); align-items: baseline; }
-.ov-access { font-weight: var(--console-weight-bold); }
-.ov-access.tone-danger { color: var(--console-danger); }
-.ov-access.tone-warn { color: var(--console-warn); }
-.ov-access.tone-ok { color: var(--console-ok); }
-.ov-access.tone-info { color: var(--console-info); }
+.ov-access-lan { color: var(--console-danger); font-weight: var(--console-weight-medium); }
 .ov-now { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--console-space-1); }
 .ov-now li { overflow-wrap: anywhere; }
 .ov-quick { display: flex; flex-direction: column; gap: var(--console-space-2); min-width: 0; }
