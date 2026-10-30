@@ -115,6 +115,11 @@ spec:
                       addedAt:
                         type: string
                         format: date-time
+                accessProfileName:
+                  description: The cluster-scoped AccessProfile this cell uses. Empty keeps only the cell's own rules (cells from before access profiles).
+                  type: string
+                  maxLength: 63
+                  pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
                 providers:
                   description: Brokered subscription providers this project opts into. Off by default. Editable while running; removing an entry revokes that provider for this project. The controller needs a provider lease source.
                   type: array

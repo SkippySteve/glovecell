@@ -36,6 +36,8 @@ type WorkspaceSpec struct {
 	// runs: removing an entry revokes that provider for this project only.
 	// The controller needs a configured provider lease source.
 	Providers []ProviderGrant `json:"providers,omitempty"`
+	// AccessProfileName names the cluster-scoped AccessProfile (accessprofile_types.go).
+	AccessProfileName string `json:"accessProfileName,omitempty"`
 }
 
 // ProviderGrant is one operator opt-in to a brokered provider. The worker then
@@ -118,7 +120,7 @@ func (w *ProjectWorkspaceList) DeepCopyObject() runtime.Object {
 	return out
 }
 func AddToScheme(s *runtime.Scheme) error {
-	s.AddKnownTypes(GroupVersion, &ProjectWorkspace{}, &ProjectWorkspaceList{})
+	s.AddKnownTypes(GroupVersion, &ProjectWorkspace{}, &ProjectWorkspaceList{}, &AccessProfile{}, &AccessProfileList{}, &AccessGrant{}, &AccessGrantList{})
 	metav1.AddToGroupVersion(s, GroupVersion)
 	return nil
 }

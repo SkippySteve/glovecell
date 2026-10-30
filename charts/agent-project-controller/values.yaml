@@ -13,6 +13,10 @@ additionalGitHub:
   tokenKey: token
 automationAPI:
   enabled: false
+# The default AccessProfiles (locked, ask, standard, open, custom; docs/access-levels.md).
+# locked is the cluster default for new cells. Set false to manage profiles yourself.
+accessProfiles:
+  install: true
 config:
   # network-policy is experimental and requires independent dataplane qualification.
   NETWORK_PROVIDER: cilium

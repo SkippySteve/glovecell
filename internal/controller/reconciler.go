@@ -45,6 +45,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 var sandboxGVK = schema.GroupVersionKind{Group: "agents.x-k8s.io", Version: "v1beta1", Kind: "Sandbox"}
@@ -186,7 +188,31 @@ func (r *Reconciler) Setup(m ctrl.Manager) error {
 	if e != nil {
 		return e
 	}
-	return ctrl.NewControllerManagedBy(m).For(&api.ProjectWorkspace{}).Complete(r)
+	// A grant change or expiry, and a profile edit, reconcile the cells concerned.
+	grantCell := handler.EnqueueRequestsFromMapFunc(func(_ context.Context, o client.Object) []reconcile.Request {
+		g, ok := o.(*api.AccessGrant)
+		if !ok || g.Namespace != r.Config.Namespace || g.Spec.Cell == "" {
+			return nil
+		}
+		return []reconcile.Request{{NamespacedName: types.NamespacedName{Namespace: g.Namespace, Name: g.Spec.Cell}}}
+	})
+	profileCells := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, o client.Object) []reconcile.Request {
+		var list api.ProjectWorkspaceList
+		if err := r.List(ctx, &list, client.InNamespace(r.Config.Namespace)); err != nil {
+			return nil
+		}
+		var out []reconcile.Request
+		for _, w := range list.Items {
+			if w.Spec.AccessProfileName == o.GetName() {
+				out = append(out, reconcile.Request{NamespacedName: types.NamespacedName{Namespace: w.Namespace, Name: w.Name}})
+			}
+		}
+		return out
+	})
+	return ctrl.NewControllerManagedBy(m).For(&api.ProjectWorkspace{}).
+		Watches(&api.AccessGrant{}, grantCell).
+		Watches(&api.AccessProfile{}, profileCells).
+		Complete(r)
 }
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ctrl.Result, err error) {
 	started := time.Now()
@@ -347,10 +373,14 @@ func (r *Reconciler) validate(ctx context.Context, w *api.ProjectWorkspace) erro
 	if e := r.Get(ctx, types.NamespacedName{Name: r.Config.RuntimeClass}, runtime); e != nil {
 		return errors.New("configured isolation runtime unavailable")
 	}
-	if _, e := r.policyConfiguration(w, w.Spec.HTTPS); e != nil {
+	if _, e := r.policyConfiguration(ctx, w, w.Spec.HTTPS); e != nil {
 		return e
 	}
-	if e := r.validateLANHosts(w); e != nil {
+	hosts, _, e := r.effectiveLAN(ctx, w)
+	if e != nil {
+		return e
+	}
+	if e := r.validateLANHosts(hosts); e != nil {
 		return e
 	}
 	return r.validateProviders(w)
@@ -1269,7 +1299,7 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 	if e != nil {
 		return e
 	}
-	cfg, e := r.policyConfiguration(w, w.Spec.HTTPS)
+	cfg, e := r.policyConfiguration(ctx, w, w.Spec.HTTPS)
 	if e != nil {
 		return e
 	}

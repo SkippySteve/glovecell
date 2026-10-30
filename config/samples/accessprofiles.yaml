@@ -1,0 +1,64 @@
+# The default access levels (docs/access-levels.md). Cluster-scoped presets a
+# cell names in spec.accessProfileName. Profile rules are read only; anything
+# that writes belongs in a cell's own spec.https. "locked" is the cluster
+# default for new cells; cells from before access profiles keep their rules.
+apiVersion: projects.agentwork.dev/v1alpha1
+kind: AccessProfile
+metadata:
+  name: locked
+  annotations:
+    accessprofile.projects.agentwork.dev/is-default: "true"
+spec:
+  level: locked
+  description: Nothing beyond the cell's own repository, model providers and the deployment's read-only reference sources.
+---
+apiVersion: projects.agentwork.dev/v1alpha1
+kind: AccessProfile
+metadata:
+  name: ask
+spec:
+  level: ask
+  description: Locked, plus each exact request an operator approved. New requests wait for approval.
+  approveRequests: true
+  allowedGrants: [lan, package]
+  maxGrantDuration: {lan: 24h, package: 720h}
+---
+apiVersion: projects.agentwork.dev/v1alpha1
+kind: AccessProfile
+metadata:
+  name: standard
+spec:
+  level: standard
+  description: Package downloads from npm, PyPI, Go modules and crates.io, and GitHub pages, raw files, archives and release assets. Read only.
+  approveRequests: true
+  registries: [go, npm, python, rust]
+  https:
+    - {host: github.com, methods: [GET, HEAD], paths: [/]}
+    - {host: codeload.github.com, methods: [GET, HEAD], paths: [/]}
+    - {host: raw.githubusercontent.com, methods: [GET, HEAD], paths: [/]}
+    - {host: objects.githubusercontent.com, methods: [GET, HEAD], paths: [/]}
+    - {host: release-assets.githubusercontent.com, methods: [GET, HEAD], paths: [/]}
+  allowedGrants: [lan, package]
+  maxGrantDuration: {lan: 24h, package: 720h}
+---
+apiVersion: projects.agentwork.dev/v1alpha1
+kind: AccessProfile
+metadata:
+  name: open
+spec:
+  level: open
+  description: Any public website while an internet grant is live (at most 8 hours). Private networks, cluster services and cloud metadata stay blocked.
+  approveRequests: true
+  allowedGrants: [internet, lan, package]
+  maxGrantDuration: {internet: 8h, lan: 24h, package: 720h}
+---
+apiVersion: projects.agentwork.dev/v1alpha1
+kind: AccessProfile
+metadata:
+  name: custom
+spec:
+  level: custom
+  description: The cell's own HTTPS rules and explicit LAN and package grants.
+  approveRequests: true
+  allowedGrants: [lan, package]
+  maxGrantDuration: {lan: 24h, package: 720h}

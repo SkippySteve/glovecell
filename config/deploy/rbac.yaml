@@ -11,6 +11,14 @@ rules:
   - apiGroups: [projects.agentwork.dev]
     resources: [projectworkspaces, projectworkspaces/status, projectworkspaces/finalizers]
     verbs: [get, list, watch, create, update, patch, delete]
+  # Access levels: profiles are read only here (managed in Git or by an
+  # admin); grants are written by the console API and expired by the controller.
+  - apiGroups: [projects.agentwork.dev]
+    resources: [accessprofiles]
+    verbs: [get, list, watch]
+  - apiGroups: [projects.agentwork.dev]
+    resources: [accessgrants, accessgrants/status]
+    verbs: [get, list, watch, create, update, patch, delete]
   # No cluster-wide Secrets and no cluster-wide namespace delete: Secrets come
   # from Role controller-secrets (control namespace) and the project access
   # ClusterRole bound in each project namespace, which also lets the

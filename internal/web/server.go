@@ -180,6 +180,12 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.HandleFunc("POST /api/v1/workspaces", s.create)
 	mux.HandleFunc("PATCH /api/v1/workspaces/{name}", s.change)
 	mux.HandleFunc("PATCH /api/v1/workspaces/{name}/access", s.changeAccess)
+	mux.HandleFunc("GET /api/v1/access-profiles", s.accessProfiles)
+	mux.HandleFunc("PATCH /api/v1/workspaces/{name}/access-level", s.changeLevel)
+	mux.HandleFunc("POST /api/v1/workspaces/{name}/lock", s.lockNow)
+	mux.HandleFunc("GET /api/v1/workspaces/{name}/grants", s.listGrants)
+	mux.HandleFunc("POST /api/v1/workspaces/{name}/grants", s.addGrant)
+	mux.HandleFunc("DELETE /api/v1/workspaces/{name}/grants/{grant}", s.removeGrant)
 	mux.HandleFunc("POST /api/v1/workspaces/{name}/repositories", s.enrollRepository)
 	mux.HandleFunc("POST /api/v1/workspaces/{name}/lan-hosts", s.addLANHost)
 	mux.HandleFunc("DELETE /api/v1/workspaces/{name}/lan-hosts/{address}", s.removeLANHost)
@@ -354,9 +360,23 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		Repository string          `json:"repository"`
 		HTTPS      []api.HTTPSRule `json:"https,omitempty"`
 		Registries []string        `json:"registries,omitempty"`
+		// AccessProfile names the cell's AccessProfile; empty takes the cluster default.
+		AccessProfile string `json:"accessProfile,omitempty"`
 	}
 	if e := decode(w, r, &request); e != nil || !validName.MatchString(request.Name) || forgejo.ValidateRepository(request.Repository, s.Owner) != nil {
 		http.Error(w, "invalid project name or repository", 400)
+		return
+	}
+	profile := request.AccessProfile
+	if profile == "" {
+		name, e := s.defaultProfile(r.Context())
+		if e != nil {
+			http.Error(w, "access profiles unavailable", 503)
+			return
+		}
+		profile = name
+	} else if _, code, e := s.projectProfile(r.Context(), profile); e != nil {
+		http.Error(w, e.Error(), code)
 		return
 	}
 	rules, e := s.accessRules(request.Repository, request.Registries, request.HTTPS)
@@ -373,7 +393,7 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	obj := &api.ProjectWorkspace{TypeMeta: metav1.TypeMeta{APIVersion: api.GroupVersion.String(), Kind: "ProjectWorkspace"}, ObjectMeta: metav1.ObjectMeta{Name: request.Name, Namespace: s.Namespace, Annotations: map[string]string{"projects.agentwork.dev/requested-by": actor}}, Spec: api.WorkspaceSpec{Repository: request.Repository, DesiredState: "Running", HTTPS: rules}}
+	obj := &api.ProjectWorkspace{TypeMeta: metav1.TypeMeta{APIVersion: api.GroupVersion.String(), Kind: "ProjectWorkspace"}, ObjectMeta: metav1.ObjectMeta{Name: request.Name, Namespace: s.Namespace, Annotations: map[string]string{"projects.agentwork.dev/requested-by": actor}}, Spec: api.WorkspaceSpec{Repository: request.Repository, DesiredState: "Running", HTTPS: rules, AccessProfileName: profile}}
 	if e := s.Client.Create(r.Context(), obj); e != nil {
 		if apierrors.IsAlreadyExists(e) {
 			http.Error(w, "project name already exists", 409)

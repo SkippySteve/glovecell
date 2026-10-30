@@ -165,7 +165,7 @@ func TestInterruptedAccessUpdateRecoversWithoutRecreatingStorage(t *testing.T) {
 func TestRepositoryHostsCannotBeOverridden(t *testing.T) {
 	r, w, _ := fixture(t)
 	for _, host := range []string{"git.example.com"} {
-		_, err := r.policyConfiguration(w, []api.HTTPSRule{{Host: host, Methods: []string{"POST"}, Paths: []string{"/"}}})
+		_, err := r.policyConfiguration(context.Background(), w, []api.HTTPSRule{{Host: host, Methods: []string{"POST"}, Paths: []string{"/"}}})
 		if err == nil {
 			t.Fatal("repository permissions expanded", host)
 		}

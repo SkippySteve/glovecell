@@ -313,7 +313,7 @@ func (r *Reconciler) syncProxyProviders(ctx context.Context, w *api.ProjectWorks
 	if err = owner(w, s); err != nil {
 		return false, err
 	}
-	cfg, err := r.policyConfiguration(w, w.Spec.HTTPS)
+	cfg, err := r.policyConfiguration(ctx, w, w.Spec.HTTPS)
 	if err != nil {
 		return false, err
 	}

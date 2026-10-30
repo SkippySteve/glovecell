@@ -38,46 +38,67 @@ func LANSummary(hosts []api.LANHost) string {
 
 // validateLANHosts is the static check run with the rest of the project policy.
 // A refused grant blocks the project, like an invalid HTTPS rule.
-func (r *Reconciler) validateLANHosts(w *api.ProjectWorkspace) error {
-	if len(w.Spec.LANHosts) == 0 {
+func (r *Reconciler) validateLANHosts(hosts []api.LANHost) error {
+	if len(hosts) == 0 {
 		return nil
 	}
 	if _, ok := r.Network.(network.LANPolicy); !ok {
 		return errors.New("the network provider cannot enforce LAN host grants; remove them from this project")
 	}
-	if err := r.LAN.Check(w.Spec.LANHosts, nil); err != nil {
+	if err := r.LAN.Check(hosts, nil); err != nil {
 		return fmt.Errorf("%w; remove or correct the grant", err)
 	}
 	return nil
 }
 
-// applyLANHosts makes policy lan-hosts match spec.lanHosts. It runs while the
-// project runs: adding or removing a grant needs no pause or restart.
+// applyLANHosts makes policy lan-hosts match spec.lanHosts plus the cell's
+// live LAN AccessGrants. It runs while the project runs: adding, expiring or
+// removing a grant needs no pause or restart.
 // The policy is controller-owned; any other content is overwritten.
+//
+// Grant states are recorded, and expired grants deleted, only after the
+// policy is written: an interruption in between leaves the narrower policy.
 func (r *Reconciler) applyLANHosts(ctx context.Context, w *api.ProjectWorkspace) error {
+	hosts, decisions, err := r.effectiveLAN(ctx, w)
+	if err != nil {
+		return err
+	}
+	if err = r.applyLANPolicy(ctx, w, hosts); err != nil {
+		return err
+	}
+	for _, d := range decisions {
+		if err = r.recordGrant(ctx, w, d); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *Reconciler) applyLANPolicy(ctx context.Context, w *api.ProjectWorkspace, hosts []api.LANHost) error {
 	ns := namespace(w)
+	var err error
 	provider, ok := r.Network.(network.LANPolicy)
 	if !ok {
 		// Other providers never create the policy and may lack its API.
-		if len(w.Spec.LANHosts) > 0 {
+		if len(hosts) > 0 {
 			return errors.New("the network provider cannot enforce LAN host grants")
 		}
 		return nil
 	}
 	var want *unstructured.Unstructured
-	if len(w.Spec.LANHosts) > 0 {
+	if len(hosts) > 0 {
 		nodes, err := network.NodeAddresses(ctx, r.Client)
 		if err != nil {
 			return err
 		}
-		if err = r.LAN.Check(w.Spec.LANHosts, nodes); err != nil {
+		if err = r.LAN.Check(hosts, nodes); err != nil {
 			return err
 		}
-		want = provider.LANObject(ns, string(w.UID), w.Spec.LANHosts)
+		want = provider.LANObject(ns, string(w.UID), hosts)
 	}
 	current := &unstructured.Unstructured{}
 	current.SetGroupVersionKind(ciliumPolicyGVK)
-	err := r.Get(ctx, types.NamespacedName{Namespace: ns, Name: network.LANPolicyName}, current)
+	err = r.Get(ctx, types.NamespacedName{Namespace: ns, Name: network.LANPolicyName}, current)
 	switch {
 	case apierrors.IsNotFound(err):
 		if want == nil {
@@ -110,7 +131,7 @@ func (r *Reconciler) applyLANHosts(ctx context.Context, w *api.ProjectWorkspace)
 			return err
 		}
 	}
-	summary := LANSummary(w.Spec.LANHosts)
+	summary := LANSummary(hosts)
 	sum := sha256.Sum256([]byte(summary))
 	slog.InfoContext(ctx, "LAN host policy applied", "workspace_uid", string(w.UID), "generation", w.Generation, "lan_hosts", summary)
 	return r.auditDetails(ctx, w, "lan-hosts-applied-"+hex.EncodeToString(sum[:6]), map[string]string{"lanHosts": summary, "message": "LAN host policy now allows: " + summary})

@@ -19,7 +19,12 @@ import (
 const HTTPSLedgerKey = "https-policy"
 
 // policyConfiguration keeps mandatory repository grants separate from optional egress.
-func (r *Reconciler) policyConfiguration(w *api.ProjectWorkspace, https []api.HTTPSRule) (proxy.Config, error) {
+func (r *Reconciler) policyConfiguration(ctx context.Context, w *api.ProjectWorkspace, https []api.HTTPSRule) (proxy.Config, error) {
+	// The cell's access profile adds labelled, read-only rules (access_profiles.go).
+	profile, err := r.profileRules(ctx, w)
+	if err != nil {
+		return proxy.Config{}, err
+	}
 	rules, private, err := AccessRules(r.Config.GitHost, r.Config.ForgejoOrigin, w.Spec.Repository)
 	if err != nil {
 		return proxy.Config{}, err
@@ -75,8 +80,8 @@ func (r *Reconciler) policyConfiguration(w *api.ProjectWorkspace, https []api.HT
 		cfg.Reader = r.ReaderRoute
 		cfg.Rules = append(cfg.Rules, api.HTTPSRule{Host: r.ReaderRoute.Host, Methods: []string{"GET", "HEAD"}, Paths: []string{"/k8s"}}, api.HTTPSRule{Host: r.ReaderRoute.Host, Methods: []string{"POST"}, Paths: []string{"/mcp"}})
 	}
-	// The deployment's reference rules come last (reference_rules.go).
-	cfg = r.withReference(cfg)
+	// Profile rules, then the deployment's reference rules, come last (reference_rules.go).
+	cfg = r.withLabelled(cfg, profile)
 	return cfg, proxy.Validate(cfg)
 }
 
@@ -93,7 +98,7 @@ func (r *Reconciler) processesGone(ctx context.Context, w *api.ProjectWorkspace)
 // resource must match either that old policy or the requested policy; arbitrary drift fails closed.
 func (r *Reconciler) updateAccessPolicy(ctx context.Context, w *api.ProjectWorkspace, ledger *corev1.Secret) error {
 	var previous []api.HTTPSRule
-	desired, err := r.policyConfiguration(w, w.Spec.HTTPS)
+	desired, err := r.policyConfiguration(ctx, w, w.Spec.HTTPS)
 	if err != nil {
 		return err
 	}
@@ -127,7 +132,7 @@ func (r *Reconciler) updateAccessPolicy(ctx context.Context, w *api.ProjectWorks
 	}
 	oldWorkspace := *w
 	oldWorkspace.Spec.Repositories = previousRepositories
-	old, err := r.policyConfiguration(&oldWorkspace, previous)
+	old, err := r.policyConfiguration(ctx, &oldWorkspace, previous)
 	if err != nil {
 		return errors.New("saved access policy is invalid")
 	}
