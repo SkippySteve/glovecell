@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: agent-project-controller
 resources:
   - ../crd
+  - ../samples/accessprofiles.yaml
   - namespace.yaml
   - rbac.yaml
   - deployment.yaml

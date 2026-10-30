@@ -11,6 +11,7 @@ import {createServer} from 'node:http';
 import {readFileSync, existsSync} from 'node:fs';
 import {extname, join, normalize} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {levelGrants, levelProjects, levelWorkspaces, projectApi, ruleAction} from './preview-levels.mjs';
 
 const port = Number(process.argv[2] || 8790), host = process.argv[3] || '127.0.0.1';
 const dist = fileURLToPath(new URL('../../internal/web/dist/', import.meta.url));
@@ -77,6 +78,8 @@ const W = {
     lan: {hosts: [], history: []}}),
   'research': workspace('research', {learningEgress: false, learning: null, mode: 'Suspended', lan: 'research'}),
 };
+// One sandbox per access level (preview-levels.mjs).
+Object.assign(W, levelWorkspaces(workspace, observations, t0));
 
 function apiWorkspace(w) {
   return {id: w.id, namespace: w.namespace, sandbox: w.sandbox, mode: w.mode, revision: w.revisions[0], learningEgress: w.learningEgress, tailnetReady: true, serviceOwner: w.id === 'coding-a',
@@ -102,7 +105,8 @@ function apiDevLinks(w) {
 }
 const page = (list, q) => { const items = list.filter(o => !q || (o.host + o.path).includes(q)); return {total: items.length, items: items.slice(0, 500)}; };
 
-const project = {metadata: {name: 'demo-project', uid: 'u1', generation: 3, resourceVersion: '42'}, spec: {repository: 'example/demo-project', desiredState: 'Running', https: [{host: 'api.github.com', methods: ['GET'], paths: ['/repos/example/demo-project']}, {host: 'registry.npmjs.org', methods: ['GET', 'HEAD'], paths: ['/']}], lanHosts: [{address: '192.168.1.31', ports: [22], note: 'Desktop SSH', addedBy: 'operator', addedAt: new Date((t0 - 3 * DAY) * 1000).toISOString()}]}, status: {phase: 'Ready', namespace: 'apc-demo-project', observedGeneration: 3, conditions: [{type: 'Ready', status: 'True', reason: 'Ready', message: 'Ready', observedGeneration: 3}]}};
+const project = {metadata: {name: 'demo-project', uid: 'u1', generation: 3, resourceVersion: '42'}, spec: {repository: 'example/demo-project', desiredState: 'Running', accessProfileName: 'custom', https: [{host: 'api.github.com', methods: ['GET'], paths: ['/repos/example/demo-project']}, {host: 'registry.npmjs.org', methods: ['GET', 'HEAD'], paths: ['/']}], lanHosts: [{address: '192.168.1.31', ports: [22], note: 'Desktop SSH', addedBy: 'operator', addedAt: new Date((t0 - 3 * DAY) * 1000).toISOString()}]}, status: {phase: 'Ready', namespace: 'apc-demo-project', observedGeneration: 3, conditions: [{type: 'Ready', status: 'True', reason: 'Ready', message: 'Ready', observedGeneration: 3}]}};
+const projects = [project, ...levelProjects(t0)], projectGrants = levelGrants(t0);
 
 // A second, paused project so Home's filters and sort orders have something to sort.
 const pausedProject = {metadata: {name: 'docs-site', uid: 'u2', generation: 2, resourceVersion: '17'}, spec: {repository: 'example/docs-site', desiredState: 'Paused', https: []}, status: {phase: 'Paused', namespace: 'apc-docs-site', observedGeneration: 2, conditions: [{type: 'Ready', status: 'False', reason: 'Paused', message: 'Paused by operator', observedGeneration: 2}]}};
@@ -184,6 +188,7 @@ function act(w, path, f) {
   }
   if (path === '/egress') {
     const find = (list, id) => list.findIndex(o => o.observation === id);
+    if (ruleAction(w, action, f)) return;
     switch (action) {
       case 'learning-open': case 'learning-resume': case 'learning-start':
         if (action === 'learning-start') { w.pending = []; w.approved = []; }
@@ -314,13 +319,16 @@ createServer(async (req, res) => {
         const b = req.method === 'POST' ? JSON.parse((await body(req)) || '{}') : {};
         try { const [status, out] = downloads(decodeURIComponent(dl[1]), dl[2], req.method, b); return json(res, status, out); } catch (e) { return json(res, 409, {error: e.message}); }
       }
-      if (r === 'workspaces') return json(res, 200, [project, pausedProject, blockedProject]);
+      if (r === 'workspaces') return json(res, 200, [...projects, pausedProject, blockedProject]);
       if (r === 'repositories') return json(res, 200, [{full_name: 'example/demo-project'}]);
       if (r === 'orca-projects') return json(res, 200, [{name: 'demo-project', repo: 'example/demo-project', status: 'registered', clone: '/workspace/demo-project'}, {name: 'docs', repo: 'example/docs', status: 'published', actor: 'operator', requestedAt: new Date().toISOString()}]);
       if (r === 'runs') return json(res, 200, RUNS.map(runSummary).sort((a, b) => b.collectedAt.localeCompare(a.collectedAt)));
       if (r.startsWith('runs/')) { const rec = RUNS.find(x => x.run.id === decodeURIComponent(r.slice(5))); return rec ? json(res, 200, rec) : json(res, 404, {error: 'run record unavailable'}); }
       if (r.endsWith('/audit')) return json(res, 200, [...downloadAudit, {time: new Date((t0 - 3 * DAY) * 1000).toISOString(), action: 'lan-host-granted', message: '192.168.1.31 TCP 22 by operator'}, {time: new Date((t0 - 4 * DAY) * 1000).toISOString(), action: 'created', message: 'example/demo-project'}]);
       if (r.endsWith('/clients')) return json(res, 200, {clients: []});
+      const raw = req.method === 'GET' ? '' : await body(req);
+      const level = projectApi(projects, projectGrants, r, req.method, raw ? JSON.parse(raw) : {});
+      if (level) return json(res, level[0], level[1]);
       if (req.method === 'GET') return json(res, 404, {error: 'not served by the preview'});
       return json(res, 403, {error: 'the preview does not change console projects'});
     }
@@ -339,7 +347,7 @@ createServer(async (req, res) => {
       if (r.startsWith('/api/') && !w) return json(res, 404, {error: 'workspace not enrolled'});
       switch (r) {
         case '/api/workspace': return json(res, 200, apiWorkspace(w), headers);
-        case '/api/egress': return w.learningEgress ? json(res, 200, {filter: q.get('q') || '', pending: page(w.pending, q.get('q')), approved: page(w.approved, q.get('q')), ...(w.ruleHistory ? {rules: [], ruleHistory: w.ruleHistory} : {})}, headers) : json(res, 409, {error: 'learning is not enrolled for this workspace'});
+        case '/api/egress': return w.learningEgress ? json(res, 200, {filter: q.get('q') || '', pending: page(w.pending, q.get('q')), approved: page(w.approved, q.get('q')), rules: w.rules || [], ...(w.ruleHistory ? {ruleHistory: w.ruleHistory} : {})}, headers) : json(res, 409, {error: 'learning is not enrolled for this workspace'});
         case '/api/lan': return json(res, 200, apiLan(w), headers);
         case '/api/devlinks': return json(res, 200, apiDevLinks(w), headers);
         case '/api/previews': {

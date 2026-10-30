@@ -1,67 +1,36 @@
+// Internet section: the access level on top, then the fine-grained editors
+// (requests awaiting approval, approved requests, web rules) in the shared
+// grant table pattern. Editing them changes the level to Custom.
 import {useCallback, useEffect, useState} from 'react';
-import type {AllowOptions, EgressCapacity, Observation, WebRule} from '../../api';
+import {sandboxAction, type AllowOptions, type EgressCapacity, type Observation, type WebRule} from '../../api';
 import {useData} from '../../data';
+import {SandboxAccessLevels} from '../../access/AccessLevels';
+import {GrantTable, type Expiry} from '../../access/GrantTable';
+import {presetOf} from '../../access/levels';
 import {classicHref, timeOf} from '../../sandbox/Sandbox';
-import {Button, Callout, Card, CardHeader, Input, Tabs, TabsList, TabsTrigger, Tag, ToggleGroup, ToggleItem} from '../../ui';
-import {Countdown, plural, SectionIntro, WindowBar} from '../bits';
-import {addRule, clearUnapproved, decideRequest, DEFAULT_PAGE_SIZE, dismissOlder, draftFor, draftRisks, EXPIRIES, loadRequests, METHODS, needsConfirm, PAGE_SIZES, pageKeeping, pageOf, pageSize, passthroughAllowed, removeRule, requestUrl, rulesBySource, WEB_WINDOWS, webAccess, webLearn, webLock, webOpen, webStartFresh, type Requests, type RuleDraft, type RuleKind, type RuleSource} from '../sources/internet';
+import {Button, Callout, Card, CardHeader, Input, Tabs, TabsList, TabsTrigger, Tag} from '../../ui';
+import {plural, SectionIntro} from '../bits';
+import {useConfirm} from '../Confirm';
+import {addRule, clearUnapproved, decideRequest, DEFAULT_PAGE_SIZE, dismissOlder, draftFor, draftRisks, EXPIRIES, loadRequests, METHODS, needsConfirm, PAGE_SIZES, pageKeeping, pageOf, pageSize, passthroughAllowed, removeRule, requestUrl, rulesBySource, webAccess, webStartFresh, type Requests, type RuleDraft, type RuleKind} from '../sources/internet';
 import {reportTime} from '../sources/reports';
-import {hashQuery, replaceHashQuery} from '../../router';
-import {clockAt} from '../time';
+import {hashQuery, replaceHashQuery, sandboxHref} from '../../router';
 import type {SandboxState} from '../useSandbox';
 
-const PHASES: [string, string][] = [['Locked', 'Approved requests only'], ['Learning', 'Allowed and recorded as approvals'], ['Open', 'Allowed, nothing learned']];
+const WRITES = ['POST', 'PUT', 'PATCH', 'DELETE'];
 
-function WebAccessCard({ws, now}: {ws: SandboxState; now: number}) {
-  const detail = ws.detail!, web = webAccess(detail)!;
-  const [minutes, setMinutes] = useState(String(WEB_WINDOWS.some(([m]) => m === web.minutes) ? web.minutes : 60));
-  const [busy, setBusy] = useState(false);
-  const run = async (form: {path: string; fields: Record<string, string>}, done: string) => { setBusy(true); await ws.act(form.path, form.fields, done); setBusy(false); };
-  const m = Number(minutes), phase = web.phase, open = phase !== 'Locked';
-  const description = phase === 'Open' ? `Open to the public web until ${clockAt(web.expires)}. Nothing is learned; locking removes this access.`
-    : phase === 'Learning' ? `Learning until ${clockAt(web.expires)}. Every request made now becomes an approval.`
-    : 'Locked to approved requests and provider hosts.';
-  return (
-    <section className={'card web-card' + (open ? ' is-open' : '')} aria-labelledby="web-access-title">
-      <div className="card-hd"><h2 id="web-access-title">Web access</h2>{open ? <span className="big-countdown" aria-label="Time left"><Countdown until={web.expires} now={now} /></span> : null}</div>
-      <div className="card-bd">
-        <ol className="phases" aria-label="Web access states">
-          {PHASES.map(([k, d]) => <li key={k} className={phase === k ? 'on ' + k : undefined} aria-current={phase === k ? 'step' : undefined}><strong>{k}</strong>{d}</li>)}
-        </ol>
-        {open ? <WindowBar until={web.expires} total={web.expires - web.started} now={now} tone={phase === 'Open' ? 'bad' : 'warn'} label="Share of the window left" /> : null}
-        <p><strong data-testid="sandbox-egress">{description}</strong> <span className="muted">Private networks, cluster services and cloud metadata stay blocked in every state. Changes apply on the next request.</span></p>
-        <div className="field"><span className="field-label" id="web-window">Window</span>
-          <ToggleGroup type="single" value={minutes} onValueChange={v => v && setMinutes(v)} aria-labelledby="web-window" className="durations">
-            {WEB_WINDOWS.map(([v, l]) => <ToggleItem key={v} value={String(v)} aria-label={'Window ' + l}>{l}</ToggleItem>)}
-          </ToggleGroup></div>
-      </div>
-      <div className="card-ft">
-        <Button variant="primary" disabled={busy} onClick={() => run(webOpen(m), 'web access opened')}>{phase === 'Open' ? 'Restart open window' : 'Open'}</Button>
-        <Button variant="secondary" disabled={busy} onClick={() => run(webLearn(m), 'learning window started')}>{phase === 'Learning' ? 'Restart learning' : 'Learn for this window'}</Button>
-        <Button variant="secondary" buttonType="destructive" disabled={busy || !open} onClick={() => run(webLock(m), 'web access locked')}>Lock</Button>
-        <span className="end"><Button variant="tertiary" size="small" buttonType="destructive" disabled={busy}
-          onClick={() => confirm('Start a fresh learning window? Every recorded request, approved or not, is deleted first.') && run(webStartFresh(m), 'fresh learning window started')}>Start fresh…</Button></span>
-      </div>
-    </section>
-  );
-}
-
-function RequestRow({o}: {o: Observation}) {
+function RequestCell({o}: {o: Observation}) {
   const fingerprints = o.fingerprints ?? 1;
   const details = [
     o.package ? `${o.package.ecosystem} ${o.package.name} ${o.package.version || ''}`.trim() : '',
     o.requests ? plural(o.requests, 'request') : '',
     fingerprints > 1 ? plural(fingerprints, 'request fingerprint') : '',
-    o.first && o.last && o.first !== o.last ? `first seen ${timeOf(o.first)}` : '',
-    o.last ? `last seen ${timeOf(o.last)}` : '',
   ].filter(Boolean);
-  return (
-    <div className="item-main">
-      <span className="request"><span className="method">{o.method}</span><code>{requestUrl(o)}</code></span>
-      {details.length ? <span className="subtle-text">{details.join(' · ')}</span> : null}
-    </div>
-  );
+  return <>
+    <span><span className="method">{o.method}</span><code>{requestUrl(o)}</code></span>
+    {details.length ? <span className="cell-sub">{details.join(', ')}</span> : null}
+  </>;
 }
+const seen = (o: Observation) => <>{o.last ? timeOf(o.last) : ''}{o.first && o.last && o.first !== o.last ? <span className="cell-sub">first {timeOf(o.first)}</span> : null}</>;
 
 // Per-page choice: the URL query first (shared links), then this browser.
 const SIZE_KEY = 'console.internet.pageSize';
@@ -157,159 +126,197 @@ function CapacityBanner({c, filter, busy, clear, dismiss}: {c: EgressCapacity; f
   );
 }
 
-function WebRules({ws, data}: {ws: SandboxState; data: Requests}) {
-  const [busy, setBusy] = useState('');
+// Runs one sandbox-control form per item, then refreshes once.
+async function each<T>(ws: SandboxState, items: T[], form: (item: T) => {path: string; fields: Record<string, string | string[]>}, done: string, toast: (t: string, e?: boolean) => void) {
+  let ok = 0;
+  for (const item of items) {
+    const f = form(item);
+    try { await sandboxAction(f.path, ws.id, f.fields); ok++; } catch (e) { toast(`${ws.id}: ${ok} of ${items.length} ${done}, then: ${(e as Error).message}`, true); await ws.reload(); return; }
+  }
+  toast(`${ws.id}: ${ok} ${done}`);
+  await ws.reload();
+}
+
+function WebRules({ws, data, now, reload}: {ws: SandboxState; data: Requests; now: number; reload: () => void}) {
+  const {toast} = useData();
+  const ask = useConfirm();
   const [adding, setAdding] = useState(false);
-  const [show, setShow] = useState<RuleSource>('all');
-  const {shown: rules, git, here} = rulesBySource(data.rules || [], show);
-  const remove = async (r: WebRule) => {
-    if (!confirm(`Remove the rule: ${r.description}?`)) return;
-    setBusy(r.id);
-    const f = removeRule(r);
-    await ws.act(f.path, f.fields, 'web rule removed');
-    setBusy('');
+  const rules = data.rules || [];
+  const {git} = rulesBySource(rules, 'all');
+  const expiry = (r: WebRule): Expiry => r.expires ? {at: Date.parse(r.expires)} : 'never';
+  const remove = async (list: WebRule[]) => {
+    if (!await ask(list.length === 1 ? 'Remove this web rule?' : `Remove ${list.length} web rules?`, <ul>{list.map(r => <li key={r.id}>{r.description}</li>)}</ul>, 'Remove')) return;
+    await each(ws, list, removeRule, 'web rules removed', toast);
+    reload();
   };
   return (
-    <section className="card" aria-labelledby="web-rules-title" data-testid="web-rules">
-      <div className="card-hd"><h2 id="web-rules-title">Web rules ({rules.length})</h2><span className="end"><Button size="small" variant="secondary" onClick={() => setAdding(!adding)}>{adding ? 'Close' : 'Add a web rule'}</Button></span></div>
-      <div className="card-bd">
-        <p className="subtle-text">Broad approvals: a path pattern, a whole domain, every subdomain, or a GitHub project. Each is one entry; removing it removes everything it allows. Private networks and cluster services stay blocked whatever a rule says. Every change is a policy revision.</p>
-        {git ? <p className="subtle-text">Show: {(['all', 'here', 'git'] as RuleSource[]).map(s => <Button key={s} size="small" variant={show === s ? 'secondary' : 'tertiary'} onClick={() => setShow(s)}>{s === 'all' ? `all (${git + here})` : s === 'here' ? `added here (${here})` : `from Git (${git})`}</Button>)} Rules from Git give read-only access to the source and docs of the projects this deployment uses; they are permanent and change only in Git.</p> : null}
-        {adding ? <AllowPanel ws={ws} free onDone={() => setAdding(false)} /> : null}
-      </div>
-      <ul className="items rows" aria-label="Web rules">
-        {rules.map(r => (
-          <li key={r.id}>
-            <div className="item-main">
-              <span className="request">{r.fromGit ? <Tag size="sm" variant="info" text="from Git" /> : null}{r.passthrough ? <Tag size="sm" variant="warning" text="uninspected" /> : null}{!r.active ? <Tag size="sm" text="expired" /> : null} <strong>{r.description}</strong></span>
-              <span className="subtle-text">{r.expires ? `${r.active ? 'until' : 'expired'} ${reportTime(r.expires)}` : 'permanent'} · {plural(r.requests, 'request')} allowed{r.lastUsed ? `, last ${reportTime(r.lastUsed)}` : ''} · added by {r.actor}</span>
-              {r.risks.length ? <ul className="risks">{r.risks.map(x => <li key={x}>{x}</li>)}</ul> : null}
-              <details><summary>{plural(r.rules.length, 'rule')} it allows</summary><ul className="rule-lines">{r.rules.map((l, i) => <li key={i}><code>{l.methods.length ? l.methods.join(', ') : 'any method'} {l.host}{l.path}</code> <span className="subtle-text">{l.purpose}</span></li>)}</ul></details>
-            </div>
-            {r.fromGit ? <span className="subtle-text">managed in Git: {r.source}</span> : <Button size="small" variant="secondary" buttonType="destructive" disabled={busy === r.id} onClick={() => remove(r)}>Remove</Button>}
-          </li>
-        ))}
-        {!rules.length ? <li className="empty-item">No web rules yet. Use “More ways to allow” on a waiting request.</li> : null}
-      </ul>
-      {data.ruleHistory?.length ? <details className="pad"><summary>Rule history</summary><ul className="rule-lines">{data.ruleHistory.map((e, i) => <li key={i}>{reportTime(e.at)} · {e.action} · {e.description} · {e.by}{e.detail ? ' · ' + e.detail : ''}</li>)}</ul></details> : null}
-      {data.tools ? <details className="pad" id="passthrough-tools"><summary>Clients that may need pass-through without inspection</summary><p className="subtle-text">{data.tools.note}</p>
-        <ul className="rule-lines">{data.tools.tools.map(t => <li key={t.name}><strong>{t.name}</strong> <Tag size="sm" text={t.evidence} /><br />{t.problem}{t.alternative ? <><br />Instead: {t.alternative}</> : null}{t.source ? <><br /><span className="subtle-text">Source: {t.source}</span></> : null}</li>)}</ul></details> : null}
-    </section>
+    <GrantTable<WebRule> title={`Web rules (${rules.length})`} label="Web rules" testId="web-rules" now={now} rows={rules} rowKey={r => r.id} rowLabel={r => r.description}
+      intro={<>
+        <p>Broad approvals: a path pattern, a whole domain, every subdomain or a GitHub project. Removing one removes everything it allows. Private networks and cluster services stay blocked whatever a rule says.{git ? ' Rules from Git give read-only access to the source and docs of the projects this deployment uses; they change only in Git.' : ''}</p>
+        {adding ? <AllowPanel ws={ws} free onDone={() => { setAdding(false); reload(); }} /> : null}
+      </>}
+      toolbar={<Button size="small" variant="secondary" onClick={() => setAdding(!adding)}>{adding ? 'Close' : 'Add a web rule'}</Button>}
+      search={{placeholder: 'github.com', label: 'Search rules', text: r => r.description + ' ' + r.host + ' ' + r.path + ' ' + r.owner + '/' + r.repo}}
+      filters={[
+        {key: 'here', label: 'Added here', test: r => !r.fromGit},
+        {key: 'git', label: 'From Git', test: r => Boolean(r.fromGit)},
+        {key: 'standard', label: 'Standard level', test: r => Boolean(presetOf(r))},
+        {key: 'uninspected', label: 'Uninspected', test: r => r.passthrough},
+        {key: 'expired', label: 'Expired', test: r => !r.active},
+      ]}
+      bulk={[{key: 'remove', label: 'Remove selected', danger: true, applies: r => !r.fromGit, run: remove}]}
+      columns={[
+        {key: 'rule', label: 'Rule', cell: r => <>
+          <span className="tags">{r.fromGit ? <Tag size="sm" variant="info" text="from Git" /> : null}{presetOf(r) ? <Tag size="sm" text="Standard" /> : null}{r.passthrough ? <Tag size="sm" variant="warning" text="uninspected" /> : null}{!r.active ? <Tag size="sm" text="expired" /> : null}</span>
+          <strong>{r.description}</strong>
+          {r.risks.length ? <ul className="risks">{r.risks.map(x => <li key={x}>{x}</li>)}</ul> : null}
+        </>},
+        {key: 'use', label: 'Used', cell: r => <>{plural(r.requests, 'request')}{r.lastUsed ? <span className="cell-sub">last {reportTime(r.lastUsed)}</span> : null}</>},
+        {key: 'by', label: 'Added by', cell: r => r.fromGit ? <span className="subtle">Git: {r.source}</span> : r.actor},
+      ]}
+      expiry={expiry}
+      actions={(r, row) => <>
+        <Button size="small" variant="tertiary" aria-expanded={row.expanded} onClick={row.toggle}>{row.expanded ? 'Hide' : 'Details'}</Button>
+        {r.fromGit ? null : <Button size="small" variant="secondary" buttonType="destructive" onClick={() => remove([r])}>Remove</Button>}
+      </>}
+      detail={r => <ul className="rule-lines">{r.rules.map((l, i) => <li key={i}><code>{l.methods.length ? l.methods.join(', ') : 'any method'} {l.host}{l.path}</code> <span className="subtle-text">{l.purpose}</span></li>)}</ul>}
+      empty={{title: 'No web rules yet.', hint: 'Choose the Standard level above for the common registries, use More ways to allow on a waiting request, or add a rule here.', action: <Button size="small" variant="secondary" onClick={() => setAdding(true)}>Add a web rule</Button>}}
+      footer={<>
+        {data.ruleHistory?.length ? <details><summary>Rule history</summary><ul className="rule-lines">{data.ruleHistory.map((e, i) => <li key={i}>{reportTime(e.at)}: {e.action}, {e.description}, by {e.by}{e.detail ? '. ' + e.detail : ''}</li>)}</ul></details> : null}
+        {data.tools ? <details id="passthrough-tools"><summary>Clients that may need pass-through without inspection</summary><p className="subtle-text">{data.tools.note}</p>
+          <ul className="rule-lines">{data.tools.tools.map(t => <li key={t.name}><strong>{t.name}</strong> <Tag size="sm" text={t.evidence} /><br />{t.problem}{t.alternative ? <><br />Instead: {t.alternative}</> : null}{t.source ? <><br /><span className="subtle-text">Source: {t.source}</span></> : null}</li>)}</ul></details> : null}
+      </>}
+    />
   );
 }
 
-function RequestLists({ws, data, setData}: {ws: SandboxState; data: Requests | null; setData: (r: Requests) => void}) {
+function RequestLists({ws, data, setData, now, version}: {ws: SandboxState; data: Requests | null; setData: (r: Requests) => void; now: number; version: number}) {
   const {toast} = useData();
+  const ask = useConfirm();
   const detail = ws.detail!;
   const [tab, setTab] = useState<'pending' | 'approved'>('pending');
   const initialFilter = hashQuery().get('q') || '';
   const [query, setQuery] = useState(initialFilter), [filter, setFilter] = useState(initialFilter);
   const [page, setPage] = useState(initialPage), [size, setSize] = useState(initialSize);
-  const [jump, setJump] = useState('');
   const [busy, setBusy] = useState('');
-  const [open, setOpen] = useState('');
   const load = useCallback(async () => { try { setData(await loadRequests(detail.id, filter, page, size)); } catch (e) { toast((e as Error).message, true); } }, [detail.id, filter, page, size, toast, setData]);
-  useEffect(() => { load(); }, [load, detail.egressCounts?.pending, detail.egressCounts?.approved, detail.learning?.phase, ws.detail?.revision.id]);
+  useEffect(() => { load(); }, [load, detail.egressCounts?.pending, detail.egressCounts?.approved, detail.learning?.phase, ws.detail?.revision.id, version]);
   useEffect(() => { const t = window.setInterval(load, 30000); return () => window.clearInterval(t); }, [load]);
   useEffect(() => { const t = window.setTimeout(() => { if (query.trim() !== filter) { setFilter(query.trim()); setPage(1); } }, 300); return () => window.clearTimeout(t); }, [query, filter]);
   // Filter, page and size live in the URL, so a reload or a shared link keeps them.
   useEffect(() => { replaceHashQuery({q: filter, page: page > 1 ? page : undefined, size: size !== DEFAULT_PAGE_SIZE ? size : undefined}); }, [filter, page, size]);
   const learning = detail.learning?.phase === 'Learning';
-  const decide = async (o: Observation, approve: boolean) => {
-    setBusy(o.observation);
-    const f = decideRequest(o, approve);
-    if (await ws.act(f.path, f.fields, approve ? 'request approved' : 'request revoked')) await load();
+  const decide = async (list: Observation[], approve: boolean) => {
+    if (!approve && !await ask(list.length === 1 ? 'Revoke this approval?' : `Revoke ${list.length} approvals?`, <p>The sandbox can no longer make {list.length === 1 ? 'this request' : 'these requests'} until approved again.</p>, 'Revoke')) return;
+    setBusy('decide');
+    await each(ws, list, o => decideRequest(o, approve), approve ? 'requests approved' : 'approvals revoked', toast);
+    await load();
     setBusy('');
   };
   const clear = async () => {
-    if (!data || !confirm(`Clear all ${data.pending.total} unapproved requests? They stay blocked; new ones are listed again when seen.`)) return;
+    if (!data || !await ask(`Clear all ${data.pending.total} unapproved requests?`, <p>They stay blocked; new ones are listed again when seen.</p>, 'Clear')) return;
     setBusy('clear');
     const f = clearUnapproved();
     if (await ws.act(f.path, f.fields, 'unapproved requests cleared')) await load();
     setBusy('');
   };
   const dismiss = async (days: number) => {
-    if (!confirm(`Dismiss waiting requests not seen for ${plural(days, 'day')}? Nothing is approved.`)) return;
+    if (!await ask(`Dismiss waiting requests not seen for ${plural(days, 'day')}?`, <p>Nothing is approved.</p>, 'Dismiss')) return;
     setBusy('clear');
     const f = dismissOlder(days);
     if (await ws.act(f.path, f.fields, 'old waiting requests dismissed')) await load();
     setBusy('');
+  };
+  const startFresh = async () => {
+    if (!await ask('Start a fresh learning window?', <p className="danger-box">Every recorded request, approved or not, is deleted first. Then every request is allowed and recorded for 1 hour.</p>, 'Delete and start learning')) return;
+    const f = webStartFresh(60);
+    await ws.act(f.path, f.fields, 'fresh learning window started');
   };
   const current = data ? data[tab] : null;
   const shown = current ? pageOf(current, page, size) : null;
   const go = (p: number) => { if (shown) setPage(Math.min(Math.max(1, p), shown.pages)); };
   const resize = (next: number) => {
     try { localStorage.setItem(SIZE_KEY, String(next)); } catch { /* private mode */ }
-    // Stay near the same items: the page that holds the first one shown.
     setPage(pageKeeping(shown?.from || 1, next));
     setSize(next);
   };
+  const pending = tab === 'pending';
   return (
-    <section className="card" aria-label="Web requests" data-testid={tab === 'pending' ? 'pending-requests' : 'approved-requests'}>
-      <Tabs value={tab} onValueChange={v => { setTab(v as 'pending' | 'approved'); setPage(1); }} className="inner-tabs">
-        <TabsList aria-label="Requests">
-          <TabsTrigger value="pending" text={`Awaiting approval (${data?.pending.total ?? detail.egressCounts?.pending ?? 0})`} />
-          <TabsTrigger value="approved" text={`Approved (${data?.approved.total ?? detail.egressCounts?.approved ?? 0})`} />
-        </TabsList>
-      </Tabs>
-      <div className="card-hd">
-        <div className="field grow"><label className="field-label" htmlFor="observation-filter">Filter by host or path</label>
-          <Input id="observation-filter" value={query} placeholder="api.example.com" autoCapitalize="off" spellCheck={false} onChange={e => setQuery(e.target.value)} /></div>
-        {tab === 'pending' && data?.pending.total && !filter ? <Button variant="secondary" buttonType="destructive" size="small" disabled={busy === 'clear'} onClick={clear}>Clear unapproved requests</Button> : null}
-      </div>
-      {tab === 'pending' && data?.capacity ? <CapacityBanner c={data.capacity} filter={filter} busy={busy === 'clear'} clear={clear} dismiss={dismiss} /> : null}
-      {!shown || !current ? <p className="empty pad">Loading requests…</p> : (
-        <ul className="items rows" aria-label={tab === 'pending' ? 'Requests awaiting approval' : 'Approved requests'}>
-          {shown.rows.map(o => (
-            <li key={o.observation} className={open === o.observation ? 'expanded' : undefined}>
-              <RequestRow o={o} />
-              {tab === 'pending' ? <span className="row-actions">
-                <Button size="small" variant="primary" disabled={busy === o.observation} onClick={() => decide(o, true)}>{(o.fingerprints ?? 1) > 1 ? `Approve all ${o.fingerprints!.toLocaleString()}` : 'Approve'}</Button>
-                {o.allow ? <Button size="small" variant="secondary" aria-expanded={open === o.observation} onClick={() => setOpen(open === o.observation ? '' : o.observation)}>More ways to allow…</Button> : null}
-              </span>
-                : <Button size="small" variant="secondary" buttonType="destructive" disabled={learning || busy === o.observation} title={learning ? 'Revoking is available once the learning window ends' : undefined} onClick={() => decide(o, false)}>Revoke</Button>}
-              {open === o.observation && o.allow ? <AllowPanel ws={ws} allow={o.allow} onDone={() => { setOpen(''); load(); }} /> : null}
-            </li>
-          ))}
-          {!shown.rows.length ? <li className="empty-item">{filter ? `Nothing matches “${filter}”.` : tab === 'pending' ? 'No requests awaiting approval.' : 'No approved requests yet.'}</li> : null}
-        </ul>
-      )}
-      {shown && current ? (
-        <nav className="pager" aria-label={tab === 'pending' ? 'Pages of requests awaiting approval' : 'Pages of approved requests'}>
-          <Button size="small" variant="secondary" disabled={shown.page <= 1} onClick={() => go(1)}>First</Button>
-          <Button size="small" variant="secondary" disabled={shown.page <= 1} onClick={() => go(shown.page - 1)}>Previous</Button>
-          <span className="subtle-text" aria-live="polite">{shown.total ? `${shown.from}–${shown.to} of ${shown.total.toLocaleString()} · page ${shown.page} of ${shown.pages}` : '0'}{current.truncated ? ` (newest ${current.items.length} of ${current.total.toLocaleString()})` : ''}</span>
-          <Button size="small" variant="secondary" disabled={shown.page >= shown.pages} onClick={() => go(shown.page + 1)}>Next</Button>
-          <Button size="small" variant="secondary" disabled={shown.page >= shown.pages} onClick={() => go(shown.pages)}>Last</Button>
-          <label className="field inline"><span className="field-label">Per page</span>
-            <select className="select" value={size} onChange={e => resize(pageSize(e.target.value))}>{PAGE_SIZES.map(n => <option key={n} value={n}>{n}</option>)}</select></label>
-          <form className="field inline" onSubmit={e => { e.preventDefault(); const n = Number(jump); if (n) go(n); setJump(''); }}>
-            <label className="field-label" htmlFor="page-jump">Go to page</label>
-            <Input id="page-jump" type="number" min={1} max={shown.pages} inputMode="numeric" value={jump} placeholder={String(shown.page)} onChange={e => setJump(e.target.value)} />
-            <Button size="small" variant="tertiary" type="submit">Go</Button>
-          </form>
-          <span className="end subtle-text">{tab === 'approved' && learning ? 'Revoking is available once the learning window ends.' : 'Grouped by method and URL; a new query or body needs approval again.'}</span>
-        </nav>
-      ) : null}
-    </section>
+    <div data-testid={pending ? 'pending-requests' : 'approved-requests'}>
+      <GrantTable<Observation> now={now} loading={!shown}
+        title={<Tabs value={tab} onValueChange={v => { setTab(v as 'pending' | 'approved'); setPage(1); }} className="inner-tabs">
+          <TabsList aria-label="Requests">
+            <TabsTrigger value="pending" text={`Awaiting approval (${data?.pending.total ?? detail.egressCounts?.pending ?? 0})`} />
+            <TabsTrigger value="approved" text={`Approved (${data?.approved.total ?? detail.egressCounts?.approved ?? 0})`} />
+          </TabsList>
+        </Tabs>}
+        label={pending ? 'Requests awaiting approval' : 'Approved requests'}
+        rows={shown?.rows || []} rowKey={o => o.observation} rowLabel={o => o.method + ' ' + requestUrl(o)}
+        toolbar={pending ? (data?.pending.total && !filter ? <Button variant="secondary" buttonType="destructive" size="small" disabled={busy === 'clear'} onClick={clear}>Clear unapproved</Button> : null)
+          : <Button variant="tertiary" buttonType="destructive" size="small" onClick={startFresh}>Start fresh…</Button>}
+        intro={pending && data?.capacity ? <CapacityBanner c={data.capacity} filter={filter} busy={busy === 'clear'} clear={clear} dismiss={dismiss} /> : null}
+        search={{placeholder: 'api.example.com', label: 'Filter by host or path', value: query, onChange: setQuery}}
+        filters={[
+          {key: 'packages', label: 'Packages', test: o => Boolean(o.package?.name)},
+          {key: 'writes', label: 'Sends data', test: o => WRITES.includes(o.method)},
+        ]}
+        bulk={pending ? [{key: 'approve', label: 'Approve selected', run: rows => decide(rows, true)}]
+          : [{key: 'revoke', label: learning ? 'Revoke (after learning ends)' : 'Revoke selected', danger: true, applies: () => !learning, run: rows => decide(rows, false)}]}
+        columns={[
+          {key: 'request', label: 'Request', cell: o => <RequestCell o={o} />},
+          {key: 'seen', label: 'Last seen', cell: seen},
+        ]}
+        expiry={pending ? undefined : () => ({note: 'Until revoked'})}
+        actions={(o, row) => pending ? <>
+          <Button size="small" variant="primary" disabled={busy === 'decide'} onClick={() => decide([o], true)}>{(o.fingerprints ?? 1) > 1 ? `Approve all ${o.fingerprints!.toLocaleString()}` : 'Approve'}</Button>
+          {o.allow ? <Button size="small" variant="secondary" aria-expanded={row.expanded} onClick={row.toggle}>More ways…</Button> : null}
+        </> : <Button size="small" variant="secondary" buttonType="destructive" disabled={learning || busy === 'decide'} title={learning ? 'Revoking is available once the learning window ends' : undefined} onClick={() => decide([o], false)}>Revoke</Button>}
+        detail={o => pending && o.allow ? <AllowPanel ws={ws} allow={o.allow} onDone={() => load()} /> : null}
+        empty={pending
+          ? {title: 'No requests awaiting approval.', hint: 'Blocked requests appear here for you to approve. The sandbox is not asking for anything right now.'}
+          : {title: 'No approved requests yet.', hint: 'Approve requests as they arrive, or open with learning to record what a task uses.'}}
+        footer={shown && current ? (
+          <nav className="pager" aria-label={pending ? 'Pages of requests awaiting approval' : 'Pages of approved requests'}>
+            <Button size="small" variant="secondary" disabled={shown.page <= 1} onClick={() => go(1)}>First</Button>
+            <Button size="small" variant="secondary" disabled={shown.page <= 1} onClick={() => go(shown.page - 1)}>Previous</Button>
+            <span className="subtle-text" aria-live="polite">{shown.total ? `${shown.from} to ${shown.to} of ${shown.total.toLocaleString()}, page ${shown.page} of ${shown.pages}` : 'None'}{current.truncated ? ` (newest ${current.items.length} of ${current.total.toLocaleString()})` : ''}</span>
+            <Button size="small" variant="secondary" disabled={shown.page >= shown.pages} onClick={() => go(shown.page + 1)}>Next</Button>
+            <Button size="small" variant="secondary" disabled={shown.page >= shown.pages} onClick={() => go(shown.pages)}>Last</Button>
+            <label className="field inline"><span className="field-label">Per page</span>
+              <select className="select" value={size} onChange={e => resize(pageSize(e.target.value))}>{PAGE_SIZES.map(n => <option key={n} value={n}>{n}</option>)}</select></label>
+            <span className="end subtle-text">{!pending && learning ? 'Revoking is available once the learning window ends.' : 'Grouped by method and URL; a new query or body needs approval again.'}</span>
+          </nav>
+        ) : null}
+      />
+    </div>
   );
 }
 
 export function Internet({ws, now}: {ws: SandboxState; now: number}) {
   const detail = ws.detail!;
   const [data, setData] = useState<Requests | null>(null);
+  const [version, setVersion] = useState(0);
+  const reload = useCallback(() => setVersion(v => v + 1), []);
   if (!webAccess(detail)) return (
     <div className="stack">
-      <SectionIntro title="Internet">This sandbox uses fixed policy rules. Instant open and lock are available for sandboxes with learning egress.</SectionIntro>
+      <SectionIntro title="Internet">This sandbox uses fixed policy rules from Git. Access levels apply to sandboxes with learning egress.</SectionIntro>
       <Card variant="sunk" width="full"><CardHeader title="Fixed rules" subtitle="The console has no read API for this sandbox's rules yet." /><p><a href={classicHref(detail.id, 'access')}>View and edit the rules on the classic page</a></p></Card>
     </div>
   );
+  const fineGrained = <ul aria-label="Fine-grained access">
+    <li className="label">Fine-grained:</li>
+    <li><a href="#web-requests">Requests</a></li>
+    <li><a href="#web-rules">Web rules</a></li>
+    <li><a href={sandboxHref(detail.id, 'lan')}>LAN devices</a></li>
+    <li><a href={sandboxHref(detail.id, 'packages')}>Packages</a></li>
+    <li><a href={sandboxHref(detail.id, 'credentials')}>Credentials</a></li>
+  </ul>;
   return (
     <div className="stack">
-      <WebAccessCard key={detail.id} ws={ws} now={now} />
-      <RequestLists key={'r' + detail.id} ws={ws} data={data} setData={setData} />
-      {data?.rules ? <WebRules ws={ws} data={data} /> : null}
-      {detail.providerHosts.length ? <p className="subtle-text">Provider hosts are always reachable: {detail.providerHosts.map(h => <Tag key={h} size="sm" text={h} className="inline-tag" />)}</p> : null}
+      <SandboxAccessLevels ws={ws} now={now} data={data} onChanged={reload} fineGrained={fineGrained} />
+      <div id="web-requests"><RequestLists key={'r' + detail.id} ws={ws} data={data} setData={setData} now={now} version={version} /></div>
+      <div id="web-rules">{data?.rules ? <WebRules ws={ws} data={data} now={now} reload={reload} /> : data ? <Callout variant="neutral" description="This sandbox-control release has no web rules; approve requests one by one." /> : null}</div>
     </div>
   );
 }
+

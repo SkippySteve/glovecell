@@ -2,13 +2,10 @@ import {useEffect, useState, type FormEvent} from 'react';
 import {api, type Project as ProjectWorkspace} from './api';
 import {useData} from './data';
 import {LanHostList} from './LanHosts';
-import {ReferenceRules} from './Reference';
-import {newRule, RuleList, rulesError, toDraft, toRule, type RuleDraft} from './Rules';
 import {pausedForEdits, projectState, settled} from './state';
+import {ruleDrafts as drafts} from './workspace/sources/drafts';
 import {Button, Callout, Card, CardHeader, Input, Tag} from './ui';
 
-// Edits survive polling and tab switches until saved or discarded.
-const drafts = new Map<string, {rules: RuleDraft[]; resourceVersion?: string}>();
 
 function useLifecycle(p: ProjectWorkspace) {
   const {reload, toast} = useData();
@@ -131,51 +128,6 @@ export function ProjectRepositories({p}: {p: ProjectWorkspace}) {
           </Card>
         </form>
       )}
-    </div>
-  );
-}
-
-export function ProjectInternet({p}: {p: ProjectWorkspace}) {
-  const {reload, toast} = useData();
-  const name = p.metadata.name, canEdit = pausedForEdits(p);
-  const [state, setState] = useState(() => drafts.get(name) || {rules: (p.spec.https || []).map(toDraft), resourceVersion: undefined});
-  const [saving, setSaving] = useState(false);
-  const dirty = drafts.has(name);
-  // Without local edits, show the latest saved rules.
-  useEffect(() => { if (!drafts.has(name)) setState({rules: (p.spec.https || []).map(toDraft), resourceVersion: undefined}); }, [name, p.spec.https]);
-  const change = (rules: RuleDraft[]) => { const next = {rules, resourceVersion: state.resourceVersion || p.metadata.resourceVersion}; drafts.set(name, next); setState(next); };
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    const problem = rulesError(state.rules);
-    if (problem) { toast(problem, true); return; }
-    setSaving(true);
-    try {
-      await api('workspaces/' + encodeURIComponent(name) + '/access', 'PATCH', {resourceVersion: state.resourceVersion || p.metadata.resourceVersion, https: state.rules.map(toRule)});
-      drafts.delete(name); toast(name + ': access update requested. The project remains paused.');
-      await reload();
-    } catch (error) { toast((error as Error).message, true); }
-    finally { setSaving(false); }
-  };
-  return (
-    <div className="stack">
-      <Callout variant="info" description="Console projects use fixed HTTPS rules enforced by their own proxy, so changes need the sandbox paused. For instant open and lock, use a sandbox-control sandbox from the Sandboxes list. Private networks, localhost and cloud metadata are blocked for HTTPS; LAN devices are the only direct exception." />
-      <form onSubmit={submit} className="access-form">
-        <Card variant="sunk" width="full">
-          <CardHeader title="Outbound HTTPS" subtitle="Only listed hosts, methods and path prefixes are allowed. A path of / permits the whole host. Registry rules permit downloads, not specific package versions." />
-          {!canEdit && p.spec.desiredState !== 'Removed' ? <div className="callout-row"><Callout variant="warning" title="Pause to change access" description="Pause the sandbox and wait for Paused to edit these rules. Saving keeps it paused until you choose Resume." />{p.spec.desiredState === 'Running' ? <LifecycleButton p={p} size="small" /> : null}</div> : null}
-          <RuleList rules={state.rules} disabled={!canEdit} onChange={change} empty="No additional HTTPS destinations are allowed." />
-          {canEdit ? (
-            <div className="card-foot">
-              <Button type="button" variant="secondary" size="small" onClick={() => change([...state.rules, newRule()])}>+ Add destination</Button>
-              <div className="actions">
-                {dirty ? <Button type="button" variant="tertiary" onClick={() => { drafts.delete(name); setState({rules: (p.spec.https || []).map(toDraft), resourceVersion: undefined}); }}>Discard changes</Button> : null}
-                <Button type="submit" variant="primary" disabled={saving}>Save access</Button>
-              </div>
-            </div>
-          ) : null}
-        </Card>
-      </form>
-      <ReferenceRules />
     </div>
   );
 }

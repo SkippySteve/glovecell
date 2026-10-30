@@ -179,7 +179,7 @@ func TestReferenceRulesRefuseDriftAndProjectLabels(t *testing.T) {
 	}
 	// A project's own rules cannot carry a source label.
 	w.Spec.HTTPS = []api.HTTPSRule{{Host: "docs.example.com", Methods: []string{"GET"}, Paths: []string{"/"}, Source: "git:x#y"}}
-	if _, err := r.policyConfiguration(w, w.Spec.HTTPS); err == nil {
+	if _, err := r.policyConfiguration(context.Background(), w, w.Spec.HTTPS); err == nil {
 		t.Fatal("project rule with a source label accepted")
 	}
 }

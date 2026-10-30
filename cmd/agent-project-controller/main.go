@@ -35,8 +35,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -367,6 +369,16 @@ func run(ctx context.Context) error {
 	} else if os.Getenv("ADDITIONAL_GITHUB_OWNER") != "" {
 		return errors.New("additional GitHub owner requires a trusted repository token")
 	}
+	// Lifecycle Events (events.k8s.io/v1) regarding each workspace replace
+	// the deprecated status.audit list (D12).
+	clientset, e := kubernetes.NewForConfig(config)
+	if e != nil {
+		return e
+	}
+	broadcaster := events.NewBroadcaster(&events.EventSinkImpl{Interface: clientset.EventsV1()})
+	broadcaster.StartRecordingToSink(ctx.Done())
+	defer broadcaster.Shutdown()
+	reconciler.Events = broadcaster.NewRecorder(scheme, controller.EventReportingController)
 	reconciler.IndependentCodexWorkspaceUID = os.Getenv("INDEPENDENT_CODEX_WORKSPACE_UID")
 	reconciler.MuseSubscriptionKeyFile = os.Getenv("MUSE_SUBSCRIPTION_KEY_FILE")
 	if reconciler.ProviderLeases, e = providerLeasesFromEnv(networkProvider); e != nil {

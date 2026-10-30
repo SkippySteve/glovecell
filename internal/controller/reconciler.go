@@ -41,9 +41,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 var sandboxGVK = schema.GroupVersionKind{Group: "agents.x-k8s.io", Version: "v1beta1", Kind: "Sandbox"}
@@ -145,6 +148,9 @@ type Reconciler struct {
 	// ProviderLeases is the trusted Secret the provider broker writes; nil
 	// turns spec.providers off (see providers.go).
 	ProviderLeases *types.NamespacedName
+	// Events publishes lifecycle Events (events.k8s.io/v1) regarding each
+	// workspace (events.go). Nil publishes nothing.
+	Events events.EventRecorder
 }
 
 var duration, _ = otel.Meter("agent-project-controller").Float64Histogram("workspace.reconcile.duration", metric.WithUnit("s"))
@@ -182,7 +188,31 @@ func (r *Reconciler) Setup(m ctrl.Manager) error {
 	if e != nil {
 		return e
 	}
-	return ctrl.NewControllerManagedBy(m).For(&api.ProjectWorkspace{}).Complete(r)
+	// A grant change or expiry, and a profile edit, reconcile the cells concerned.
+	grantCell := handler.EnqueueRequestsFromMapFunc(func(_ context.Context, o client.Object) []reconcile.Request {
+		g, ok := o.(*api.AccessGrant)
+		if !ok || g.Namespace != r.Config.Namespace || g.Spec.Cell == "" {
+			return nil
+		}
+		return []reconcile.Request{{NamespacedName: types.NamespacedName{Namespace: g.Namespace, Name: g.Spec.Cell}}}
+	})
+	profileCells := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, o client.Object) []reconcile.Request {
+		var list api.ProjectWorkspaceList
+		if err := r.List(ctx, &list, client.InNamespace(r.Config.Namespace)); err != nil {
+			return nil
+		}
+		var out []reconcile.Request
+		for _, w := range list.Items {
+			if w.Spec.AccessProfileName == o.GetName() {
+				out = append(out, reconcile.Request{NamespacedName: types.NamespacedName{Namespace: w.Namespace, Name: w.Name}})
+			}
+		}
+		return out
+	})
+	return ctrl.NewControllerManagedBy(m).For(&api.ProjectWorkspace{}).
+		Watches(&api.AccessGrant{}, grantCell).
+		Watches(&api.AccessProfile{}, profileCells).
+		Complete(r)
 }
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ctrl.Result, err error) {
 	started := time.Now()
@@ -343,10 +373,14 @@ func (r *Reconciler) validate(ctx context.Context, w *api.ProjectWorkspace) erro
 	if e := r.Get(ctx, types.NamespacedName{Name: r.Config.RuntimeClass}, runtime); e != nil {
 		return errors.New("configured isolation runtime unavailable")
 	}
-	if _, e := r.policyConfiguration(w, w.Spec.HTTPS); e != nil {
+	if _, e := r.policyConfiguration(ctx, w, w.Spec.HTTPS); e != nil {
 		return e
 	}
-	if e := r.validateLANHosts(w); e != nil {
+	hosts, _, e := r.effectiveLAN(ctx, w)
+	if e != nil {
+		return e
+	}
+	if e := r.validateLANHosts(hosts); e != nil {
 		return e
 	}
 	return r.validateProviders(w)
@@ -374,7 +408,13 @@ func (r *Reconciler) auditDetails(ctx context.Context, w *api.ProjectWorkspace, 
 	for key, value := range details {
 		data[key] = value
 	}
-	return r.Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: r.Config.Namespace, Labels: labels(w)}, Immutable: &immutable, Data: data})
+	record := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: r.Config.Namespace, Labels: labels(w)}, Immutable: &immutable, Data: data}
+	if e = r.Create(ctx, record); e != nil {
+		return e
+	}
+	// Published once, when the durable record is first written.
+	r.auditRecordEvent(w, record, action, details["message"])
+	return nil
 }
 func (r *Reconciler) status(ctx context.Context, w *api.ProjectWorkspace, phase string, ready bool, reason, message string) error {
 	old := w.DeepCopyObject().(*api.ProjectWorkspace)
@@ -385,15 +425,21 @@ func (r *Reconciler) status(ctx context.Context, w *api.ProjectWorkspace, phase 
 			return e
 		}
 	}
+	// Lifecycle history goes to Events, not status.audit (deprecated: kept
+	// readable, never appended). One Event per transition: a phase change,
+	// or a new reason or message on a not-ready condition in the same phase.
 	if w.Status.Phase != phase {
 		if e := r.audit(ctx, w, "phase-"+strings.ToLower(phase)); e != nil {
 			return e
 		}
-		w.Status.Audit = append(w.Status.Audit, api.AuditEvent{Time: metav1.Now(), Action: phase, Generation: w.Generation})
 		slog.InfoContext(ctx, "workspace phase changed", "workspace_uid", string(w.UID), "generation", w.Generation, "phase", phase, "trace_id", trace.SpanContextFromContext(ctx).TraceID().String())
-		if len(w.Status.Audit) > 32 {
-			w.Status.Audit = w.Status.Audit[len(w.Status.Audit)-32:]
+		from := w.Status.Phase
+		if from == "" {
+			from = "Requested"
 		}
+		r.event(w, nil, phaseEventType(phase, reason), reason, ActionChangePhase, fmt.Sprintf("Phase %s -> %s (generation %d): %s", from, phase, w.Generation, message))
+	} else if !ready && (previous == nil || previous.Reason != reason || previous.Message != message) {
+		r.event(w, nil, phaseEventType(phase, reason), reason, ActionUpdateCondition, fmt.Sprintf("%s (generation %d): %s", phase, w.Generation, message))
 	}
 	w.Status.Phase = phase
 	w.Status.Namespace = namespace(w)
@@ -1253,7 +1299,7 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 	if e != nil {
 		return e
 	}
-	cfg, e := r.policyConfiguration(w, w.Spec.HTTPS)
+	cfg, e := r.policyConfiguration(ctx, w, w.Spec.HTTPS)
 	if e != nil {
 		return e
 	}

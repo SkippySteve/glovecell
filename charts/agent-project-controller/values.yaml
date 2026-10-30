@@ -13,6 +13,17 @@ additionalGitHub:
   tokenKey: token
 automationAPI:
   enabled: false
+# The default AccessProfiles (locked, ask, standard, open, custom; docs/access-levels.md).
+# locked is the cluster default for new cells. Set false to manage profiles yourself.
+accessProfiles:
+  install: true
+# Longest AccessGrant per type, enforced by an admission policy from the
+# grant's creation time (whole hours or minutes). Profiles may set less.
+accessGrants:
+  maxDuration:
+    internet: 8h
+    lan: 24h
+    package: 720h
 config:
   # network-policy is experimental and requires independent dataplane qualification.
   NETWORK_PROVIDER: cilium
@@ -69,6 +80,13 @@ config:
   OIDC_SCOPES: profile,groups
   ALLOW_STATIC_LOGIN: 'false'
   OTEL_ENABLED: 'false'
+# ValidatingAdmissionPolicies (admissionregistration.k8s.io/v1, Kubernetes
+# 1.30+) that refuse invalid ProjectWorkspace requests at the API server,
+# with deployment settings from the admission-params ConfigMap (README
+# "Admission policies"). The controller repeats every check. Disable only on
+# a cluster without the API; that leaves the controller's checks alone.
+admissionPolicies:
+  enabled: true
 controllerResources:
   requests:
     cpu: 100m
