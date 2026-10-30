@@ -12,22 +12,12 @@ import type {RunRecord} from './record';
 import {Button, Callout, Card, CardHeader, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tag} from './ui';
 
 
-function Crumbs({id}: {id?: string}) {
-  return (
-    <nav className="crumbs" aria-label="Breadcrumb">
-      <a href="#/">Sandboxes</a><span aria-hidden="true">/</span>
-      {id ? <><a href={runHref()}>Runs</a><span aria-hidden="true">/</span><span>{id}</span></> : <span>Runs</span>}
-    </nav>
-  );
-}
-
 export function RunList() {
   const {toast} = useData();
   const [runs, setRuns] = useState<RunSummary[] | null>(null);
   useEffect(() => { document.title = 'Runs · Sandboxes'; listRuns().then(setRuns).catch(error => { setRuns([]); toast((error as Error).message, true); }); }, [toast]);
   return (
     <div className="stack">
-      <Crumbs />
       <div className="page-head"><div><h1>Runs</h1><p className="muted">Orchestration runs collected from the factory, newest first. Each report is built from the run's recorded facts.</p></div></div>
       {runs === null ? <p className="empty">Loading runs…</p> : !runs.length ? (
         <Card variant="sunk" width="full" className="empty-card"><CardHeader title="No runs collected yet" subtitle="Runs appear here once the collector publishes a run record." /></Card>
@@ -70,12 +60,11 @@ export function RunReport({id}: {id: string}) {
     setDecision({gateId: gate.id, question: gate.question, option, command: gateCommand(record, gate.id, option)});
   };
 
-  if (error) return <div className="stack"><Crumbs id={id} /><Callout variant="danger" title="Run unavailable" description={error} /></div>;
-  if (!record || report === null) return <div className="stack"><Crumbs id={id} /><p className="empty">Loading run…</p></div>;
+  if (error) return <div className="stack"><Callout variant="danger" title="Run unavailable" description={error} /></div>;
+  if (!record || report === null) return <div className="stack"><p className="empty">Loading run…</p></div>;
   const summary = summarize(record);
   return (
     <div className="stack">
-      <Crumbs id={id} />
       <div className="detail-head">
         <div>
           <div className="title-row"><h1>{record.run.id}</h1>{summary.failed ? <Tag size="sm" variant="danger" text={summary.failed + ' failed'} /> : null}{summary.pendingGates ? <Tag size="sm" variant="warning" text={summary.pendingGates + ' waiting on you'} /> : null}</div>
