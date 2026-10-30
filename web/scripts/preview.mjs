@@ -321,6 +321,9 @@ createServer(async (req, res) => {
       }
       if (r === 'workspaces') return json(res, 200, [...projects, pausedProject, blockedProject]);
       if (r === 'repositories') return json(res, 200, [{full_name: 'example/demo-project'}]);
+      if (r === 'reference-rules') return json(res, 200, {digest: 'sha256:0f3a…', rules: [
+        {host: 'docs.example.org', methods: ['GET', 'HEAD'], paths: ['/guide/'], source: 'git:reference-sources.yaml#example-docs'},
+        {host: 'github.com', methods: ['GET', 'HEAD'], paths: ['/example/widgets/archive/'], source: 'git:reference-sources.yaml#widgets'}]});
       if (r === 'orca-projects') return json(res, 200, [{name: 'demo-project', repo: 'example/demo-project', status: 'registered', clone: '/workspace/demo-project'}, {name: 'docs', repo: 'example/docs', status: 'published', actor: 'operator', requestedAt: new Date().toISOString()}]);
       if (r === 'runs') return json(res, 200, RUNS.map(runSummary).sort((a, b) => b.collectedAt.localeCompare(a.collectedAt)));
       if (r.startsWith('runs/')) { const rec = RUNS.find(x => x.run.id === decodeURIComponent(r.slice(5))); return rec ? json(res, 200, rec) : json(res, 404, {error: 'run record unavailable'}); }
