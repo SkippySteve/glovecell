@@ -8,6 +8,9 @@ import (
 	"time"
 )
 
+// ErrNoE2EE is returned by New in builds without the goolm tag.
+var ErrNoE2EE = errors.New("this build has no Matrix end-to-end encryption; build with -tags goolm")
+
 // Config is the bot account and who it listens to. Credentials come from
 // mounted Secret files (cmd/glovecell-voice) and never appear in errors.
 type Config struct {

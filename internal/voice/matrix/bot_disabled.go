@@ -5,16 +5,12 @@ package matrix
 import (
 	"context"
 	"database/sql"
-	"errors"
 
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/voice/speech"
 )
 
 // Enabled reports whether this build has the E2EE Matrix client.
 const Enabled = false
-
-// ErrNoE2EE is returned by New in builds without the goolm tag.
-var ErrNoE2EE = errors.New("this build has no Matrix end-to-end encryption; build with -tags goolm")
 
 // Bot is unavailable without the goolm build tag.
 type Bot struct{}

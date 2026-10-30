@@ -70,6 +70,10 @@ type Service struct {
 	inbox      Room
 	approvals  Room
 	Now        func() time.Time
+	// OnDecision observes gate decisions and OnTask finished tasks
+	// (metrics).
+	OnDecision func(approvalgate.Decision)
+	OnTask     func(target, state string)
 	wake       chan struct{}
 	mu         sync.Mutex // one poll at a time
 	deliverMu  sync.Mutex // one delivery at a time, so none is posted twice
@@ -202,7 +206,10 @@ func (s *Service) handleApproval(ctx context.Context, msg matrix.Message) {
 	if msg.Kind == matrix.KindVoice {
 		_, _ = s.mx.SendText(ctx, msg.RoomID, msg.ThreadRoot, "Heard: "+text)
 	}
-	s.gate.Handle(ctx, msg, text)
+	d := s.gate.Handle(ctx, msg, text)
+	if s.OnDecision != nil {
+		s.OnDecision(d)
+	}
 }
 
 func (s *Service) handleTask(ctx context.Context, room Room, msg matrix.Message) {
@@ -343,6 +350,9 @@ func (s *Service) finish(ctx context.Context, task store.Task, ok bool, text str
 	if err := s.store.UpdateTask(ctx, task); err != nil {
 		slog.Error("task result not recorded", "task", task.ID, "error", err.Error())
 		return
+	}
+	if s.OnTask != nil {
+		s.OnTask(task.Target, task.State)
 	}
 	s.deliver(ctx, task)
 }

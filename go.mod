@@ -8,6 +8,7 @@ require (
 	github.com/hanwen/go-fuse/v2 v2.8.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/pressly/goose/v3 v3.29.0
+	github.com/prometheus/client_golang v1.22.0
 	github.com/rs/zerolog v1.35.1
 	go.mau.fi/util v0.11.0
 	go.opentelemetry.io/otel v1.47.0
@@ -82,7 +83,6 @@ require (
 	github.com/petermattis/goid v0.0.0-20260918085751-abfca077860b // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-	github.com/prometheus/client_golang v1.22.0 // indirect
 	github.com/prometheus/client_model v0.6.1 // indirect
 	github.com/prometheus/common v0.62.0 // indirect
 	github.com/prometheus/procfs v0.22.0 // indirect
