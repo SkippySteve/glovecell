@@ -11,11 +11,12 @@ export const SECTIONS: [Section, string][] = [
 const LEGACY: Record<string, Section> = {access: 'internet', devlinks: 'previews', activity: 'history', repositories: 'credentials'};
 export const toSection = (value: string | undefined): Section => SECTIONS.find(([key]) => key === value)?.[0] || (value && LEGACY[value]) || 'overview';
 
-export type Route = {view: 'home'} | {view: 'new'} | {view: 'project'; name: string; section: Section} | {view: 'sandbox'; id: string; section: Section} | {view: 'runs'} | {view: 'run'; id: string} | {view: 'orca'};
+export type Route = {view: 'home'} | {view: 'new'} | {view: 'project'; name: string; section: Section} | {view: 'sandbox'; id: string; section: Section} | {view: 'runs'} | {view: 'run'; id: string} | {view: 'orca'} | {view: 'attention'};
 
 export const projectHref = (name: string, section?: Section) => '#/projects/' + encodeURIComponent(name) + (section && section !== 'overview' ? '/' + section : '');
 export const sandboxHref = (id: string, section?: Section) => '#/sandboxes/' + encodeURIComponent(id) + (section && section !== 'overview' ? '/' + section : '');
 export const orcaHref = () => '#/orca';
+export const attentionHref = () => '#/attention';
 export const navigate = (hash: string) => { location.hash = hash; };
 
 // A section may keep view state (filter, page, page size) in a query after the
@@ -35,6 +36,7 @@ export function parse(hash: string): Route {
   const parts = hash.replace(/^#\/?/, '').split('?')[0].split('/').filter(Boolean).map(part => { try { return decodeURIComponent(part); } catch { return part; } });
   if (parts[0] === 'new') return {view: 'new'};
   if (parts[0] === 'orca') return {view: 'orca'};
+  if (parts[0] === 'attention') return {view: 'attention'};
   if (parts[0] === 'projects' && parts[1]) return {view: 'project', name: parts[1], section: toSection(parts[2])};
   if (parts[0] === 'sandboxes' && parts[1]) return {view: 'sandbox', id: parts[1], section: toSection(parts[2])};
   if (parts[0] === 'runs') return parts[1] ? {view: 'run', id: parts[1]} : {view: 'runs'};

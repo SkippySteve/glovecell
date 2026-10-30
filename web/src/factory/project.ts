@@ -4,20 +4,12 @@
 import {jsonToOpenUI, type ElementNode} from '@openuidev/lang-core';
 import {reportLibrary} from './library';
 import type {Gate, RunRecord, Task} from './record';
+import {taskState} from './runs';
 
-type Tone = 'success' | 'warning' | 'danger' | 'info' | 'neutral';
+export {taskState};
 
 const node = (typeName: string, props: Record<string, unknown>): ElementNode => ({type: 'element', typeName, props, partial: false});
 const clip = (value: string, max: number) => value.length > max ? value.slice(0, max - 1) + '…' : value;
-
-export function taskState(task: Task): {label: string; tone: Tone} {
-  const last = task.attempts.at(-1);
-  if (last?.outcome === 'succeeded') return {label: 'Succeeded', tone: 'success'};
-  if (last?.outcome === 'failed' || last?.state === 'failed' || task.status === 'failed') return {label: 'Failed', tone: 'danger'};
-  if (last && !last.endedAt) return {label: 'Running', tone: 'info'};
-  if (task.deps.length && task.status !== 'ready') return {label: 'Waiting on dependencies', tone: 'neutral'};
-  return {label: 'Not started', tone: 'neutral'};
-}
 
 function taskSection(task: Task, record: RunRecord): ElementNode {
   const last = task.attempts.at(-1);

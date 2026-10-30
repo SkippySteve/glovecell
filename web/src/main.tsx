@@ -8,6 +8,7 @@ import './workspace/workspace.css';
 import {DataProvider, useData} from './data';
 import {runHref} from './factory/href';
 import {Home} from './Home';
+import {Attention} from './attention/Attention';
 import {NewSandbox} from './NewSandbox';
 import {OrcaProjects} from './OrcaProjects';
 import {ConfirmProvider} from './workspace/Confirm';
@@ -48,7 +49,7 @@ function App() {
     <>
       <Bar />
       <main id="view" className={route.view === 'project' || route.view === 'sandbox' ? 'page workspace-page' : 'page'} tabIndex={-1}>
-        {route.view === 'new' ? <NewSandbox /> : route.view === 'orca' ? <OrcaProjects /> : route.view === 'project' ? <ProjectWorkspace name={route.name} section={route.section} /> : route.view === 'sandbox' ? <SandboxWorkspace id={route.id} section={route.section} />
+        {route.view === 'new' ? <NewSandbox /> : route.view === 'attention' ? <Attention /> : route.view === 'orca' ? <OrcaProjects /> : route.view === 'project' ? <ProjectWorkspace name={route.name} section={route.section} /> : route.view === 'sandbox' ? <SandboxWorkspace id={route.id} section={route.section} />
           : route.view === 'runs' || route.view === 'run' ? <Suspense fallback={<p className="empty">Loading…</p>}>{route.view === 'run' ? <RunReport id={route.id} /> : <RunList />}</Suspense> : <Home />}
       </main>
       <Toasts />
