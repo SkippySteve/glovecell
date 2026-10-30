@@ -6,7 +6,8 @@ import type {ExistingSandbox, Project} from '../api';
 import {useData} from '../data';
 import {SandboxRuns} from '../factory/SandboxRuns';
 import {existingKind, orcaRuntimeId} from '../orca';
-import {LifecycleButton, ProjectHistory, ProjectInternet, ProjectOverview, ProjectRepositories} from '../Project';
+import {LifecycleButton, ProjectHistory, ProjectOverview, ProjectRepositories} from '../Project';
+import {ProjectInternet} from './sections/ProjectInternet';
 import {LanHosts} from '../LanHosts';
 import {Providers} from '../Providers';
 import {navigate, projectHref, sandboxHref, SECTIONS, type Section} from '../router';
@@ -261,7 +262,7 @@ export function ProjectWorkspace({name, section}: {name: string; section: Sectio
     </header>
   );
   const body = section === 'internet' ? <ProjectInternet key={p.metadata.name} p={p} />
-    : section === 'lan' ? <div className="stack"><SectionIntro title="LAN devices">Project sandboxes use the project's static LAN hosts: direct TCP to one IPv4 address and explicit ports, kept until removed. Outbound only.</SectionIntro><LanHosts p={p} /></div>
+    : section === 'lan' ? <div className="stack"><SectionIntro title="LAN devices">Direct TCP from this sandbox to one IPv4 address and explicit ports, kept until removed or for a limited time. Outbound only.</SectionIntro><LanHosts p={p} /></div>
     : section === 'packages' ? <div className="stack"><SectionIntro title="Packages" /><NotAvailable what="Package approvals" needs="Project sandboxes have no package approval list; registry rules on the Internet page allow downloads." /></div>
     : section === 'downloads' ? <Files key={p.metadata.name} downloads={downloads} uploads={uploads} workspace={p.metadata.name} />
     : section === 'previews' ? <div className="stack"><SectionIntro title="Previews & dev links" /><NotAvailable what="Previews and dev links" needs="Project sandboxes do not publish previews or dev links yet." /></div>

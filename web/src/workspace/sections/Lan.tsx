@@ -3,6 +3,7 @@ import {classicHref} from '../../sandbox/Sandbox';
 import {plainText, REASON_LIMIT} from '../../orca';
 import {Button, Callout, Tag, ToggleGroup, ToggleItem} from '../../ui';
 import {Countdown, NotAvailable, plural, SectionIntro, WindowBar} from '../bits';
+import {GrantTable, type Expiry} from '../../access/GrantTable';
 import {useConfirm} from '../Confirm';
 import {clearLanPrefill, peekLanPrefill, type LanPrefill} from '../prefill';
 import {chosenPorts, grantLabel, lanExtend, lanForget, lanOpen, lanRestrict, portChips, windowLabel, type LanHost, type LanView, type OpenMode} from '../sources/lan';
@@ -113,36 +114,58 @@ function ClosedHost({ws, lan, h, prefill}: {ws: SandboxState; lan: LanView; h: L
   </>;
 }
 
-function HostCard({ws, lan, h, now, prefill}: {ws: SandboxState; lan: LanView; h: LanHost; now: number; prefill: LanPrefill | null}) {
+// Learned ports of one host, shown in its detail row.
+function Learned({ws, h, now}: {ws: SandboxState; h: LanHost; now: number}) {
   const ask = useConfirm();
-  const ref = useRef<HTMLElement>(null);
-  useEffect(() => { if (prefill) { ref.current?.scrollIntoView({block: 'start'}); ref.current?.focus({preventScroll: true}); } }, [prefill]);
+  if (!h.learned.length) return null;
   const forget = async () => {
     if (!await ask(`Forget learned ports of ${h.address}?`, <p>Only the records are removed; nothing opens or closes. Ports are learned again during the next grant.</p>, 'Forget')) return;
     const f = lanForget(h.address);
     await ws.act(f.path, f.fields, `learned ports of ${h.address} forgotten`);
   };
-  const state = h.grant?.state;
-  return <>
-    <section ref={ref} tabIndex={-1} className={'card lan-host' + (prefill ? ' flash' : '')} id={hostId(h.address)} data-lan-host={h.address} aria-labelledby={hostId(h.address) + '-title'}>
-      <div className="card-hd">
-        <h3 id={hostId(h.address) + '-title'}><code>{h.address}</code></h3>
-        {h.all ? <Tag size="sm" text="all TCP ports allowlisted" /> : h.listed ? <Tag size="sm" text={'allowlisted TCP ' + h.ports.join(', ')} /> : <Tag size="sm" variant="warning" text="no longer allowlisted" />}
-        <span className="end">{state ? <Tag size="sm" variant="danger" text={state} /> : <Tag size="sm" variant="success" text="Closed" />}</span>
-      </div>
-      {h.grant ? <OpenGrant ws={ws} lan={lan} h={h} now={now} /> : h.listed ? <ClosedHost ws={ws} lan={lan} h={h} prefill={prefill} /> : null}
-    </section>
-    {h.learned.length ? (
-      <section className="card" aria-label={`Learned ports on ${h.address}`}>
-        <div className="card-hd"><h3>Learned ports on {h.address}</h3><span className="end"><Button size="small" variant="tertiary" onClick={forget}>Forget learned ports</Button></span></div>
-        <ul className="items rows">{h.learned.map(l => (
-          <li key={l.port}><Tag size="sm" variant={l.used ? 'success' : 'danger'} text={l.used ? 'used' : 'refused'} /><div className="item-main"><span><strong>TCP {l.port}</strong> <span className="subtle-text">· {plural(l.count, 'observation')}{l.lastSeen ? ' · last seen ' + ago(l.lastSeen, now) : ''}</span></span></div></li>
-        ))}</ul>
-        {h.suggestedAllowLine ? <p className="card-note">To allow every learned port, change this host's allowlist line to <code>{h.suggestedAllowLine}</code> through a pull request.</p> : null}
-        <p className="card-note subtle-text">Learned from the node's flow logs while a grant was open and for two minutes after. Learning only records and preselects; it never opens anything.</p>
-      </section>
-    ) : null}
-  </>;
+  return (
+    <div className="learned" aria-label={`Learned ports on ${h.address}`}>
+      <div className="actions"><strong>Learned ports</strong><Button size="small" variant="tertiary" onClick={forget}>Forget learned ports</Button></div>
+      <ul className="items rows">{h.learned.map(l => (
+        <li key={l.port}><Tag size="sm" variant={l.used ? 'success' : 'danger'} text={l.used ? 'used' : 'refused'} /><div className="item-main"><span><strong>TCP {l.port}</strong> <span className="subtle-text">{plural(l.count, 'observation')}{l.lastSeen ? ', last seen ' + ago(l.lastSeen, now) : ''}</span></span></div></li>
+      ))}</ul>
+      {h.suggestedAllowLine ? <p className="subtle-text">To allow every learned port, change this host's allowlist line to <code>{h.suggestedAllowLine}</code> through a pull request.</p> : null}
+      <p className="subtle-text">Learned from the node's flow logs while a grant was open and for two minutes after. Learning only records and preselects; it never opens anything.</p>
+    </div>
+  );
+}
+
+function HostTable({ws, lan, now, prefill}: {ws: SandboxState; lan: LanView; now: number; prefill: LanPrefill | null}) {
+  const restrict = useRestrict(ws);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (prefill) ref.current?.scrollIntoView({block: 'start'}); }, [prefill]);
+  const expiry = (h: LanHost): Expiry => h.grant ? (h.grant.deadline ? {at: h.grant.deadline} : {note: h.grant.state + '…'}) : {note: 'Closed'};
+  return (
+    <div ref={ref} id={prefill ? hostId(prefill.address) : undefined}>
+      <GrantTable<LanHost> title={`LAN hosts (${lan.hosts.length})`} label="LAN hosts" testId="lan-hosts" now={now} rows={lan.hosts} rowKey={h => h.address} rowLabel={h => h.address}
+        initiallyOpen={prefill?.address}
+        intro={<p>Hosts are allowlisted in Git; opening one gives {ws.id} direct TCP to it for a limited time. Not proxied or inspected; tools need <code>NO_PROXY=&lt;address&gt;</code>.</p>}
+        search={{placeholder: '192.168.1.50', label: 'Search hosts', text: h => h.address + ' ' + h.ports.join(' ')}}
+        filters={[{key: 'open', label: 'Open', test: h => Boolean(h.grant)}, {key: 'closed', label: 'Closed', test: h => !h.grant}, {key: 'learned', label: 'Learned ports', test: h => h.learned.length > 0}]}
+        bulk={[{key: 'restrict', label: 'Restrict selected', danger: true, applies: h => Boolean(h.grant) && h.grant!.state !== 'Restricting', run: rows => restrict(rows[0].address, lan)}]}
+        columns={[
+          {key: 'host', label: 'Host', cell: h => <><code>{h.address}</code><span className="cell-sub">{h.all ? 'all TCP ports allowlisted' : h.listed ? 'allowlisted TCP ' + h.ports.join(', ') : 'no longer allowlisted'}</span></>},
+          {key: 'state', label: 'State', cell: h => h.grant ? <><Tag size="sm" variant="danger" text={h.grant.state} /><span className="cell-sub">{grantLabel(h.grant)}{h.grant.openedBy ? ', by ' + h.grant.openedBy : ''}</span></> : <Tag size="sm" variant="success" text="Closed" />},
+          {key: 'learned', label: 'Learned', cell: h => h.learned.length ? 'TCP ' + h.learned.map(l => l.port).join(', ') : <span className="subtle">None</span>},
+        ]}
+        expiry={expiry}
+        actions={(h, row) => <>
+          {h.listed || h.grant ? <Button size="small" variant={h.grant ? 'secondary' : 'primary'} aria-expanded={row.expanded} onClick={row.toggle}>{row.expanded ? 'Close panel' : h.grant ? 'Extend…' : 'Open…'}</Button> : null}
+          {h.grant && h.grant.state !== 'Restricting' ? <Button size="small" variant="secondary" buttonType="destructive" onClick={() => restrict(h.address, lan)}>Restrict now</Button> : null}
+        </>}
+        detail={h => <div className="lan-detail">
+          {h.grant ? <OpenGrant ws={ws} lan={lan} h={h} now={now} /> : h.listed ? <ClosedHost ws={ws} lan={lan} h={h} prefill={prefill && prefill.address === h.address ? prefill : null} /> : null}
+          <Learned ws={ws} h={h} now={now} />
+        </div>}
+        empty={{title: lan.enabled ? 'No LAN hosts are allowlisted.' : 'LAN host grants are off.', hint: 'Add a host to the lan-grants allowlist in Git (see Add another device below); it appears here after the rollout.'}}
+      />
+    </div>
+  );
 }
 
 export function Lan({ws, now}: {ws: SandboxState; now: number}) {
@@ -166,8 +189,7 @@ export function Lan({ws, now}: {ws: SandboxState; now: number}) {
       </SectionIntro>
       {ws.lanError ? <Callout variant="warning" description={'LAN state may be stale: ' + ws.lanError} /> : null}
       {!lan.enabled ? <Callout variant="neutral" title="LAN host grants are off" description={[lan.reason, lan.error].filter(Boolean).join('. ') || 'No LAN hosts are allowlisted.'} /> : null}
-      {lan.hosts.map(h => <HostCard key={h.address} ws={ws} lan={lan} h={h} now={now} prefill={prefill && prefill.address === h.address ? prefill : null} />)}
-      {!lan.hosts.length && lan.enabled ? <p className="empty">No LAN hosts are allowlisted.</p> : null}
+      <HostTable ws={ws} lan={lan} now={now} prefill={prefill} />
       <details className="card fold">
         <summary>Add another device</summary>
         <p className="muted">Hosts are allowlisted in Git, not here. Add one line such as <code>192.168.1.50: 22, 8080</code> (or <code>HOST: all</code>) to <code>allowed-hosts</code> in ConfigMap <code>lan-grants</code> (namespace agent-sandbox-control) through a pull request; after the rollout it appears above. Nodes, gateways, VIPs and the cluster ranges are always refused.</p>
