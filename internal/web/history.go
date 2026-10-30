@@ -38,13 +38,17 @@ func (s *Server) historyStore() HistoryStore {
 	return logHistory{s.auditLog()}
 }
 
-// auditLog is where console actions are recorded: s.Audit, or the audit
-// ConfigMaps in Namespace when no database is configured.
+// auditLog is where console actions are recorded: s.Audit, else the
+// database store when one is set, else the audit ConfigMaps in Namespace.
 func (s *Server) auditLog() *auditlog.Log {
 	if s.Audit != nil {
 		return s.Audit
 	}
-	return &auditlog.Log{Client: s.Client, Namespace: s.Namespace}
+	l := &auditlog.Log{Client: s.Client, Namespace: s.Namespace}
+	if s.Database != nil && s.Database.Store != nil {
+		l.Store = s.Database.Store
+	}
+	return l
 }
 
 // historyFilter reads ?action=<prefix>&actor=&since=&before=&limit= (times
