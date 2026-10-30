@@ -61,7 +61,7 @@ Enforcement on project sandboxes:
 - A grant is refused (never applied) when its profile does not allow its type, its expiry is beyond the profile's
   limit, its LAN address or ports are refused, it names another cell or is not owned by it. Internet and package grants
   are refused on project sandboxes until the project proxy can enforce them.
-- Exact approvals and request history are not custom resources; they move to PostgreSQL behind an `ApprovalStore`.
+- Exact approvals, access requests and request history are not custom resources: they are in PostgreSQL ([database](database.md)).
 
 Console API: `GET /api/v1/access-profiles`, `PATCH /api/v1/workspaces/{name}/access-level`,
 `POST /api/v1/workspaces/{name}/lock`, `GET|POST /api/v1/workspaces/{name}/grants` and
