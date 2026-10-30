@@ -86,13 +86,15 @@ func TestAdmissionPolicyParamsRender(t *testing.T) {
 			}
 		case "ValidatingAdmissionPolicyBinding":
 			bindings++
-			if ns, _, _ := unstructured.NestedString(o.Object, "spec", "matchResources", "namespaceSelector", "matchLabels", "kubernetes.io/metadata.name"); ns != admissionNamespace {
+			// ForgeClass is cluster-scoped, so its binding (classes.yaml) has no namespace to select.
+			if ns, _, _ := unstructured.NestedString(o.Object, "spec", "matchResources", "namespaceSelector", "matchLabels", "kubernetes.io/metadata.name"); ns != admissionNamespace && !strings.HasSuffix(o.GetName(), "-forgeclasses") {
 				t.Fatalf("%s binds outside the release namespace", o.GetName())
 			}
 		}
 	}
-	// Five ProjectWorkspace policies and three for access levels (access-admission-policies.yaml).
-	if policies != 8 || bindings != 8 || params == nil {
+	// Five ProjectWorkspace policies, three for access levels
+	// (access-admission-policies.yaml) and one for ForgeClass (classes.yaml).
+	if policies != 9 || bindings != 9 || params == nil {
 		t.Fatalf("policies %d, bindings %d, params %v", policies, bindings, params != nil)
 	}
 	data, _, _ := unstructured.NestedStringMap(params.Object, "data")

@@ -163,6 +163,36 @@ t3Connect:
   enabled: false
   existingClaim: ''
   relayURL: https://relay.t3.codes
+# Default OrchestratorClasses (cluster-scoped) that workspaces may name in
+# spec.orchestratorClassName. All off by default. Workspaces without a class
+# keep the deployment default: T3 Connect when t3Connect.enabled, else none.
+# See docs/orchestrators.md.
+orchestratorClasses:
+  # projects.agentwork.dev/t3: T3 Connect. Requires t3Connect.enabled.
+  t3:
+    enabled: false
+    name: t3
+  # projects.agentwork.dev/orca: Orca desktop registration through the
+  # control-host registrar. The per-project Orca runtime is not built yet.
+  orca:
+    enabled: false
+    name: orca
+  # projects.agentwork.dev/command: custom command clients configured on the
+  # registrar (APC_CLIENT_<KIND>_REGISTER/REVOKE).
+  command:
+    enabled: false
+    name: command
+# ProviderClass and ForgeClass (docs/classes.md). The chart generates the
+# defaults from the settings above, so an upgrade changes nothing: a ForgeClass
+# for the configured Forgejo (GIT_HOST=forgejo) and, when PROVIDER_LEASES_SECRET
+# is set, one default ProviderClass per brokered provider. Apply the class CRDs
+# from crds/ before upgrading: Helm does not upgrade CRDs.
+classes:
+  createDefaults: true
+  # ValidatingAdmissionPolicy: ForgeClass credentials must be in this
+  # namespace and only implemented drivers are admitted. Needs Kubernetes 1.30.
+  # Rendered only while admissionPolicies.enabled is also true.
+  admissionPolicy: true
 # Optional private access to the controller through an installed Tailscale
 # Kubernetes operator. This does not replace T3 account authorization.
 tailscaleIngress:

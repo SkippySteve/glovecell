@@ -48,11 +48,17 @@ A Ready workspace is entered with `kubectl exec` into container `workspace`, `ag
 
 Observed phases are `Preparing`, `Ready`, `Pausing`, `Paused`, `Blocked`, `Removing` and `Removed`. The Ready condition distinguishes desired state from observed readiness. Sandbox readiness includes the init clone and a worker readiness marker. It does not establish that an optional coding provider is authenticated or every requested external endpoint works.
 
+The same group has `AccessProfile`, `AccessGrant`, `OrchestratorClass`, `ProviderClass` and `ForgeClass`. A workspace names them through `spec.accessProfileName` ([access levels](access-levels.md)), `spec.orchestratorClassName`, `spec.forgeClassName` and `spec.providers[].providerClassName` ([provider and forge classes](classes.md)). The chart's ValidatingAdmissionPolicies refuse invalid requests before they are stored ([chart README](../charts/agent-project-controller/README.md#admission-policies)).
+
+Phase changes and new not-ready reasons are published as Kubernetes Events regarding the workspace (`kubectl events --for projectworkspace/<name>`). `status.audit` is deprecated and no longer appended; the durable history is `GET /api/v1/workspaces/{name}/audit`.
+
+`spec.orchestratorClassName` selects a cluster-scoped `OrchestratorClass` (T3, Orca, a custom command client). It is immutable once set; empty means the deployment default. A missing or unsupported class blocks the workspace and grants nothing. See [orchestrator classes](orchestrators.md).
+
 Normal Kubernetes deletion triggers the cleanup finalizer. The dashboard uses the terminal `Removed` desired state so history remains visible. Removed project data cannot be reopened through a state update.
 
 ## Extending providers
 
-`internal/forgejo.Host` defines discovery, grant and revocation. The controller selects one implementation for the process, Forgejo or GitHub, and a workspace does not choose the host. `internal/network.Provider` declares capabilities, produces enforcement objects and supplies pod DNS settings that agree with its DNS enforcement. The inspecting proxy is a separate Go component with a policy document. Provider implementations must qualify their actual behavior before being advertised as supported.
+`internal/forge.Forge` defines discovery, grant and revocation; Forgejo and GitHub implement it. The controller's configured forge (Forgejo or GitHub) serves workspaces without `spec.forgeClassName`; a workspace may name a cluster-scoped `ForgeClass` instead, and `spec.providers[].providerClassName` selects a `ProviderClass`. See [provider and forge classes](classes.md), including how to add a provider or forge. `internal/network.Provider` declares capabilities, produces enforcement objects and supplies pod DNS settings that agree with its DNS enforcement. The inspecting proxy is a separate Go component with a policy document. Provider implementations must qualify their actual behavior before being advertised as supported.
 
 The first implementation uses an operator-selected worker image as its environment template. It does not expose multiple named templates. SSH and OpenRig are not installed. A tool that can run `kubectl exec` can use a Ready workspace. That command is not an authenticated model session. Model access is an optional Secret named `model-access` in the project namespace, mounted read-only at `/run/model`. The controller rejects a refresh token in that Secret. Model hosts must be approved in the HTTPS policy before running a model session. Add them at creation or through a paused access update.
 

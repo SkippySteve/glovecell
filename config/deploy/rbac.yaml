@@ -19,6 +19,21 @@ rules:
   - apiGroups: [projects.agentwork.dev]
     resources: [accessgrants, accessgrants/status]
     verbs: [get, list, watch, create, update, patch, delete]
+  # Orchestrator classes: read them, and report Accepted on the ones whose
+  # controllerName starts with projects.agentwork.dev/. No create or delete.
+  - apiGroups: [projects.agentwork.dev]
+    resources: [orchestratorclasses]
+    verbs: [get, list, watch]
+  - apiGroups: [projects.agentwork.dev]
+    resources: [orchestratorclasses/status]
+    verbs: [get, update, patch]
+  # ProviderClass and ForgeClass are admin-owned: read and report status only.
+  - apiGroups: [projects.agentwork.dev]
+    resources: [providerclasses, forgeclasses]
+    verbs: [get, list, watch]
+  - apiGroups: [projects.agentwork.dev]
+    resources: [providerclasses/status, forgeclasses/status]
+    verbs: [get, update, patch]
   # No cluster-wide Secrets and no cluster-wide namespace delete: Secrets come
   # from Role controller-secrets (control namespace) and the project access
   # ClusterRole bound in each project namespace, which also lets the

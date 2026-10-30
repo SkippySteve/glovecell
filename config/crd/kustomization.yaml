@@ -4,3 +4,6 @@ resources:
   - projectworkspaces.yaml
   - accessprofiles.yaml
   - accessgrants.yaml
+  - orchestratorclasses.yaml
+  - providerclasses.yaml
+  - forgeclasses.yaml

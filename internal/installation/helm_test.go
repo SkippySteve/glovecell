@@ -11,16 +11,18 @@ import (
 )
 
 func TestChartSchemaMatchesSource(t *testing.T) {
-	source, err := os.ReadFile("../../config/crd/projectworkspaces.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	chart, err := os.ReadFile("../../charts/agent-project-controller/crds/projectworkspaces.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(source, chart) {
-		t.Fatal("packaged CRD differs from controller schema")
+	for _, name := range []string{"projectworkspaces.yaml", "providerclasses.yaml", "forgeclasses.yaml"} {
+		source, err := os.ReadFile("../../config/crd/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		chart, err := os.ReadFile("../../charts/agent-project-controller/crds/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(source, chart) {
+			t.Fatal("packaged CRD differs from controller schema", name)
+		}
 	}
 }
 func TestHelmPackage(t *testing.T) {

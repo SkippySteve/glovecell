@@ -1,0 +1,98 @@
+{{- /*
+ProviderClass and ForgeClass (docs/classes.md). Classes are cluster-scoped and
+admin-only. The defaults below mirror the controller's existing settings, so a
+workspace that names them behaves exactly like one that names nothing.
+*/ -}}
+{{- if not (kindIs "bool" .Values.classes.createDefaults) }}
+{{- fail "classes.createDefaults must be a boolean" }}
+{{- end }}
+{{- if not (kindIs "bool" .Values.classes.admissionPolicy) }}
+{{- fail "classes.admissionPolicy must be a boolean" }}
+{{- end }}
+{{- $prefix := include "apc.clusterPrefix" . }}
+{{- $gitHost := default "forgejo" (index .Values.config "GIT_HOST" | toString) }}
+{{- if .Values.classes.createDefaults }}
+{{- if eq $gitHost "forgejo" }}
+---
+# The configured Forgejo as a class. Workspaces without forgeClassName keep
+# using the same forge through the controller's settings.
+apiVersion: projects.agentwork.dev/v1alpha1
+kind: ForgeClass
+metadata:
+  name: {{ $prefix }}-forgejo
+spec:
+  driver: forgejo
+  baseURL: {{ index .Values.config "FORGEJO_ORIGIN" | quote }}
+  credentialsSecretRef:
+    name: {{ .Values.existingSecret | quote }}
+    namespace: {{ .Release.Namespace | quote }}
+    key: forgejo-token
+  parameters:
+    owner: {{ index .Values.config "FORGEJO_OWNER" | quote }}
+{{- end }}
+{{- $leases := index .Values.config "PROVIDER_LEASES_SECRET" | default "" | toString }}
+{{- if $leases }}
+{{- range $provider := list "grok" "cursor" }}
+---
+# Default ProviderClass for bare spec.providers[] entries named {{ $provider }}:
+# the broker's lease Secret and the one-minute minimum, as before classes.
+apiVersion: projects.agentwork.dev/v1alpha1
+kind: ProviderClass
+metadata:
+  name: {{ $prefix }}-{{ $provider }}
+  annotations:
+    projects.agentwork.dev/is-default-class: "true"
+spec:
+  driver: provider-broker
+  provider: {{ $provider }}
+  parameters:
+    leasesSecret: {{ $leases | quote }}
+{{- end }}
+{{- end }}
+{{- end }}
+---
+# Full control of classes, for cluster administrators only. The chart binds it
+# to nobody; it aggregates into the admin persona role. Agent and worker
+# ServiceAccounts get no access to classes.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $prefix }}-class-admin
+  labels:
+    projects.agentwork.dev/aggregate-to-admin: "true"
+rules:
+  - apiGroups: [projects.agentwork.dev]
+    resources: [providerclasses, forgeclasses]
+    verbs: [get, list, watch, create, update, patch, delete]
+{{- /* admissionPolicies.enabled is the chart-wide switch for clusters without the API. */}}
+{{- if and .Values.admissionPolicies.enabled .Values.classes.admissionPolicy }}
+---
+# CEL cannot know the controller's namespace in the CRD schema; this policy
+# does. The controller enforces the same rules when it resolves a class.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $prefix }}-forgeclasses
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [projects.agentwork.dev]
+        apiVersions: [v1alpha1]
+        operations: [CREATE, UPDATE]
+        resources: [forgeclasses]
+  validations:
+    # "namespace" is a CEL keyword, so the field is read by index.
+    - expression: "!('namespace' in object.spec.credentialsSecretRef) || object.spec.credentialsSecretRef['namespace'] == '{{ .Release.Namespace }}'"
+      message: "credentialsSecretRef must be in the controller's namespace {{ .Release.Namespace }}"
+    - expression: "object.spec.driver == 'forgejo'"
+      message: "Forge drivers github and gitlab are reserved and not supported yet"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $prefix }}-forgeclasses
+spec:
+  policyName: {{ $prefix }}-forgeclasses
+  validationActions: [Deny]
+{{- end }}
