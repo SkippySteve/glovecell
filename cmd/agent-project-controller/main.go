@@ -19,6 +19,7 @@ import (
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/connect"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/controller"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/download"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/forge"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/forgejo"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/githubhost"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/network"
@@ -165,7 +166,7 @@ func positiveID(key string) (int64, error) {
 	}
 	return n, nil
 }
-func openGitHost() (forgejo.Host, string, string, string, error) {
+func openGitHost() (forge.Forge, string, string, string, error) {
 	switch env("GIT_HOST", "forgejo") {
 	case "forgejo":
 		token, err := secret("FORGEJO_TOKEN_FILE")
@@ -414,8 +415,21 @@ func run(ctx context.Context) error {
 			return e
 		}
 	}
+	// Workspaces may name a ForgeClass; an empty name keeps the forge above.
+	reconciler.Forges = &forge.Resolver{Client: direct, Namespace: ns, Default: &forge.Resolved{Driver: gitHost, Origin: origin, Owner: owner, Forge: host}}
 	if e = reconciler.Setup(manager); e != nil {
 		return e
+	}
+	// Class status needs the ProviderClass and ForgeClass CRDs. Without them
+	// the controller runs as before: bare provider names and the configured
+	// forge keep working, and named classes fail closed.
+	if controller.ClassesServed(manager.GetRESTMapper()) {
+		classes := &controller.ClassReconciler{Client: direct, ProviderLeases: reconciler.ProviderLeases, Forges: reconciler.Forges}
+		if e = classes.Setup(manager); e != nil {
+			return e
+		}
+	} else {
+		slog.Warn("ProviderClass and ForgeClass CRDs not installed; class status is off and named classes fail closed")
 	}
 	if e = manager.AddHealthzCheck("healthz", healthz.Ping); e != nil {
 		return e

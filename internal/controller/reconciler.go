@@ -26,6 +26,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/forge"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/forgejo"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/network"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/proxy"
@@ -135,7 +136,7 @@ type Reconciler struct {
 	ReaderRoute                  *proxy.ReaderRoute
 	Access                       ProjectAccess
 	client.Client
-	Host    forgejo.Host
+	Host    forge.Forge
 	Network network.Provider
 	Config  Config
 	// LAN is the operator's home-LAN grant setting; empty disables grants.
@@ -145,6 +146,9 @@ type Reconciler struct {
 	// ProviderLeases is the trusted Secret the provider broker writes; nil
 	// turns spec.providers off (see providers.go).
 	ProviderLeases *types.NamespacedName
+	// Forges resolves spec.forgeClassName (forge_class.go). Nil allows only
+	// the configured forge (Host and Config).
+	Forges *forge.Resolver
 }
 
 var duration, _ = otel.Meter("agent-project-controller").Float64Histogram("workspace.reconcile.duration", metric.WithUnit("s"))
@@ -205,6 +209,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ct
 	if e := r.Get(ctx, req.NamespacedName, w); e != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(e)
 	}
+	// Every forge operation below uses the workspace's own forge. When its
+	// class does not resolve, every forge call fails: nothing is granted, and
+	// removal of a workspace that holds a grant waits for revocation.
+	r, forgeErr := r.forWorkspace(ctx, w)
 	if !w.DeletionTimestamp.IsZero() || w.Spec.DesiredState == "Removed" {
 		if e := r.remove(ctx, w); e != nil {
 			statusErr := r.status(ctx, w, "Removing", false, "CleanupPending", e.Error())
@@ -220,7 +228,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ct
 		controllerutil.AddFinalizer(w, api.Finalizer)
 		return ctrl.Result{Requeue: true}, r.Update(ctx, w)
 	}
-	if e := r.validate(ctx, w); e != nil {
+	e := forgeErr
+	if e == nil {
+		e = r.validate(ctx, w)
+	}
+	if e != nil {
 		if stopErr := r.suspend(ctx, w); stopErr != nil {
 			return ctrl.Result{}, stopErr
 		}
@@ -349,7 +361,7 @@ func (r *Reconciler) validate(ctx context.Context, w *api.ProjectWorkspace) erro
 	if e := r.validateLANHosts(w); e != nil {
 		return e
 	}
-	return r.validateProviders(w)
+	return r.validateProviders(ctx, w)
 }
 func (r *Reconciler) audit(ctx context.Context, w *api.ProjectWorkspace, action string) error {
 	return r.auditDetails(ctx, w, action, nil)

@@ -11,6 +11,14 @@ rules:
   - apiGroups: [projects.agentwork.dev]
     resources: [projectworkspaces, projectworkspaces/status, projectworkspaces/finalizers]
     verbs: [get, list, watch, create, update, patch, delete]
+  # Classes are admin-owned (classes.yaml): the controller only reads them
+  # and reports whether it can use each one.
+  - apiGroups: [projects.agentwork.dev]
+    resources: [providerclasses, forgeclasses]
+    verbs: [get, list, watch]
+  - apiGroups: [projects.agentwork.dev]
+    resources: [providerclasses/status, forgeclasses/status]
+    verbs: [get, update, patch]
   # No cluster-wide Secrets and no cluster-wide namespace delete: Secrets come
   # from the Role below (control namespace) and the project access ClusterRole
   # bound in each project namespace, which also lets the controller delete

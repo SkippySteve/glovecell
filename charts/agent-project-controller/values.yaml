@@ -145,6 +145,16 @@ t3Connect:
   enabled: false
   existingClaim: ''
   relayURL: https://relay.t3.codes
+# ProviderClass and ForgeClass (docs/classes.md). The chart generates the
+# defaults from the settings above, so an upgrade changes nothing: a ForgeClass
+# for the configured Forgejo (GIT_HOST=forgejo) and, when PROVIDER_LEASES_SECRET
+# is set, one default ProviderClass per brokered provider. Apply the class CRDs
+# from crds/ before upgrading: Helm does not upgrade CRDs.
+classes:
+  createDefaults: true
+  # ValidatingAdmissionPolicy: ForgeClass credentials must be in this
+  # namespace and only implemented drivers are admitted. Needs Kubernetes 1.30.
+  admissionPolicy: true
 # Optional private access to the controller through an installed Tailscale
 # Kubernetes operator. This does not replace T3 account authorization.
 tailscaleIngress:

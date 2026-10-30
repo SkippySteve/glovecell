@@ -36,15 +36,23 @@ type WorkspaceSpec struct {
 	// runs: removing an entry revokes that provider for this project only.
 	// The controller needs a configured provider lease source.
 	Providers []ProviderGrant `json:"providers,omitempty"`
+	// ForgeClassName names the cluster-scoped ForgeClass that hosts
+	// Repository (forgeclass_types.go). Empty keeps the controller's configured
+	// forge. Immutable: revocation must reach the forge that granted access.
+	ForgeClassName string `json:"forgeClassName,omitempty"`
 }
 
 // ProviderGrant is one operator opt-in to a brokered provider. The worker then
 // receives the provider's short-lived access lease, and the project proxy may
 // reach the provider's reviewed hosts. Refresh material never leaves its owner.
 type ProviderGrant struct {
-	Name    string       `json:"name"`
-	AddedBy string       `json:"addedBy,omitempty"`
-	AddedAt *metav1.Time `json:"addedAt,omitempty"`
+	Name string `json:"name"`
+	// ProviderClassName names the cluster-scoped ProviderClass that supplies
+	// the lease (providerclass_types.go). Empty resolves to the default class
+	// for Name, which matches the behaviour before classes existed.
+	ProviderClassName string       `json:"providerClassName,omitempty"`
+	AddedBy           string       `json:"addedBy,omitempty"`
+	AddedAt           *metav1.Time `json:"addedAt,omitempty"`
 }
 
 // LANHost is one operator grant: outbound TCP from the worker to Address on Ports.
@@ -104,8 +112,14 @@ func (w *ProjectWorkspaceList) DeepCopyObject() runtime.Object {
 	_ = json.Unmarshal(b, out)
 	return out
 }
+
+// knownTypes collects the kinds other files in this package define, so a new
+// kind registers itself without editing AddToScheme.
+var knownTypes []runtime.Object
+
 func AddToScheme(s *runtime.Scheme) error {
 	s.AddKnownTypes(GroupVersion, &ProjectWorkspace{}, &ProjectWorkspaceList{})
+	s.AddKnownTypes(GroupVersion, knownTypes...)
 	metav1.AddToGroupVersion(s, GroupVersion)
 	return nil
 }

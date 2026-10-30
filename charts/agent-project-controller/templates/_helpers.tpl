@@ -13,3 +13,8 @@ project's Secrets and for deleting the project namespace itself. */}}
 {{- define "apc.projectAccessRole" -}}
 {{- printf "%s-%s" .Release.Namespace .Release.Name | trunc 48 | trimSuffix "-" }}-project-access
 {{- end -}}
+
+{{/* Prefix for cluster-scoped objects of this release, such as default classes. */}}
+{{- define "apc.clusterPrefix" -}}
+{{- printf "%s-%s" .Release.Namespace .Release.Name | trunc 48 | trimSuffix "-" }}
+{{- end -}}

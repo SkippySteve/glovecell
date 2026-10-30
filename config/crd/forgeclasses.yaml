@@ -1,0 +1,112 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: forgeclasses.projects.agentwork.dev
+spec:
+  group: projects.agentwork.dev
+  scope: Cluster
+  names:
+    plural: forgeclasses
+    singular: forgeclass
+    kind: ForgeClass
+    listKind: ForgeClassList
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Driver
+          type: string
+          jsonPath: .spec.driver
+        - name: URL
+          type: string
+          jsonPath: .spec.baseURL
+        - name: Accepted
+          type: string
+          jsonPath: .status.conditions[?(@.type=="Accepted")].status
+      schema:
+        openAPIV3Schema:
+          description: A Git forge the controller grants workspaces access to. Cluster-scoped and admin-only; a ProjectWorkspace references it in spec.forgeClassName.
+          type: object
+          required: [spec]
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              required: [driver, baseURL, credentialsSecretRef]
+              x-kubernetes-validations:
+                - rule: self.driver == oldSelf.driver && self.baseURL == oldSelf.baseURL
+                  message: driver and baseURL are immutable; workspaces must revoke on the forge that granted them. Create a new class.
+                - rule: "(has(self.parameters) && 'owner' in self.parameters ? self.parameters['owner'] : '') == (has(oldSelf.parameters) && 'owner' in oldSelf.parameters ? oldSelf.parameters['owner'] : '')"
+                  message: parameters.owner is immutable; create a new class.
+              properties:
+                driver:
+                  description: forgejo. github and gitlab are reserved and refused as unsupported for now.
+                  type: string
+                  enum: [forgejo, github, gitlab]
+                baseURL:
+                  description: The forge's HTTPS origin, without a path.
+                  type: string
+                  maxLength: 2048
+                  pattern: '^https://[^/?#@\s]+/?$'
+                credentialsSecretRef:
+                  description: The controller's administrative credential for this forge. The Secret must be in the controller's namespace.
+                  type: object
+                  required: [name, key]
+                  properties:
+                    name:
+                      type: string
+                      maxLength: 253
+                      pattern: '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$'
+                    namespace:
+                      description: Empty means the controller's namespace; any other namespace is refused.
+                      type: string
+                      maxLength: 63
+                      pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+                    key:
+                      type: string
+                      maxLength: 253
+                      pattern: '^[-._a-zA-Z0-9]+$'
+                parameters:
+                  description: Driver-specific settings (forgejo requires owner). Unknown keys fail closed.
+                  type: object
+                  maxProperties: 16
+                  additionalProperties:
+                    type: string
+                    maxLength: 1024
+            status:
+              type: object
+              properties:
+                observedGeneration:
+                  type: integer
+                  format: int64
+                conditions:
+                  type: array
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys: [type]
+                  items:
+                    type: object
+                    required: [type, status, reason, message, lastTransitionTime]
+                    properties:
+                      type:
+                        type: string
+                      status:
+                        type: string
+                        enum: ['True', 'False', Unknown]
+                      reason:
+                        type: string
+                      message:
+                        type: string
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                      observedGeneration:
+                        type: integer
+                        format: int64

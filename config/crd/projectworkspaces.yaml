@@ -51,6 +51,8 @@ spec:
                   message: Pause the workspace before enrolling repositories.
                 - rule: "!has(oldSelf.repositories) || (has(self.repositories) && oldSelf.repositories.all(p, self.repositories.exists(q, p == q)))"
                   message: Repository entries are immutable; individual removal requires a verified cleanup operation.
+                - rule: "(has(self.forgeClassName) ? self.forgeClassName : '') == (has(oldSelf.forgeClassName) ? oldSelf.forgeClassName : '')"
+                  message: forgeClassName is immutable; revocation must reach the forge that granted access.
               properties:
                 repositories:
                   type: array
@@ -82,6 +84,11 @@ spec:
                   type: string
                   enum: [Running, Paused, Removed]
                   default: Running
+                forgeClassName:
+                  description: Cluster-scoped ForgeClass that hosts the repository. Empty keeps the controller's configured forge. Immutable.
+                  type: string
+                  maxLength: 253
+                  pattern: '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$'
                 lanHosts:
                   description: Direct outbound TCP from the worker to single IPv4 hosts on the operator's LAN. Editable while running; the controller validates each address against its configured ranges.
                   type: array
@@ -128,6 +135,11 @@ spec:
                       name:
                         type: string
                         enum: [grok, cursor]
+                      providerClassName:
+                        description: Cluster-scoped ProviderClass that supplies this provider's lease. Empty resolves to the provider's default class.
+                        type: string
+                        maxLength: 253
+                        pattern: '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$'
                       addedBy:
                         type: string
                         maxLength: 512
