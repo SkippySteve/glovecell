@@ -48,6 +48,10 @@ A Ready workspace is entered with `kubectl exec` into container `workspace`, `ag
 
 Observed phases are `Preparing`, `Ready`, `Pausing`, `Paused`, `Blocked`, `Removing` and `Removed`. The Ready condition distinguishes desired state from observed readiness. Sandbox readiness includes the init clone and a worker readiness marker. It does not establish that an optional coding provider is authenticated or every requested external endpoint works.
 
+The same group has `AccessProfile`, `AccessGrant`, `OrchestratorClass`, `ProviderClass` and `ForgeClass`. A workspace names them through `spec.accessProfileName` ([access levels](access-levels.md)), `spec.orchestratorClassName`, `spec.forgeClassName` and `spec.providers[].providerClassName` ([provider and forge classes](classes.md)). The chart's ValidatingAdmissionPolicies refuse invalid requests before they are stored ([chart README](../charts/agent-project-controller/README.md#admission-policies)).
+
+Phase changes and new not-ready reasons are published as Kubernetes Events regarding the workspace (`kubectl events --for projectworkspace/<name>`). `status.audit` is deprecated and no longer appended; the durable history is `GET /api/v1/workspaces/{name}/audit`.
+
 `spec.orchestratorClassName` selects a cluster-scoped `OrchestratorClass` (T3, Orca, a custom command client). It is immutable once set; empty means the deployment default. A missing or unsupported class blocks the workspace and grants nothing. See [orchestrator classes](orchestrators.md).
 
 Normal Kubernetes deletion triggers the cleanup finalizer. The dashboard uses the terminal `Removed` desired state so history remains visible. Removed project data cannot be reopened through a state update.

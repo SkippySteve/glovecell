@@ -123,7 +123,8 @@ With `classes.createDefaults: true` (the default), the chart generates:
   `PROVIDER_LEASES_SECRET`, only when it is set.
 
 These classes resolve to the same behaviour as the settings they come from, so
-a chart upgrade changes nothing. With `classes.admissionPolicy: true`, a
+a chart upgrade changes nothing. With `classes.admissionPolicy: true` and
+`admissionPolicies.enabled: true` (both the default), a
 ValidatingAdmissionPolicy refuses a ForgeClass whose credentials are outside
 the release namespace, or whose driver is not `forgejo`.
 
@@ -133,9 +134,9 @@ The chart also renders the ClusterRole `<namespace>-<release>-class-admin`
 controller can only read classes and write their status. Agent and worker
 ServiceAccounts have no access.
 
-Helm does not upgrade CRDs. Apply `crds/providerclasses.yaml`,
-`crds/forgeclasses.yaml` and the updated `crds/projectworkspaces.yaml` before
-upgrading, or use a Flux HelmRelease with `upgrade.crds: CreateReplace`.
+Helm does not upgrade CRDs. Apply the chart's `crds/` directory (including
+`providerclasses.yaml`, `forgeclasses.yaml` and the updated
+`projectworkspaces.yaml`) before upgrading, or use a Flux HelmRelease with `upgrade.crds: CreateReplace`.
 Without the class CRDs the controller runs as before: bare provider names and
 the configured forge keep working, named classes fail closed, and class
 status is off. One cluster should run one controller that creates default
