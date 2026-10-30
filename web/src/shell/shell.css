@@ -124,7 +124,7 @@
 .dash-stat.bad .dash-stat-n { color: var(--shell-danger); }
 .dash-list { display: flex; flex-direction: column; gap: var(--openui-space-s); }
 .dash-toolbar { display: flex; flex-wrap: wrap; gap: var(--openui-space-s) var(--openui-space-m); align-items: flex-end; }
-.dash-toolbar .field { flex: 0 1 200px; }
+.dash-toolbar .field { flex: 0 1 auto; min-width: 180px; }
 .dash-toolbar .dash-filter { flex: 1 1 280px; }
 .dash-toolbar .text-input { width: 100%; }
 .dash-count { display: flex; gap: var(--openui-space-m); align-items: center; min-height: 24px; }
