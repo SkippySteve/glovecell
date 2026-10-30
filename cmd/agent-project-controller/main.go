@@ -22,6 +22,7 @@ import (
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/forgejo"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/githubhost"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/network"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/orchestrator"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/preflight"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/projects"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/providerbroker"
@@ -399,6 +400,12 @@ func run(ctx context.Context) error {
 	if e = reconciler.Config.Validate(); e != nil {
 		return e
 	}
+	// Orchestrator adapters an OrchestratorClass may name. Orca and command
+	// clients grant nothing in the cluster today (the control-host registrar
+	// does); T3 joins when T3 Connect is configured below.
+	if reconciler.Orchestrators, e = orchestrator.NewRegistry(orchestrator.NewOrca(direct, ns), orchestrator.NewCommand(direct, ns)); e != nil {
+		return e
+	}
 	if v := os.Getenv("T3_CONNECT_ENABLED"); v != "" && v != "true" && v != "false" {
 		return errors.New("T3_CONNECT_ENABLED must be true or false")
 	}
@@ -409,12 +416,21 @@ func run(ctx context.Context) error {
 			return e
 		}
 		access := &t3.Managed{Registry: &t3.Registry{Client: direct, Namespace: ns, Cloud: cloud}, Config: config, Connector: env("T3_CONNECT_CONNECTOR", "/opt/t3/cloudflared")}
+		// Workspaces without a class keep using T3 Connect: it is the
+		// default (translated "t3" class), and also the adapter for classes
+		// naming projects.agentwork.dev/t3.
 		reconciler.Access = access
+		if e = reconciler.Orchestrators.Register(access); e != nil {
+			return e
+		}
 		if e = manager.Add(access); e != nil {
 			return e
 		}
 	}
 	if e = reconciler.Setup(manager); e != nil {
+		return e
+	}
+	if e = (&orchestrator.ClassReconciler{Client: direct, Registry: reconciler.Orchestrators}).Setup(manager); e != nil {
 		return e
 	}
 	if e = manager.AddHealthzCheck("healthz", healthz.Ping); e != nil {

@@ -36,6 +36,10 @@ type WorkspaceSpec struct {
 	// runs: removing an entry revokes that provider for this project only.
 	// The controller needs a configured provider lease source.
 	Providers []ProviderGrant `json:"providers,omitempty"`
+	// OrchestratorClassName names the OrchestratorClass whose adapter manages
+	// agent orchestrator access. Empty means none (the deployment default).
+	// Immutable once set.
+	OrchestratorClassName string `json:"orchestratorClassName,omitempty"`
 }
 
 // ProviderGrant is one operator opt-in to a brokered provider. The worker then
@@ -104,8 +108,14 @@ func (w *ProjectWorkspaceList) DeepCopyObject() runtime.Object {
 	_ = json.Unmarshal(b, out)
 	return out
 }
+
+// knownTypes collects the kinds other files in this package define, so a new
+// kind registers itself without editing AddToScheme.
+var knownTypes []runtime.Object
+
 func AddToScheme(s *runtime.Scheme) error {
 	s.AddKnownTypes(GroupVersion, &ProjectWorkspace{}, &ProjectWorkspaceList{})
+	s.AddKnownTypes(GroupVersion, knownTypes...)
 	metav1.AddToGroupVersion(s, GroupVersion)
 	return nil
 }

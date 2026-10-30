@@ -51,7 +51,17 @@ spec:
                   message: Pause the workspace before enrolling repositories.
                 - rule: "!has(oldSelf.repositories) || (has(self.repositories) && oldSelf.repositories.all(p, self.repositories.exists(q, p == q)))"
                   message: Repository entries are immutable; individual removal requires a verified cleanup operation.
+                - rule: "!has(oldSelf.orchestratorClassName) || has(self.orchestratorClassName)"
+                  message: orchestratorClassName is immutable once set; request a new workspace.
               properties:
+                orchestratorClassName:
+                  description: Name of the OrchestratorClass whose adapter manages agent orchestrator access. Empty means none (the deployment default). Immutable once set.
+                  type: string
+                  maxLength: 253
+                  pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$'
+                  x-kubernetes-validations:
+                    - rule: self == oldSelf
+                      message: orchestratorClassName is immutable once set; request a new workspace.
                 repositories:
                   type: array
                   maxItems: 16

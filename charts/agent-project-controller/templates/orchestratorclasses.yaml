@@ -1,0 +1,25 @@
+{{- $controllers := dict "t3" "projects.agentwork.dev/t3" "orca" "projects.agentwork.dev/orca" "command" "projects.agentwork.dev/command" }}
+{{- range $key := list "t3" "orca" "command" }}
+{{- $class := index $.Values.orchestratorClasses $key }}
+{{- if not (kindIs "bool" $class.enabled) }}
+{{- fail (printf "orchestratorClasses.%s.enabled must be a boolean" $key) }}
+{{- end }}
+{{- if $class.enabled }}
+{{- if and (eq $key "t3") (not $.Values.t3Connect.enabled) }}
+{{- fail "orchestratorClasses.t3.enabled requires t3Connect.enabled" }}
+{{- end }}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" $class.name) }}
+{{- fail (printf "orchestratorClasses.%s.name must be a DNS subdomain name" $key) }}
+{{- end }}
+---
+apiVersion: projects.agentwork.dev/v1alpha1
+kind: OrchestratorClass
+metadata:
+  name: {{ $class.name }}
+  labels:
+    app.kubernetes.io/managed-by: {{ $.Release.Service }}
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+spec:
+  controllerName: {{ index $controllers $key }}
+{{- end }}
+{{- end }}
