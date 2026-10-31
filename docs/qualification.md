@@ -12,8 +12,8 @@ The test suite checks inspected TLS host/method/path denial, unsafe destination 
 To test CRD transition rules and resource retries against a local API server:
 
 ```sh
-go install sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.0.0-20260125163108-a19ec76a3c5d
-export KUBEBUILDER_ASSETS="$(setup-envtest use 1.34.1 -p path)"
+go install sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.24.1
+export KUBEBUILDER_ASSETS="$(setup-envtest use 1.36.2 -p path)"
 go test -race -count=1 ./...
 ```
 
