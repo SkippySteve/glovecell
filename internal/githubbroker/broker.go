@@ -495,6 +495,15 @@ func (b *Broker) Revoke(ctx context.Context, out io.Writer) error {
 // ConfigFromEnv reads the broker configuration.
 func ConfigFromEnv() (Config, error) {
 	c := Config{Namespace: os.Getenv("POD_NAMESPACE"), State: os.Getenv("GITHUB_BROKER_STATE"), Lease: os.Getenv("GITHUB_BROKER_LEASE"), ClientID: os.Getenv("GITHUB_APP_CLIENT_ID")}
+	// The client ID is not secret, but reading it from the same Secret as the
+	// client secret lets an operator configure the App in one step.
+	if path := os.Getenv("GITHUB_APP_CLIENT_ID_FILE"); path != "" && c.ClientID == "" {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return Config{}, errors.New("GITHUB_APP_CLIENT_ID_FILE unreadable")
+		}
+		c.ClientID = strings.TrimSpace(string(raw))
+	}
 	if path := os.Getenv("GITHUB_APP_CLIENT_SECRET_FILE"); path != "" {
 		raw, err := os.ReadFile(path)
 		if err != nil {
@@ -503,7 +512,7 @@ func ConfigFromEnv() (Config, error) {
 		c.ClientSecret = strings.TrimSpace(string(raw))
 	}
 	if c.Namespace == "" || c.State == "" || c.Lease == "" || c.State == c.Lease || c.ClientID == "" || c.ClientSecret == "" || strings.ContainsAny(c.ClientID, "/?#% ") {
-		return Config{}, errors.New("POD_NAMESPACE, GITHUB_BROKER_STATE, GITHUB_BROKER_LEASE, GITHUB_APP_CLIENT_ID and GITHUB_APP_CLIENT_SECRET_FILE are required")
+		return Config{}, errors.New("POD_NAMESPACE, GITHUB_BROKER_STATE, GITHUB_BROKER_LEASE, GITHUB_APP_CLIENT_ID (or _FILE) and GITHUB_APP_CLIENT_SECRET_FILE are required")
 	}
 	return c, nil
 }

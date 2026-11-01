@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -275,5 +276,25 @@ func TestUnboundSecretsRefused(t *testing.T) {
 	h.c.Update(context.Background(), &s)
 	if err := h.b.Authorize(context.Background(), &bytes.Buffer{}); err == nil {
 		t.Fatal("unbound lease Secret used")
+	}
+}
+
+func TestConfigFromEnvReadsClientFiles(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(dir+"/id", []byte("Iv1.client\n"), 0o600)
+	os.WriteFile(dir+"/secret", []byte("secret\n"), 0o600)
+	t.Setenv("POD_NAMESPACE", "broker")
+	t.Setenv("GITHUB_BROKER_STATE", "github-state")
+	t.Setenv("GITHUB_BROKER_LEASE", "github-lease")
+	t.Setenv("GITHUB_APP_CLIENT_ID", "")
+	t.Setenv("GITHUB_APP_CLIENT_ID_FILE", dir+"/id")
+	t.Setenv("GITHUB_APP_CLIENT_SECRET_FILE", dir+"/secret")
+	c, err := ConfigFromEnv()
+	if err != nil || c.ClientID != "Iv1.client" || c.ClientSecret != "secret" {
+		t.Fatal(c, err)
+	}
+	t.Setenv("GITHUB_BROKER_LEASE", "github-state")
+	if _, err := ConfigFromEnv(); err == nil {
+		t.Fatal("state and lease in one Secret accepted")
 	}
 }

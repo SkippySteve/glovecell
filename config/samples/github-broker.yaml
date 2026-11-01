@@ -1,11 +1,10 @@
 # Example: the GitHub broker (docs/design/github-brokering.md). Replace the
 # image digest. Before the first start:
-#   1. create Secret github-app-client (key client-secret) from the App's
-#      client secret, without echoing it:
+#   1. create Secret github-app-client with the App's client ID and client
+#      secret (keys client-id, client-secret), without echoing the secret:
 #        kubectl -n github-broker create secret generic github-app-client \
-#          --from-file=client-secret=/dev/stdin
-#   2. set GITHUB_APP_CLIENT_ID below (it is not secret);
-#   3. authorize once with the device flow:
+#          --from-literal=client-id=<client id> --from-file=client-secret=/dev/stdin
+#   2. authorize once with the device flow:
 #        kubectl -n github-broker exec -it deploy/github-broker -- \
 #          agent-project-controller github-broker authorize
 # Then set GITHUB_LEASE_SECRET=github-broker/github-lease on the controller.
@@ -129,8 +128,8 @@ spec:
           value: github-state
         - name: GITHUB_BROKER_LEASE
           value: github-lease
-        - name: GITHUB_APP_CLIENT_ID
-          value: Iv23-replace-me
+        - name: GITHUB_APP_CLIENT_ID_FILE
+          value: /client/client-id
         - name: GITHUB_APP_CLIENT_SECRET_FILE
           value: /client/client-secret
         securityContext:
