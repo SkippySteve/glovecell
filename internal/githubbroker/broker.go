@@ -35,12 +35,15 @@ import (
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/githubpolicy"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/proxy"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // BindingLabel marks the broker's two Secrets. Its value is the lease
-// Secret's name. The broker never creates or adopts other Secrets.
+// Secret's name. The broker creates them on first use and never adopts other
+// Secrets.
 const BindingLabel = "github.agentwork.dev/broker"
 
 // LeaseKey is the lease Secret key the controller reads.
@@ -128,10 +131,21 @@ func (b *Broker) http() *http.Client {
 	return c
 }
 
-// secret reads one of the broker's Secrets and checks its binding.
+// secret reads one of the broker's Secrets and checks its binding. A missing
+// Secret is created empty with the binding label; an existing Secret without
+// it is refused rather than adopted.
 func (b *Broker) secret(ctx context.Context, name string) (*corev1.Secret, error) {
 	var s corev1.Secret
-	if err := b.Client.Get(ctx, types.NamespacedName{Namespace: b.Config.Namespace, Name: name}, &s); err != nil {
+	key := types.NamespacedName{Namespace: b.Config.Namespace, Name: name}
+	err := b.Client.Get(ctx, key, &s)
+	if apierrors.IsNotFound(err) {
+		s = corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: b.Config.Namespace, Labels: map[string]string{BindingLabel: b.Config.Lease}}, Type: corev1.SecretTypeOpaque}
+		if err = b.Client.Create(ctx, &s); err != nil && !apierrors.IsAlreadyExists(err) {
+			return nil, errors.New("broker Secret " + name + " unavailable")
+		}
+		err = b.Client.Get(ctx, key, &s)
+	}
+	if err != nil {
 		return nil, errors.New("broker Secret " + name + " unavailable")
 	}
 	if s.Labels[BindingLabel] != b.Config.Lease {

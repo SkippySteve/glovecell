@@ -84,8 +84,10 @@ worker --(CONNECT, inspected TLS)--> project proxy --(credential attached if all
   successful answer in memory until stored, and publishes only stored tokens.
   If it crashes between GitHub's answer and the store, the spent refresh token
   is refused on the next try and the broker withdraws the lease and asks for a
-  new authorization: it fails closed rather than guessing. It needs `get` and
-  `patch` on its two Secrets, by name, and nothing else.
+  new authorization: it fails closed rather than guessing. It creates its two
+  Secrets on first use (refusing existing ones without its label) and needs
+  `create` on Secrets plus `get` and `patch` on those two, by name, in its own
+  namespace only.
 - **Controller.** With `GITHUB_LEASE_SECRET=<namespace>/<name>` it copies the
   lease (or `{"enabled":false}` if it is missing, malformed or within a minute
   of expiry) and the project's policy into the proxy-ca Secret of each project

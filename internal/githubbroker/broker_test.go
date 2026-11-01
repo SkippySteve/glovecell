@@ -98,7 +98,6 @@ func newHarness(t *testing.T) *harness {
 	label := map[string]string{BindingLabel: "github-lease"}
 	h.c = fake.NewClientBuilder().WithScheme(scheme).WithObjects(
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "github-state", Namespace: "broker", Labels: label}},
-		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "github-lease", Namespace: "broker", Labels: label}},
 	).WithInterceptorFuncs(interceptor.Funcs{Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
 		if h.failPatch {
 			return errors.New("API unavailable")
@@ -270,6 +269,10 @@ func TestRevokeDisablesFirstAndConfirmsAtGitHub(t *testing.T) {
 
 func TestUnboundSecretsRefused(t *testing.T) {
 	h := newHarness(t)
+	// The missing lease Secret is created with the binding label.
+	if err := h.b.publish(context.Background(), nil, "test"); err != nil {
+		t.Fatal(err)
+	}
 	var s corev1.Secret
 	h.c.Get(context.Background(), types.NamespacedName{Namespace: "broker", Name: "github-lease"}, &s)
 	s.Labels = nil
