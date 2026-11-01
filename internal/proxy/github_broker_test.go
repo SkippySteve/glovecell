@@ -146,8 +146,8 @@ type githubHarness struct {
 	proxy  *url.URL
 	ca     *x509.CertPool
 	client *http.Client
-	audit  *bytes.Buffer
-	seen   bytes.Buffer // every byte the worker received
+	audit  *lockedBuffer // the proxy writes from its own goroutines
+	seen   bytes.Buffer  // every byte the worker received
 }
 
 func (h *githubHarness) set(policy *githubpolicy.Policy, lease *GitHubLease) {
@@ -175,7 +175,7 @@ const tokenTwo = "ghu_SecondAccessTokenValue00000000002"
 
 func newGitHubHarness(t *testing.T) *githubHarness {
 	t.Helper()
-	h := &githubHarness{t: t, audit: &bytes.Buffer{}}
+	h := &githubHarness{t: t, audit: &lockedBuffer{}}
 	h.fake = &fakeGitHub{token: tokenOne, refs: map[string]string{"SkippySteve/app refs/heads/main": ghA}, repos: map[string]bool{}, nodes: map[string]string{"R_app": "SkippySteve/app", "R_other": "Someone/else"}}
 	upstream := httptest.NewTLSServer(h.fake)
 	t.Cleanup(upstream.Close)
@@ -189,8 +189,7 @@ func newGitHubHarness(t *testing.T) *githubHarness {
 	}
 	p.GitHubPolicy = func() ([]byte, error) { h.mu.Lock(); defer h.mu.Unlock(); return h.policy, nil }
 	p.GitHubAccess = func() ([]byte, error) { h.mu.Lock(); defer h.mu.Unlock(); return h.lease, nil }
-	var auditMu sync.Mutex
-	p.Audit = slog.New(slog.NewJSONHandler(lockedWriter{&auditMu, h.audit}, nil))
+	p.Audit = slog.New(slog.NewJSONHandler(h.audit, nil))
 	upstreamURL, _ := url.Parse(upstream.URL)
 	roots := x509.NewCertPool()
 	roots.AddCert(upstream.Certificate())
@@ -208,15 +207,24 @@ func newGitHubHarness(t *testing.T) *githubHarness {
 	return h
 }
 
-type lockedWriter struct {
-	mu *sync.Mutex
-	w  io.Writer
+// lockedBuffer is the audit log. The proxy may still be writing a line (for
+// example the verdict of an interrupted push) while a test reads it, so reads
+// take the same lock as writes.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
 }
 
-func (l lockedWriter) Write(p []byte) (int, error) {
+func (l *lockedBuffer) Write(p []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.w.Write(p)
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
 }
 
 // do sends a request as the worker would: with the placeholder credential.
