@@ -145,6 +145,9 @@ type Reconciler struct {
 	// ProviderLeases is the trusted Secret the provider broker writes; nil
 	// turns spec.providers off (see providers.go).
 	ProviderLeases *types.NamespacedName
+	// GitHubLease is the trusted Secret the GitHub broker writes; nil turns
+	// spec.github off (see github.go).
+	GitHubLease *types.NamespacedName
 }
 
 var duration, _ = otel.Meter("agent-project-controller").Float64Histogram("workspace.reconcile.duration", metric.WithUnit("s"))
@@ -229,7 +232,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ct
 			return ctrl.Result{}, lanErr
 		}
 		// Nor brokered provider access.
-		if _, providerErr := r.applyProviders(ctx, w, nil); providerErr != nil {
+		if _, providerErr := r.applyProviders(ctx, w, nil, nil); providerErr != nil {
 			return ctrl.Result{}, providerErr
 		}
 		if statusErr := r.status(ctx, w, "Blocked", false, "PolicyRejected", e.Error()); statusErr != nil {
@@ -347,6 +350,9 @@ func (r *Reconciler) validate(ctx context.Context, w *api.ProjectWorkspace) erro
 		return e
 	}
 	if e := r.validateLANHosts(w); e != nil {
+		return e
+	}
+	if e := r.validateGitHub(w); e != nil {
 		return e
 	}
 	return r.validateProviders(w)
@@ -509,7 +515,7 @@ func (r *Reconciler) ensure(ctx context.Context, w *api.ProjectWorkspace) error 
 	}
 	// Brokered providers apply early for the same reason: a revocation must
 	// not wait for an unrelated preparation step.
-	brokered, e := r.applyProviders(ctx, w, providerNames(w))
+	brokered, e := r.applyProviders(ctx, w, providerNames(w), w.Spec.GitHub)
 	if e != nil {
 		return e
 	}
@@ -1294,6 +1300,9 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 		} else if !apierrors.IsNotFound(err) {
 			return err
 		}
+	}
+	if brokered != nil {
+		maps.Copy(proxyData, githubProxyData(brokered.github))
 	}
 	if r.MuseSubscriptionKeyFile != "" {
 		// A missing/revoked subscription key blocks only Muse at the gateway.

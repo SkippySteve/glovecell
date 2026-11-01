@@ -1,0 +1,183 @@
+# Example: the GitHub broker (docs/design/github-brokering.md). Replace the
+# image digest. Before the first start:
+#   1. create Secret github-app-client (key client-secret) from the App's
+#      client secret, without echoing it:
+#        kubectl -n github-broker create secret generic github-app-client \
+#          --from-file=client-secret=/dev/stdin
+#   2. set GITHUB_APP_CLIENT_ID below (it is not secret);
+#   3. authorize once with the device flow:
+#        kubectl -n github-broker exec -it deploy/github-broker -- \
+#          agent-project-controller github-broker authorize
+# Then set GITHUB_LEASE_SECRET=github-broker/github-lease on the controller.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: github-broker
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: github-broker
+  namespace: github-broker
+---
+# The broker never creates Secrets: both exist up front, bound by label.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: github-state
+  namespace: github-broker
+  labels:
+    github.agentwork.dev/broker: github-lease
+type: Opaque
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: github-lease
+  namespace: github-broker
+  labels:
+    github.agentwork.dev/broker: github-lease
+type: Opaque
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: github-broker
+  namespace: github-broker
+rules:
+- apiGroups: ['']
+  resources: [secrets]
+  resourceNames: [github-state, github-lease]
+  verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: github-broker
+  namespace: github-broker
+subjects:
+- kind: ServiceAccount
+  name: github-broker
+  namespace: github-broker
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: github-broker
+---
+# The controller reads only the lease Secret, never the state.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: github-lease-reader
+  namespace: github-broker
+rules:
+- apiGroups: ['']
+  resources: [secrets]
+  resourceNames: [github-lease]
+  verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: github-lease-reader
+  namespace: github-broker
+subjects:
+- kind: ServiceAccount
+  name: controller
+  namespace: agent-project-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: github-lease-reader
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: github-broker
+  namespace: github-broker
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: github-broker
+  template:
+    metadata:
+      labels:
+        app: github-broker
+    spec:
+      serviceAccountName: github-broker
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: broker
+        image: registry.example.com/agent-project-controller@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        args: [github-broker]
+        env:
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: GITHUB_BROKER_STATE
+          value: github-state
+        - name: GITHUB_BROKER_LEASE
+          value: github-lease
+        - name: GITHUB_APP_CLIENT_ID
+          value: Iv23-replace-me
+        - name: GITHUB_APP_CLIENT_SECRET_FILE
+          value: /client/client-secret
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: [ALL]
+        volumeMounts:
+        - name: client
+          mountPath: /client
+          readOnly: true
+      volumes:
+      - name: client
+        secret:
+          secretName: github-app-client
+          defaultMode: 0400
+---
+# Egress: DNS, the Kubernetes API, and GitHub's OAuth and API hosts only.
+# An allow policy that selects only the broker pod. The broker listens on no
+# port, so there is no ingress rule.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: github-broker
+  namespace: github-broker
+spec:
+  endpointSelector:
+    matchLabels:
+      app: github-broker
+  egress:
+  - toEndpoints:
+    - matchLabels:
+        k8s:io.kubernetes.pod.namespace: kube-system
+        k8s:k8s-app: kube-dns
+    toPorts:
+    - ports:
+      - port: '53'
+        protocol: ANY
+      rules:
+        dns:
+        - matchName: github.com
+        - matchName: api.github.com
+  - toEntities: [kube-apiserver]
+  - toFQDNs:
+    - matchName: github.com
+    - matchName: api.github.com
+    toPorts:
+    - ports:
+      - port: '443'
+        protocol: TCP
