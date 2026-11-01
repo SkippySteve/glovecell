@@ -12,3 +12,14 @@
 # list "0123456789abcdef" in strings.Trim, not a credential). It exists only in
 # the history of the browser-sessions work (PR #76), which now uses a regexp.
 adf7f794d79f85649fe5fa292f7df7aff2ed8a44:internal/browser/api.go:generic-api-key:219
+
+# False positive: the example call in the GitHub brokering design doc
+# (curl -H 'Authorization: token placeholder' ...). The proxy replaces any
+# placeholder with the brokered token, so the doc shows a literal placeholder,
+# not a credential. Introduced by PR #96.
+c506e72c35249c81bb15af83c6760d12cfcc044a:docs/design/github-brokering.md:curl-auth-header:176
+
+# False positive: the fixed test token ("0123456789abcdef" twice) in the voice
+# target tests on branch task/orca-pilot/glovecell-voice. gitleaks scans every
+# fetched branch, so this branch commit failed security / source on main too.
+2596034a85a0cc6325b43782d5d5a8e9eb8038e8:internal/voice/targets/targets_test.go:generic-api-key:120
