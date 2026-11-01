@@ -12,14 +12,14 @@ const maxFrame = 32 << 20 // 32 MiB
 
 // Header is the JSON metadata for one helper frame.
 type Header struct {
-	Op     string `json:"op"`
-	Path   string `json:"path,omitempty"`
-	To     string `json:"to,omitempty"`
-	Mode   uint32 `json:"mode,omitempty"`
-	Size   int64  `json:"size,omitempty"`
-	Offset int64  `json:"offset,omitempty"`
-	Error  string `json:"error,omitempty"`
-	OK     bool   `json:"ok,omitempty"`
+	Op    string `json:"op"`
+	Path  string `json:"path,omitempty"`
+	To    string `json:"to,omitempty"`
+	Mode  uint32 `json:"mode,omitempty"`
+	Size  int64  `json:"size,omitempty"`
+	Offset int64 `json:"offset,omitempty"`
+	Error string `json:"error,omitempty"`
+	OK    bool   `json:"ok,omitempty"`
 }
 
 // EncodeFrame writes one length-prefixed frame: uint32 total, uint32 headerLen, JSON header, payload.

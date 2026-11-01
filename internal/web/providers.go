@@ -157,3 +157,4 @@ func (s *Server) providerAudit(ctx context.Context, obj *api.ProjectWorkspace, a
 	}
 	return s.Client.Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: s.Namespace, Labels: map[string]string{api.OwnerLabel: string(obj.UID)}}, Immutable: &immutable, Data: data})
 }
+
