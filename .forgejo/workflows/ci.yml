@@ -39,7 +39,7 @@ jobs:
             curl -s -o /dev/null -X POST -H "Authorization: token $TOKEN" -H 'Content-Type: application/json' \
               -d "$(python3 -c 'import json,sys; print(json.dumps({"context":sys.argv[1],"state":"success","description":sys.argv[2][:250]}))' "$1" "$2")" "$API/$SHA"
           }
-          go test -race -count=1 ./... > /tmp/race.txt 2>&1; echo "rc=$?" >> /tmp/race.txt
+          rc=0; go test -race -count=1 ./... > /tmp/race.txt 2>&1 || rc=$?; echo "rc=$rc" >> /tmp/race.txt
           cat > /tmp/diag.py <<'PY'
           import re
           lines = open('/tmp/race.txt', errors='replace').read().splitlines()
