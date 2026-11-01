@@ -8,7 +8,6 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
-  statuses: write
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -28,53 +27,6 @@ jobs:
         run: |
           go install sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.24.1
           echo "KUBEBUILDER_ASSETS=$(setup-envtest use 1.36.2 -p path)" >> "$GITHUB_ENV"
-      - name: DIAG race tests
-        if: always()
-        env:
-          TOKEN: ${{ github.token }}
-          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          API: ${{ github.server_url }}/api/v1/repos/${{ github.repository }}/statuses
-        run: |
-          post() {
-            curl -s -o /dev/null -X POST -H "Authorization: token $TOKEN" -H 'Content-Type: application/json' \
-              -d "$(python3 -c 'import json,sys; print(json.dumps({"context":sys.argv[1],"state":"success","description":sys.argv[2][:250]}))' "$1" "$2")" "$API/$SHA"
-          }
-          rc=0; go test -race -count=1 ./... > /tmp/race.txt 2>&1 || rc=$?; echo "rc=$rc" >> /tmp/race.txt
-          cat > /tmp/diag.py <<'PY'
-          import re
-          lines = open('/tmp/race.txt', errors='replace').read().splitlines()
-          out = []
-          i = 0
-          while i < len(lines):
-              l = lines[i]
-              if l.startswith('WARNING: DATA RACE'):
-                  frames = []
-                  j = i + 1
-                  while j < len(lines) and not lines[j].startswith('=====') and len(frames) < 14:
-                      m = re.search(r'([\w./-]+\.go):(\d+)', lines[j])
-                      if m and '/go/src/' not in lines[j] and 'runtime/' not in lines[j]:
-                          frames.append(m.group(1).split('/')[-1] + ':' + m.group(2))
-                      elif re.match(r'^(Write|Read|Previous|Goroutine)', lines[j]):
-                          frames.append('|' + lines[j].split(' by ')[0])
-                      j += 1
-                  out.append('RACE ' + ' '.join(frames))
-                  i = j
-                  continue
-              if re.match(r'^(--- FAIL|FAIL|panic:|rc=|# |\s+\S+_test\.go:\d+:|\S+\.go:\d+:\d+:|testing\.go:\d+: race)', l):
-                  out.append(l.strip())
-              i += 1
-          seen = set()
-          for o in out:
-              if o not in seen:
-                  seen.add(o)
-                  print(o[:250])
-          PY
-          python3 /tmp/diag.py > /tmp/diag.txt || echo "diag-err" > /tmp/diag.txt
-          i=0
-          while IFS= read -r line && [ $i -lt 80 ]; do
-            i=$((i+1)); post "diag-ci-$i" "$line"
-          done < /tmp/diag.txt
-          post diag-ci-count "lines=$i total=$(wc -l < /tmp/diag.txt)"
       - name: Go race tests, vet and Helm qualification
         run: |
           make test vet build
