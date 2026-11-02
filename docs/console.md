@@ -41,7 +41,7 @@ Opening a sandbox shows one workspace at a time. A sidebar lists every
 workspace (sandbox-control sandboxes and console projects, with counts of what
 waits on you and a **LAN** badge while LAN access is open) and the sections of
 the current one: **Overview**, **Internet**, **LAN devices**, **Packages**,
-**Downloads**, **Previews & dev links**, **Credentials**, **History**, plus **Runs** and
+**Files**, **Previews & dev links**, **Credentials**, **History**, plus **Runs** and
 **Settings** for sandbox-control sandboxes. A sticky header shows the workspace
 state, its pod, and every open grant with a countdown: web access (with Lock),
 each LAN grant (with Restrict) and live dev links. On narrow screens the sidebar
@@ -179,11 +179,23 @@ narrows the ranges or turns the feature off, a project whose grant is now refuse
 moves to **Needs attention**, its worker stops and its `lan-hosts` policy is
 deleted. Remove the grant to resume.
 
+## Subscription providers
+
+A project sandbox's **Credentials** section lists **Subscription providers**
+(Grok and Cursor) when the controller has a provider lease source
+(`PROVIDER_LEASES_SECRET`). **Enable** lets that sandbox run `grok` or
+`cursor-agent` with the operator's subscription; **Revoke** withdraws it. Both
+apply while the sandbox runs and need a signed-in OIDC operator. The sandbox
+gets only a short-lived pass; the login stays with an offline owner outside
+every sandbox. A note appears when the broker currently has no pass for a
+provider, for example because its login needs renewing. Each change is in
+**History**. See [brokered providers](brokered-providers.md).
+
 ## Download into sandbox
 
 Put a file from the internet into a running project sandbox without opening
-a shell there. Open the sandbox, choose **Downloads** (or **Download into
-sandbox** in the header) and:
+a shell there. Open the sandbox, choose **Files** (or **Download or upload
+files** in the header), keep the **Download from URL** tab and:
 
 1. **Check the URL.** Enter an `https://` URL and choose **Check**. The
    sandbox asks the server through its own proxy (a HEAD request; nothing is
@@ -219,11 +231,59 @@ check is accepted (the file came from an approved URL) and noted on the
 result. Redirect hops are checked with HEAD; a server that refuses HEAD (400,
 403, 405, 501) is asked with a GET that the proxy closes after the headers.
 
-The section is unavailable for sandbox-control workspaces: sandbox-control has
-no way to run the download helper inside them yet.
+sandbox-control workspaces that sandbox-control enrolls for downloads (catalog
+`DownloadContainer`, on its inspected egress proxy) show the same section. The
+console reaches sandbox-control through the `/sandboxes` mount: `GET
+/api/downloads`, `/api/download-check`, `/api/download` and `POST
+/download-check`, `/download`, `/download-cancel`, with sandbox-control's own
+origin and double-submit CSRF checks. sandbox-control serves the one-time
+grants from its egress proxy and runs the helper as `/usr/local/bin/sandbox-download
+fetch` in the workspace container; its checks and downloads appear in the
+workspace's History. Other sandbox-control workspaces say downloads are not
+enabled.
 
 See [security](security.md#downloads-into-a-sandbox) for how the one-time
 permission, the proxy and the file writing are protected.
+
+## Upload into sandbox
+
+Send a file from your own computer into a sandbox: typically one you could
+only download with your own logged-in browser session. Download it on your
+machine as usual, then open the sandbox, choose **Files** and the **Upload from
+this computer** tab:
+
+1. **Choose a file** with the picker or drop it on the card. A file above the
+   limit is refused before anything is sent.
+2. **Save into the sandbox.** The destination defaults to
+   `~/uploads/<file name>`, under the same rules as downloads (`~/` or
+   `/workspace/`, no `..`, symlinks refused). Optionally paste the expected
+   SHA-256 and tick **Overwrite if the file exists**. **Upload** opens a
+   confirmation.
+3. The sandbox first checks the destination (an existing file without
+   overwrite is refused before any byte is sent). The browser then sends the
+   file in parts of 8 MiB with progress, hashing what it reads. When the last
+   part is in, the sandbox checks the size and the optional SHA-256, moves the
+   file into place and reports its own SHA-256; the console shows it next to
+   the browser's and says whether they match. **Cancel upload**, closing the
+   page or a broken connection leaves nothing behind in the sandbox.
+
+Your browser reads the file itself and sends only its bytes to the console.
+Cookies, passwords and sessions for the site you downloaded it from never
+leave the browser; the sandbox never sees them and needs no web access for it.
+
+Limits: the same per-file cap as downloads (`DOWNLOAD_MAX_BYTES`; 1 GiB on
+Steve's cluster), one check, download or upload at a time per sandbox, and an
+upload with no new data for 2 minutes is abandoned. A workspace image built
+before uploads answers "image too old"; restarting the project on the current
+image fixes it.
+
+sandbox-control workspaces (orca-pilot, herdr) show the same tab when their
+sandbox-control release supports uploads (it advertises `uploads` in `GET
+/api/downloads`); older releases say uploads are not available yet. The
+console forwards `GET /api/upload` and `POST /upload-start`, `/upload-data`,
+`/upload-cancel`. Raw parts (`/upload-data`) need `application/octet-stream`
+and the CSRF token in `X-Sandbox-CSRF`, plus the same origin; sandbox-control
+runs `/usr/local/bin/sandbox-download put ...` in the workspace container.
 
 ## Include pre-existing sandboxes
 

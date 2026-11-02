@@ -20,6 +20,7 @@ import (
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/controller"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/download"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/forgejo"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/githubbroker"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/githubhost"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/network"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/preflight"
@@ -31,7 +32,10 @@ import (
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/t3"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/telemetry"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/web"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -100,6 +104,34 @@ func lanFromEnv(provider network.Provider) (network.LANConfig, error) {
 		return network.LANConfig{}, errors.New("LAN_GRANT_ALLOWED_CIDRS requires NETWORK_PROVIDER=cilium")
 	}
 	return lan, nil
+}
+
+// providerLeasesFromEnv reads the optional brokered provider lease source,
+// PROVIDER_LEASES_SECRET=<namespace>/<name>: the Secret the provider broker
+// writes in lease mode. Unset keeps spec.providers off.
+func providerLeasesFromEnv(provider network.Provider) (*types.NamespacedName, error) {
+	return leaseSecretFromEnv("PROVIDER_LEASES_SECRET", provider)
+}
+
+// githubLeaseFromEnv reads GITHUB_LEASE_SECRET=<namespace>/<name>: the lease
+// Secret the GitHub broker writes. Unset keeps spec.github off.
+func githubLeaseFromEnv(provider network.Provider) (*types.NamespacedName, error) {
+	return leaseSecretFromEnv("GITHUB_LEASE_SECRET", provider)
+}
+
+func leaseSecretFromEnv(variable string, provider network.Provider) (*types.NamespacedName, error) {
+	raw := os.Getenv(variable)
+	if raw == "" {
+		return nil, nil
+	}
+	ns, name, ok := strings.Cut(raw, "/")
+	if !ok || len(validation.IsDNS1123Label(ns)) != 0 || len(validation.IsDNS1123Subdomain(name)) != 0 {
+		return nil, errors.New(variable + " must be <namespace>/<secret name>")
+	}
+	if _, ok := provider.(network.ProviderPolicy); !ok {
+		return nil, errors.New(variable + " requires NETWORK_PROVIDER=cilium")
+	}
+	return &types.NamespacedName{Namespace: ns, Name: name}, nil
 }
 
 // downloadsFromEnv reads the optional "Download into sandbox" setting. It is
@@ -205,6 +237,20 @@ func run(ctx context.Context) error {
 				return errors.New("trusted broker client unavailable")
 			}
 			return providerbroker.Run(ctx, c, config)
+		case "github-broker":
+			config, err := ctrl.GetConfig()
+			if err != nil {
+				return errors.New("trusted Kubernetes client unavailable")
+			}
+			scheme := runtime.NewScheme()
+			if err := clientgoscheme.AddToScheme(scheme); err != nil {
+				return err
+			}
+			c, err := client.New(config, client.Options{Scheme: scheme})
+			if err != nil {
+				return errors.New("trusted broker client unavailable")
+			}
+			return githubbroker.Run(ctx, c, os.Args[2:])
 		case "register-projects":
 			return projects.Register(ctx)
 		case "version", "--version":
@@ -244,6 +290,10 @@ func run(ctx context.Context) error {
 		case "fetch":
 			// Run by the controller inside a project worker for "Download into sandbox".
 			return download.RunHelper(os.Stdin, os.Stdout)
+		case "put":
+			// Run by the controller inside a project worker for "Upload into sandbox";
+			// the file arrives on stdin.
+			return download.RunPut(os.Args[2:], os.Stdin, os.Stdout)
 		case "download-grant":
 			// Run by the controller inside the project proxy pod.
 			return proxy.GrantCLI(ctx, os.Stdin, os.Stdout)
@@ -302,7 +352,10 @@ func run(ctx context.Context) error {
 		return e
 	}
 	config := ctrl.GetConfigOrDie()
-	manager, e := ctrl.NewManager(config, ctrl.Options{Scheme: scheme, LeaderElection: true, LeaderElectionID: "agent-project-controller", LeaderElectionNamespace: ns, HealthProbeBindAddress: ":8081", Metrics: metricsserver.Options{BindAddress: "0"}, Cache: cache.Options{ByObject: map[client.Object]cache.ByObject{&api.ProjectWorkspace{}: {Namespaces: map[string]cache.Config{ns: {}}}}}, Client: client.Options{Cache: &client.CacheOptions{DisableFor: []client.Object{&api.ProjectWorkspace{}}}}})
+	// Secrets are never cached: a cache would start a cluster-wide Secret
+	// informer, and the controller may read Secrets only in its own namespace
+	// and in project namespaces (RoleBindings, not a ClusterRole).
+	manager, e := ctrl.NewManager(config, ctrl.Options{Scheme: scheme, LeaderElection: true, LeaderElectionID: "agent-project-controller", LeaderElectionNamespace: ns, HealthProbeBindAddress: ":8081", Metrics: metricsserver.Options{BindAddress: "0"}, Cache: cache.Options{ByObject: map[client.Object]cache.ByObject{&api.ProjectWorkspace{}: {Namespaces: map[string]cache.Config{ns: {}}}}}, Client: client.Options{Cache: &client.CacheOptions{DisableFor: []client.Object{&api.ProjectWorkspace{}, &corev1.Secret{}}}}})
 	if e != nil {
 		return e
 	}
@@ -326,7 +379,7 @@ func run(ctx context.Context) error {
 	if e != nil {
 		return e
 	}
-	reconciler := &controller.Reconciler{LAN: lan, Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, GitHost: gitHost, ForgejoOrigin: origin, Owner: owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling, RegistrarNamespace: os.Getenv("REGISTRAR_NAMESPACE"), WorkerExecClusterRole: os.Getenv("WORKER_EXEC_CLUSTER_ROLE"), ControllerServiceAccount: env("CONTROLLER_SERVICE_ACCOUNT", controller.DefaultControllerServiceAccount)}}
+	reconciler := &controller.Reconciler{LAN: lan, Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, GitHost: gitHost, ForgejoOrigin: origin, Owner: owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling, RegistrarNamespace: os.Getenv("REGISTRAR_NAMESPACE"), WorkerExecClusterRole: os.Getenv("WORKER_EXEC_CLUSTER_ROLE"), ProjectAccessClusterRole: os.Getenv("PROJECT_ACCESS_CLUSTER_ROLE"), ControllerServiceAccount: env("CONTROLLER_SERVICE_ACCOUNT", controller.DefaultControllerServiceAccount)}}
 	if os.Getenv("GITHUB_REPOSITORY_TOKEN_FILE") != "" {
 		reconciler.GitHubToken, e = secret("GITHUB_REPOSITORY_TOKEN_FILE")
 		if e != nil {
@@ -341,6 +394,12 @@ func run(ctx context.Context) error {
 	}
 	reconciler.IndependentCodexWorkspaceUID = os.Getenv("INDEPENDENT_CODEX_WORKSPACE_UID")
 	reconciler.MuseSubscriptionKeyFile = os.Getenv("MUSE_SUBSCRIPTION_KEY_FILE")
+	if reconciler.ProviderLeases, e = providerLeasesFromEnv(networkProvider); e != nil {
+		return e
+	}
+	if reconciler.GitHubLease, e = githubLeaseFromEnv(networkProvider); e != nil {
+		return e
+	}
 	if host := os.Getenv("READER_HTTPS_HOST"); host != "" {
 		route := &proxy.ReaderRoute{Host: host, Upstream: os.Getenv("READER_UPSTREAM")}
 		if err := route.Validate(); err != nil {
@@ -351,6 +410,19 @@ func run(ctx context.Context) error {
 			return errors.New("reader workspace UID required")
 		}
 		reconciler.ReaderRoute = route
+	}
+	// Reference rules: the deployment's read-only list every project's proxy
+	// gets (README "Reference rules"). Read at startup; an invalid list stops
+	// the controller rather than run with part of it.
+	if path := os.Getenv("REFERENCE_RULES_FILE"); path != "" {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("reference rules: %w", err)
+		}
+		if reconciler.Config.ReferenceRules, reconciler.Config.ReferenceDigest, err = proxy.ReferenceRules(raw); err != nil {
+			return fmt.Errorf("reference rules: %w", err)
+		}
+		slog.Info("reference rules loaded", "digest", reconciler.Config.ReferenceDigest, "rules", len(reconciler.Config.ReferenceRules))
 	}
 	if e = reconciler.Config.Validate(); e != nil {
 		return e
@@ -381,6 +453,11 @@ func run(ctx context.Context) error {
 	}
 	server := &web.Server{T3Connect: reconciler.Access != nil, Client: direct, Host: host, Namespace: ns, Owner: owner, Password: password, Origin: os.Getenv("PUBLIC_ORIGIN"), GitHost: gitHost, GitOrigin: origin, AllowBasic: os.Getenv("ALLOW_STATIC_LOGIN") == "true"}
 	server.GitHubOwner = reconciler.Config.GitHubOwner
+	server.Reference = web.Reference{Digest: reconciler.Config.ReferenceDigest, Rules: reconciler.Config.ReferenceRules}
+	if reconciler.ProviderLeases != nil {
+		server.Providers = &web.Providers{Status: reconciler.ProviderLeaseStatus}
+	}
+	server.GitHubBrokering = reconciler.GitHubLease != nil
 	if lan.Enabled() {
 		server.LAN = &web.LANGrants{Config: lan, Nodes: network.NodeAddresses}
 	}

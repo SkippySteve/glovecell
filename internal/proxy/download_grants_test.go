@@ -21,7 +21,8 @@ import (
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/download"
 )
 
-const grantToken = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+// A synthetic token (64 identical characters), obviously not a real credential.
+var grantToken = strings.Repeat("c", 64)
 
 type seen struct {
 	mu   sync.Mutex

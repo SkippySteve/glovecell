@@ -50,6 +50,15 @@ An explicit gateway must set `disableSNIFilter` to true. Native policy can limit
 
 Switching an existing project between `cilium` and `network-policy` is refused. The controller leaves the old proxy Service and policies in place and suspends the workspace. Remove and recreate the project after the dataplane procedure passes. See `docs/examples/network-policy-values.yaml` for the Helm shape. The sample Kustomize ClusterRole also grants NetworkPolicy and node read access so an overlay can select this profile. Remove those rules when the experimental profile is not installed.
 
+## Controller permissions
+
+The controller holds no Secret access and no namespace delete cluster-wide. It reads and writes Secrets in two places only:
+
+- the control namespace, for its credential ledgers (`apc-<uid>`, `apcp-<hash>`, `t3-connect-<uid>`), through Role `controller-secrets`;
+- each project namespace, for `git-identity`, `proxy-ca` and the operator's `model-access`, through RoleBinding `agent-project-controller-access`. The controller creates that binding for itself when it sets up the namespace. It points at the ClusterRole named by `PROJECT_ACCESS_CLUSTER_ROLE` (Secrets get/create/update/patch/delete, and get/delete on the namespace object; delete lets brokered provider access remove a `model-access` Secret it created). A RoleBinding in namespace `apc-<uid>` that grants `namespaces` applies to the namespace `apc-<uid>` itself, so the controller can delete its own project namespaces and no others.
+
+Secrets are never cached, so the controller never starts a cluster-wide Secret watch. The chart and `config/deploy` install both roles and the `bind` permission for exactly that ClusterRole. With `PROJECT_ACCESS_CLUSTER_ROLE` empty the controller creates no binding, for installations that still grant these verbs cluster-wide. When you narrow an existing installation, install the new image first, wait until every project namespace has the `agent-project-controller-access` binding, and only then remove the cluster-wide verbs.
+
 ## Build and configure
 
 Build and push the image to your registry. For release builds pass digest-pinned base references with `--build-arg GO_IMAGE=...` and `--build-arg RUNTIME_IMAGE=...`. Deploy the resulting image by its registry digest, not a mutable tag.

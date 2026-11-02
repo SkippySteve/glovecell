@@ -115,7 +115,7 @@ func (b *Broker) oauthOwner(ctx context.Context, provider string) (Access, error
 		return Access{}, errors.New("credential owner not configured")
 	}
 	var journal corev1.Secret
-	if b.Client.Get(ctx, types.NamespacedName{Namespace: b.Config.Control, Name: b.Config.Journal}, &journal) != nil || journal.Labels["providers.agentwork.dev/workspace-uid"] != b.Config.UID {
+	if b.Client.Get(ctx, types.NamespacedName{Namespace: b.Config.Control, Name: b.Config.Journal}, &journal) != nil || !b.journalBound(&journal) {
 		return Access{}, errors.New("renewal journal binding unavailable")
 	}
 	key := provider + "-renewal"

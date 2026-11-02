@@ -115,6 +115,86 @@ spec:
                       addedAt:
                         type: string
                         format: date-time
+                providers:
+                  description: Brokered subscription providers this project opts into. Off by default. Editable while running; removing an entry revokes that provider for this project. The controller needs a provider lease source.
+                  type: array
+                  maxItems: 2
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys: [name]
+                  items:
+                    type: object
+                    required: [name]
+                    properties:
+                      name:
+                        type: string
+                        enum: [grok, cursor]
+                      addedBy:
+                        type: string
+                        maxLength: 512
+                      addedAt:
+                        type: string
+                        format: date-time
+                github:
+                  description: Brokered GitHub access. Off by default. The project's proxy attaches a GitHub credential held outside the project to requests the policy allows. Editable while running; removing it revokes access for this project. The controller needs a GitHub lease source.
+                  type: object
+                  required: [repositories]
+                  properties:
+                    repositories:
+                      type: array
+                      minItems: 1
+                      maxItems: 32
+                      x-kubernetes-list-type: set
+                      items:
+                        type: string
+                        maxLength: 140
+                        pattern: '^[A-Za-z0-9][A-Za-z0-9-]{0,38}/([A-Za-z0-9._-]{1,100}|\*)$'
+                    protectedBranches:
+                      type: array
+                      maxItems: 16
+                      items:
+                        type: string
+                        maxLength: 202
+                    pushBranches:
+                      type: array
+                      maxItems: 16
+                      items:
+                        type: string
+                        maxLength: 202
+                    allowMerge:
+                      type: boolean
+                    allowReleases:
+                      type: boolean
+                    approvals:
+                      type: array
+                      maxItems: 16
+                      items:
+                        type: object
+                        required: [action, name, expiresAt]
+                        properties:
+                          action:
+                            type: string
+                            enum: [create-repository, fork-repository]
+                          name:
+                            type: string
+                            maxLength: 100
+                          visibility:
+                            type: string
+                            enum: [private, public]
+                          source:
+                            type: string
+                            maxLength: 140
+                          expiresAt:
+                            type: string
+                            format: date-time
+                          approvedBy:
+                            type: string
+                            maxLength: 512
+                    addedBy:
+                      type: string
+                      maxLength: 512
+                    addedAt:
+                      type: string
+                      format: date-time
                 https:
                   type: array
                   maxItems: 63

@@ -1,6 +1,6 @@
 import {useCallback, useEffect, useState} from 'react';
 import {orcaProjects, type OrcaProject} from '../../api';
-import {orcaHref, sandboxHref, type Section} from '../../router';
+import {orcaHref, sandboxHref, withQuery, type Section} from '../../router';
 import {plainText, projectPreview, reportKind, REASON_LIMIT, RESOURCE_LIMIT} from '../../orca';
 import {Button, Card, CardHeader, Tag} from '../../ui';
 import {timeOf} from '../../sandbox/Sandbox';
@@ -8,7 +8,7 @@ import {plural} from '../bits';
 import {setLanPrefill} from '../prefill';
 import {decideRequest, loadRequests, requestUrl, webAccess, type Requests} from '../sources/internet';
 import {liveLinks, pendingLinks} from '../sources/previews';
-import {dismissReport, reportLanHost, reportTime, type AgentReport} from '../sources/reports';
+import {dismissReport, reportLanHost, reportRequests, reportTime, type AgentReport} from '../sources/reports';
 import type {SandboxState} from '../useSandbox';
 import {clockAt, left} from '../time';
 import type {SandboxDetail} from '../../api';
@@ -18,6 +18,7 @@ const SHOWN_REQUESTS = 3;
 function ReportRow({ws, report}: {ws: SandboxState; report: AgentReport}) {
   const [busy, setBusy] = useState(false);
   const lan = reportLanHost(report, ws.lan || null);
+  const web = reportRequests(report);
   const reason = plainText(report.reason, REASON_LIMIT);
   return (
     <li data-report={report.id}>
@@ -26,9 +27,11 @@ function ReportRow({ws, report}: {ws: SandboxState; report: AgentReport}) {
         <strong>{reportKind(report.kind)}: <code>{plainText(report.resource, RESOURCE_LIMIT)}</code></strong>
         <span className="subtle-text">Agent's reason (unverified): {reason || '—'} · {plural(report.count, 'report')}, latest {reportTime(report.last)}</span>
         {lan ? <span>{lan.open ? <>LAN access to <code>{lan.address}</code> is open.</> : <>Names allowlisted LAN host <code>{lan.address}</code>.</>}</span> : null}
+        {web ? <span className={web.note ? 'warning-text' : 'subtle-text'}>{web.note || `Recorded requests matching “${web.filter}”: ${web.waiting} waiting, ${web.approved} approved.`}</span> : null}
       </div>
       <div className="actions">
         {lan && !lan.open ? <a className="link-button primary-link" href={sandboxHref(ws.id, 'lan')} onClick={() => setLanPrefill(ws.id, lan.address, report)}>Open LAN access →</a> : null}
+        {web ? <a className="link-button primary-link" href={withQuery(sandboxHref(ws.id, 'internet'), {q: web.filter})}>Find it in Internet →</a> : null}
         <Button size="small" variant="tertiary" disabled={busy} onClick={async () => { setBusy(true); const f = dismissReport(report); await ws.act(f.path, f.fields, 'agent report dismissed'); await ws.reloadReports(); setBusy(false); }}>Dismiss</Button>
       </div>
     </li>

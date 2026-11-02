@@ -54,6 +54,19 @@ type Server struct {
 	LAN                                *LANGrants
 	// Downloads enables "Download into sandbox" for project sandboxes.
 	Downloads *Downloads
+	// Providers enables brokered provider opt-in (providers.go).
+	Providers *Providers
+	// GitHubBrokering enables per-project GitHub opt-in (github_access.go).
+	GitHubBrokering bool
+	// Reference is the deployment's reference rules, shown read only next to
+	// every project's own rules (README "Reference rules").
+	Reference Reference
+}
+
+// Reference is the reference list as the console shows it.
+type Reference struct {
+	Digest string          `json:"digest"`
+	Rules  []api.HTTPSRule `json:"rules"`
 }
 
 // openUISpinnerStyle allows the one stylesheet OpenUI's Renderer injects on mount
@@ -126,9 +139,14 @@ func (s *Server) Handler() (http.Handler, error) {
 			session["lanHosts"] = true
 			session["lanAllowed"] = s.LAN.Config.AllowedStrings()
 		}
+		if s.Providers != nil {
+			session["providers"] = []string{"grok", "cursor"}
+		}
 		if s.Downloads != nil {
 			session["downloads"] = true
 			session["downloadMaxBytes"] = s.Downloads.MaxBytes
+			session["uploads"] = true
+			session["uploadChunkBytes"] = UploadChunkBytes
 		}
 		for k, v := range s.Handoffs.session() {
 			session[k] = v
@@ -164,6 +182,19 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.HandleFunc("POST /api/v1/workspaces/{name}/repositories", s.enrollRepository)
 	mux.HandleFunc("POST /api/v1/workspaces/{name}/lan-hosts", s.addLANHost)
 	mux.HandleFunc("DELETE /api/v1/workspaces/{name}/lan-hosts/{address}", s.removeLANHost)
+	mux.HandleFunc("GET /api/v1/provider-leases", s.providerLeases)
+	mux.HandleFunc("GET /api/v1/reference-rules", func(w http.ResponseWriter, r *http.Request) {
+		out := s.Reference
+		if out.Rules == nil {
+			out.Rules = []api.HTTPSRule{}
+		}
+		writeJSON(w, out)
+	})
+	mux.HandleFunc("POST /api/v1/workspaces/{name}/providers", s.addProvider)
+	mux.HandleFunc("DELETE /api/v1/workspaces/{name}/providers/{provider}", s.removeProvider)
+	mux.HandleFunc("PUT /api/v1/workspaces/{name}/github", s.setGitHub)
+	mux.HandleFunc("DELETE /api/v1/workspaces/{name}/github", s.removeGitHub)
+	mux.HandleFunc("POST /api/v1/workspaces/{name}/github/approvals", s.approveGitHub)
 	mux.HandleFunc("GET /api/v1/workspaces/{name}/audit", s.audit)
 	mux.HandleFunc("GET /api/v1/workspaces/{name}/clients", s.clients)
 	if s.Downloads != nil {
@@ -173,6 +204,11 @@ func (s *Server) Handler() (http.Handler, error) {
 		mux.HandleFunc("GET /api/v1/workspaces/{name}/downloads", s.listDownloads)
 		mux.HandleFunc("GET /api/v1/workspaces/{name}/downloads/{id}", s.getDownload)
 		mux.HandleFunc("POST /api/v1/workspaces/{name}/downloads/{id}/cancel", s.cancelDownload)
+		mux.HandleFunc("POST /api/v1/workspaces/{name}/uploads", s.startUpload)
+		mux.HandleFunc("GET /api/v1/workspaces/{name}/uploads", s.listUploads)
+		mux.HandleFunc("GET /api/v1/workspaces/{name}/uploads/{id}", s.getUpload)
+		mux.HandleFunc("PUT /api/v1/workspaces/{name}/uploads/{id}/data", s.uploadData)
+		mux.HandleFunc("POST /api/v1/workspaces/{name}/uploads/{id}/cancel", s.cancelUpload)
 	}
 	if s.SandboxControl != nil {
 		mux.Handle("/sandboxes/", s.SandboxControl.Handler(s.Origin))
@@ -230,7 +266,12 @@ func (s *Server) Handler() (http.Handler, error) {
 				http.Error(w, "same-origin request required", 403)
 				return
 			}
-			if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") && !(s.SandboxControl != nil && strings.HasPrefix(r.URL.Path, "/sandboxes/") && r.Method == "POST") {
+			// Upload parts are raw bytes. They stay out of reach of cross-site
+			// forms: application/octet-stream and X-Upload-Offset both force a
+			// CORS preflight, and the Origin check above already applies.
+			uploadPart := s.Downloads != nil && r.Method == "PUT" && uploadDataPath.MatchString(r.URL.Path) &&
+				r.Header.Get("Content-Type") == "application/octet-stream" && r.Header.Get("X-Upload-Offset") != ""
+			if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") && !uploadPart && !(s.SandboxControl != nil && strings.HasPrefix(r.URL.Path, "/sandboxes/") && r.Method == "POST") {
 				http.Error(w, "JSON required", 415)
 				return
 			}
@@ -243,7 +284,16 @@ func (s *Server) Handler() (http.Handler, error) {
 			subject = "static-operator"
 			method = "basic"
 		}
-		ctx, cancel := context.WithTimeout(context.WithValue(context.WithValue(r.Context(), actorKey{}, subject), authKey{}, method), 25*time.Second)
+		timeout := 25 * time.Second
+		if s.Downloads != nil && (r.Method == "PUT" && uploadDataPath.MatchString(r.URL.Path) || s.SandboxControl != nil && r.Method == "POST" && r.URL.Path == "/sandboxes/upload-data") {
+			// One upload part may take longer than the console's usual request
+			// bounds on a slow link; it gets its own, still bounded, deadlines.
+			timeout = chunkDeadline + uploadFinishWait
+			rc := http.NewResponseController(w)
+			_ = rc.SetReadDeadline(time.Now().Add(chunkDeadline))
+			_ = rc.SetWriteDeadline(time.Now().Add(timeout + 30*time.Second))
+		}
+		ctx, cancel := context.WithTimeout(context.WithValue(context.WithValue(r.Context(), actorKey{}, subject), authKey{}, method), timeout)
 		defer cancel()
 		mux.ServeHTTP(w, r.WithContext(ctx))
 	}), nil

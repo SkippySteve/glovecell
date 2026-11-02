@@ -1,0 +1,27 @@
+# gitleaks scans the whole Git history (security.yml uses fetch-depth: 0), so a
+# test placeholder stays flagged in the commit that introduced it even after it
+# is fixed at HEAD. Each entry is one finding in one historical commit:
+# commit:file:rule:line. No file, path or rule is ignored as a whole.
+
+# False positive: the hex test token in the download-grant tests (placeholder
+# "0123456789abcdef" repeated, not a credential). Replaced by 64 identical
+# characters at HEAD.
+873f6c63b96e6bd71b6ea29a9885209d09541d74:internal/proxy/download_grants_test.go:generic-api-key:24
+
+# False positive: the shape check for the browser agent token (the character
+# list "0123456789abcdef" in strings.Trim, not a credential). It exists only in
+# the history of the browser-sessions work (PR #76), which now uses a regexp.
+adf7f794d79f85649fe5fa292f7df7aff2ed8a44:internal/browser/api.go:generic-api-key:219
+
+# False positive: the example curl call in the GitHub brokering design doc
+# sends the literal word "placeholder" as its token. The proxy replaces any
+# placeholder with the brokered token, so no credential is in the doc.
+# Introduced by PR #96. The second entry is the first version of this comment,
+# which quoted that call and so matched the same rule.
+c506e72c35249c81bb15af83c6760d12cfcc044a:docs/design/github-brokering.md:curl-auth-header:176
+6a37564205a828fab931e66677096d7f3f8daecf:.gitleaksignore:curl-auth-header:17
+
+# False positive: the fixed test token ("0123456789abcdef" twice) in the voice
+# target tests on branch task/orca-pilot/glovecell-voice. gitleaks scans every
+# fetched branch, so this branch commit failed security / source on main too.
+2596034a85a0cc6325b43782d5d5a8e9eb8038e8:internal/voice/targets/targets_test.go:generic-api-key:120

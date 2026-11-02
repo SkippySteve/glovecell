@@ -16,6 +16,12 @@ type HTTPSRule struct {
 	Host    string   `json:"host"`
 	Methods []string `json:"methods"`
 	Paths   []string `json:"paths"` // Literal prefixes, not regular expressions.
+	// Source labels a rule from the deployment's reference list (README
+	// "Reference rules"), such as "git:reference-sources.yaml#cilium". Only
+	// the controller sets it: the CRD has no such field, and a project's own
+	// rules with a source are refused. Labelled rules are read only, may use
+	// a "*.domain" host, and do not count toward the 64 project rules.
+	Source string `json:"source,omitempty"`
 }
 type WorkspaceSpec struct {
 	Repository   string              `json:"repository"`
@@ -25,6 +31,62 @@ type WorkspaceSpec struct {
 	// LANHosts grants the project's worker direct TCP to single IPv4 hosts on the
 	// operator's LAN. Unlike HTTPS rules they change while the project runs.
 	LANHosts []LANHost `json:"lanHosts,omitempty"`
+	// Providers opts the project into brokered subscription providers (Grok,
+	// Cursor). Off by default. Like LAN hosts they change while the project
+	// runs: removing an entry revokes that provider for this project only.
+	// The controller needs a configured provider lease source.
+	Providers []ProviderGrant `json:"providers,omitempty"`
+	// GitHub opts the project into brokered GitHub access: the project's proxy
+	// attaches a GitHub credential, held outside the project, to requests the
+	// GitHub policy allows. Off by default; editable while running. Removing
+	// it revokes access for this project. The controller needs a GitHub lease
+	// source (GITHUB_LEASE_SECRET).
+	GitHub *GitHubAccess `json:"github,omitempty"`
+}
+
+// GitHubAccess is a project's GitHub policy. See docs/design/github-brokering.md.
+type GitHubAccess struct {
+	// Repositories are "owner/name" or "owner/*" (every repository of owner
+	// the credential reaches).
+	Repositories []string `json:"repositories"`
+	// ProtectedBranches no push may create, update or delete: names or
+	// "prefix/*". Each repository's default branch is always protected.
+	ProtectedBranches []string `json:"protectedBranches,omitempty"`
+	// PushBranches, when set, are the only branches pushes may touch, for
+	// example ["agent/*"].
+	PushBranches []string `json:"pushBranches,omitempty"`
+	// AllowMerge lets agents merge pull requests. Off by default.
+	AllowMerge bool `json:"allowMerge,omitempty"`
+	// AllowReleases lets agents create releases and push new tags. Off by default.
+	AllowReleases bool `json:"allowReleases,omitempty"`
+	// Approvals are operator approvals for repository creation and forks,
+	// each bound to exact arguments, usable once and until it expires.
+	Approvals []GitHubApproval `json:"approvals,omitempty"`
+	AddedBy   string           `json:"addedBy,omitempty"`
+	AddedAt   *metav1.Time     `json:"addedAt,omitempty"`
+}
+
+// GitHubApproval approves one repository creation or fork.
+type GitHubApproval struct {
+	// Action is create-repository or fork-repository.
+	Action string `json:"action"`
+	// Name is the new repository's (or fork's) name.
+	Name string `json:"name"`
+	// Visibility is private or public for create-repository; empty for forks.
+	Visibility string `json:"visibility,omitempty"`
+	// Source is the owner/name being forked.
+	Source     string      `json:"source,omitempty"`
+	ExpiresAt  metav1.Time `json:"expiresAt"`
+	ApprovedBy string      `json:"approvedBy,omitempty"`
+}
+
+// ProviderGrant is one operator opt-in to a brokered provider. The worker then
+// receives the provider's short-lived access lease, and the project proxy may
+// reach the provider's reviewed hosts. Refresh material never leaves its owner.
+type ProviderGrant struct {
+	Name    string       `json:"name"`
+	AddedBy string       `json:"addedBy,omitempty"`
+	AddedAt *metav1.Time `json:"addedAt,omitempty"`
 }
 
 // LANHost is one operator grant: outbound TCP from the worker to Address on Ports.

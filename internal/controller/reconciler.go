@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/netip"
 	"net/url"
 	"os"
@@ -60,6 +61,18 @@ type Config struct {
 	// ServiceAccount (ControllerServiceAccount in Namespace) in each project
 	// namespace, so pods/exec never needs a cluster-wide grant.
 	WorkerExecClusterRole, ControllerServiceAccount string
+
+	// ProjectAccessClusterRole, when set, is bound to the controller's own
+	// ServiceAccount in each project namespace, so project Secrets and
+	// deleting the project namespace never need a cluster-wide grant.
+	ProjectAccessClusterRole string
+
+	// ReferenceRules are the deployment's read-only reference rules
+	// (proxy.ReferenceRules, README "Reference rules"), added to every
+	// project's proxy policy after its own rules. ReferenceDigest names the
+	// list in audit records.
+	ReferenceRules  []api.HTTPSRule
+	ReferenceDigest string
 }
 
 func (c Config) Validate() error {
@@ -75,6 +88,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := validateWorkerExec(c.WorkerExecClusterRole, c.ControllerServiceAccount); err != nil {
+		return err
+	}
+	if err := validateProjectAccess(c.ProjectAccessClusterRole, c.ControllerServiceAccount); err != nil {
 		return err
 	}
 	if q, e := resource.ParseQuantity(c.StorageSize); e != nil || q.Sign() <= 0 {
@@ -126,6 +142,12 @@ type Reconciler struct {
 	LAN                     network.LANConfig
 	GitHubToken             string
 	MuseSubscriptionKeyFile string
+	// ProviderLeases is the trusted Secret the provider broker writes; nil
+	// turns spec.providers off (see providers.go).
+	ProviderLeases *types.NamespacedName
+	// GitHubLease is the trusted Secret the GitHub broker writes; nil turns
+	// spec.github off (see github.go).
+	GitHubLease *types.NamespacedName
 }
 
 var duration, _ = otel.Meter("agent-project-controller").Float64Histogram("workspace.reconcile.duration", metric.WithUnit("s"))
@@ -208,6 +230,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ct
 		// A refused policy grants nothing, including LAN hosts.
 		if lanErr := r.removeLANPolicy(ctx, w); lanErr != nil {
 			return ctrl.Result{}, lanErr
+		}
+		// Nor brokered provider access.
+		if _, providerErr := r.applyProviders(ctx, w, nil, nil); providerErr != nil {
+			return ctrl.Result{}, providerErr
 		}
 		if statusErr := r.status(ctx, w, "Blocked", false, "PolicyRejected", e.Error()); statusErr != nil {
 			return ctrl.Result{}, statusErr
@@ -323,7 +349,13 @@ func (r *Reconciler) validate(ctx context.Context, w *api.ProjectWorkspace) erro
 	if _, e := r.policyConfiguration(w, w.Spec.HTTPS); e != nil {
 		return e
 	}
-	return r.validateLANHosts(w)
+	if e := r.validateLANHosts(w); e != nil {
+		return e
+	}
+	if e := r.validateGitHub(w); e != nil {
+		return e
+	}
+	return r.validateProviders(w)
 }
 func (r *Reconciler) audit(ctx context.Context, w *api.ProjectWorkspace, action string) error {
 	return r.auditDetails(ctx, w, action, nil)
@@ -463,8 +495,13 @@ func (r *Reconciler) ensure(ctx context.Context, w *api.ProjectWorkspace) error 
 	if !ns.DeletionTimestamp.IsZero() {
 		return errors.New("project namespace is terminating")
 	}
-	// The controller's own exec grant comes first: granting the registrar
-	// pods/exec passes the RBAC escalation check only if the controller holds it.
+	// The controller's own grants in this namespace come first: its project
+	// Secrets (read below by modelAccess and objects) need the access binding,
+	// and granting the registrar pods/exec passes the RBAC escalation check
+	// only if the controller holds it.
+	if e = r.ensureProjectAccess(ctx, w); e != nil {
+		return e
+	}
 	if e = r.ensureWorkerExecAccess(ctx, w); e != nil {
 		return e
 	}
@@ -476,10 +513,21 @@ func (r *Reconciler) ensure(ctx context.Context, w *api.ProjectWorkspace) error 
 	if e = r.applyLANHosts(ctx, w); e != nil {
 		return e
 	}
+	// Brokered providers apply early for the same reason: a revocation must
+	// not wait for an unrelated preparation step.
+	brokered, e := r.applyProviders(ctx, w, providerNames(w), w.Spec.GitHub)
+	if e != nil {
+		return e
+	}
 	if w.Spec.DesiredState != "Paused" {
 		if e = r.modelAccess(ctx, w); e != nil {
 			return e
 		}
+	}
+	// The deployment's reference list may change while a project runs; only
+	// its labelled rules are swapped (reference_rules.go).
+	if e = r.syncReferenceRules(ctx, w); e != nil {
+		return e
 	}
 	if e = r.updateAccessPolicy(ctx, w, s); e != nil {
 		return e
@@ -487,7 +535,7 @@ func (r *Reconciler) ensure(ctx context.Context, w *api.ProjectWorkspace) error 
 	if e = r.enrollRepositories(ctx, w, s); e != nil {
 		return e
 	}
-	if e = r.objects(ctx, w, s); e != nil {
+	if e = r.objects(ctx, w, s, brokered); e != nil {
 		return e
 	}
 	if e = r.saveAccessPolicy(ctx, w, s); e != nil {
@@ -574,6 +622,10 @@ func (r *Reconciler) modelAccess(ctx context.Context, w *api.ProjectWorkspace) e
 	}
 	if e = RejectRefreshMaterial(s.Data); e != nil {
 		return e
+	}
+	if brokeredOnly(s.Data) {
+		// Brokered grants never make model access mandatory for the project.
+		return nil
 	}
 	if string(ledger.Data["model-access-required"]) != "true" || independentCodex(s.Data) && string(ledger.Data["independent-model-access"]) != "true" {
 		before := ledger.DeepCopy()
@@ -1047,6 +1099,12 @@ func (r *Reconciler) remove(ctx context.Context, w *api.ProjectWorkspace) error 
 			return e
 		}
 		if ns.DeletionTimestamp.IsZero() {
+			// Deleting the namespace is authorized by the project access
+			// binding; a project last reconciled by an older controller may
+			// not have it yet.
+			if e = r.ensureProjectAccess(ctx, w); e != nil {
+				return e
+			}
 			if e = r.Delete(ctx, ns); e != nil {
 				return e
 			}
@@ -1191,7 +1249,7 @@ func subset(got, want any) bool {
 		return reflect.DeepEqual(got, want)
 	}
 }
-func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *corev1.Secret) error {
+func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *corev1.Secret, brokered *brokeredState) error {
 	ns := namespace(w)
 	workerResources, proxyResources, e := r.Config.resources()
 	if e != nil {
@@ -1209,12 +1267,8 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 	if e != nil {
 		return e
 	}
-	hosts := []string{}
-	for _, r := range cfg.Rules {
-		hosts = append(hosts, r.Host)
-	}
 	objects := []client.Object{}
-	for _, p := range r.Network.Objects(ns, string(w.UID), hosts) {
+	for _, p := range r.Network.Objects(ns, string(w.UID), policyHosts(cfg)) {
 		objects = append(objects, p)
 	}
 	gitData := map[string][]byte{"username": s.Data["username"], "token": s.Data["token"]}
@@ -1222,7 +1276,16 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 		gitData["projects.json"] = s.Data["projects.json"]
 	}
 	proxyData := map[string][]byte{"ca.crt": s.Data["ca.crt"], "ca.key": s.Data["ca.key"]}
-	if cfg.BrokeredProviders {
+	if brokered != nil && brokered.managed {
+		// applyProviders decided this reconciliation's grants; reuse them so
+		// a stale cached model-access can never re-add a revoked grant.
+		if brokered.doc != nil {
+			if err := validateProviderAccess(brokered.doc); err != nil {
+				return err
+			}
+		}
+		maps.Copy(proxyData, proxyProviderData(brokered, cfg.BrokeredProviders, nil))
+	} else if cfg.BrokeredProviders {
 		var access corev1.Secret
 		if err := r.Get(ctx, types.NamespacedName{Namespace: ns, Name: "model-access"}, &access); err == nil {
 			if err := owner(w, &access); err != nil {
@@ -1237,6 +1300,9 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 		} else if !apierrors.IsNotFound(err) {
 			return err
 		}
+	}
+	if brokered != nil {
+		maps.Copy(proxyData, githubProxyData(brokered.github))
 	}
 	if r.MuseSubscriptionKeyFile != "" {
 		// A missing/revoked subscription key blocks only Muse at the gateway.

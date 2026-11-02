@@ -39,7 +39,8 @@ func (s *Server) accessRules(repository string, registries []string, https []api
 	}
 	seen := map[string]bool{}
 	for _, rule := range rules {
-		if seen[rule.Host] || reserved[rule.Host] {
+		// Source labels belong to the deployment's reference rules only.
+		if seen[rule.Host] || reserved[rule.Host] || rule.Source != "" {
 			return nil, errAccessRules
 		}
 		seen[rule.Host] = true

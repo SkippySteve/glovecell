@@ -63,6 +63,10 @@ spec:
             - name: TMPDIR
               value: /tmp
 {{- end }}
+{{- if .Values.referenceRules.configMap }}
+            - name: REFERENCE_RULES_FILE
+              value: {{ printf "/reference-rules/%s" .Values.referenceRules.key | quote }}
+{{- end }}
 {{- $gitHost := default "forgejo" (index .Values.config "GIT_HOST" | toString) }}
 {{- if not (or (eq $gitHost "forgejo") (eq $gitHost "github")) }}
 {{- fail "GIT_HOST must be forgejo or github" }}
@@ -115,6 +119,11 @@ spec:
             - name: control-secrets
               mountPath: /control-secrets
               readOnly: true
+{{- if .Values.referenceRules.configMap }}
+            - name: reference-rules
+              mountPath: /reference-rules
+              readOnly: true
+{{- end }}
       volumes:
 {{- if .Values.additionalGitHub.enabled }}
         - name: github-clone
@@ -137,6 +146,12 @@ spec:
           secret:
             secretName: {{ .Values.existingSecret | quote }}
             defaultMode: 0440
+{{- if .Values.referenceRules.configMap }}
+        - name: reference-rules
+          configMap:
+            name: {{ .Values.referenceRules.configMap | quote }}
+            defaultMode: 0444
+{{- end }}
 ---
 apiVersion: v1
 kind: Service

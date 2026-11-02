@@ -45,6 +45,10 @@ config:
   DOWNLOADS_ENABLED: 'false'
   DOWNLOAD_MAX_BYTES: ''
   DOWNLOAD_TIMEOUT: ''
+  # Brokered subscription providers per project (docs/brokered-providers.md).
+  # <namespace>/<secret> written by the provider broker in lease mode. Empty
+  # turns spec.providers off. Requires NETWORK_PROVIDER=cilium.
+  PROVIDER_LEASES_SECRET: ''
   WORKSPACE_CPU_REQUEST: 500m
   WORKSPACE_MEMORY_REQUEST: 512Mi
   WORKSPACE_CPU_LIMIT: '4'
@@ -125,6 +129,15 @@ namespace:
   labels:
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: latest
+
+# Optional reference rules (README "Reference rules"): an existing ConfigMap
+# with a reference list that every project's proxy
+# gets as read-only rules after its own. The controller reads it at startup,
+# so give the ConfigMap a new name (for example a kustomize hash suffix) to
+# roll a change out.
+referenceRules:
+  configMap: ''
+  key: reference-rules.json
 
 # Use the t3-controller image target when enabled. This existing PVC holds the
 # stock CLI account state, outside every project namespace and storage volume.

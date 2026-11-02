@@ -56,10 +56,25 @@ func Validate(c Config) error {
 			return err
 		}
 	}
-	if len(c.Rules) == 0 || len(c.Rules) > 64 {
+	var reference []api.HTTPSRule
+	own := 0
+	for _, r := range c.Rules {
+		if r.Source != "" {
+			reference = append(reference, r)
+		} else {
+			own++
+		}
+	}
+	if len(c.Rules) == 0 || own > 64 || len(reference) > MaxReferenceRules {
 		return errors.New("between one and 64 HTTPS rules required")
 	}
+	if err := validateReference(reference); err != nil {
+		return err
+	}
 	for _, r := range c.Rules {
+		if r.Source != "" {
+			continue // validateReference
+		}
 		if len(r.Host) > 253 || !dnsHost.MatchString(r.Host) || net.ParseIP(r.Host) != nil {
 			return errors.New("HTTPS rules require exact lowercase DNS hosts")
 		}
@@ -91,7 +106,7 @@ func Allowed(c Config, host, method, path string) bool {
 		}
 	}
 	for _, r := range c.Rules {
-		if r.Host != host {
+		if !hostMatches(r.Host, host) {
 			continue
 		}
 		ok := false
@@ -141,9 +156,18 @@ type Server struct {
 	GitHubToken         func() (string, error)
 	MuseSubscriptionKey func() (string, error)
 	ProviderGrants      func() ([]byte, error)
+	// BrokeredList returns the project's opted-in brokered providers (brokered.go).
+	BrokeredList func() ([]byte, error)
+	// GitHubPolicy and GitHubAccess return the project's GitHub policy and
+	// access lease (github_broker.go). Nil or empty policy: brokering off.
+	GitHubPolicy func() ([]byte, error)
+	GitHubAccess func() ([]byte, error)
+	// Audit receives GitHub audit records; nil uses the default logger.
+	Audit *slog.Logger
 	// GrantTransport carries one-time download grants (download_grants.go).
 	GrantTransport *http.Transport
 	grants         *grantBook
+	github         *githubBook
 	slots          chan struct{}
 	mu             sync.Mutex
 	certs          map[string]tls.Certificate
@@ -166,6 +190,7 @@ func New(c Config, cert, key []byte) (*Server, error) {
 	}
 	s := &Server{Config: c, CA: ca, Key: pair.PrivateKey, slots: make(chan struct{}, 32), certs: map[string]tls.Certificate{}, ReaderTransport: readerTransport()}
 	s.grants = newGrantBook()
+	s.github = newGitHubBook()
 	s.GrantTransport = newGrantTransport(s.dialPublic)
 	s.Transport = &http.Transport{Proxy: nil, DialContext: s.dial, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 30 * time.Second, IdleConnTimeout: 30 * time.Second, MaxIdleConns: 32, ForceAttemptHTTP2: false}
 	return s, nil
@@ -312,13 +337,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "destination denied", 403)
 		return
 	}
-	found := false
-	for _, rule := range s.Config.Rules {
-		if rule.Host == host {
-			found = true
-		}
-	}
-	if !found && !s.grants.hostLive(host) {
+	if !s.inRules(host) && !s.grants.hostLive(host) && s.brokeredProvider(host) == "" && !s.githubHostLive(host) {
 		http.Error(w, "destination denied", 403)
 		return
 	}
@@ -385,8 +404,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		// Reject alternate authorities, escaped paths and protocol upgrades. HTTP/2 is inspected on its own path.
 		traceRequestRoute(host, req)
-		denied := requestDenied(s.Config, host, req)
-		if denied {
+		if s.requestMalformed(host, req) {
 			traceRequestStatus(host, req, 403)
 			req.Body.Close()
 			writeError(conn, 403, "request denied")
@@ -398,31 +416,50 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		req.Body = http.MaxBytesReader(nil, req.Body, 128<<20)
+		// A brokered GitHub request is decided by the GitHub policy alone;
+		// any other request by the project's fixed rules.
+		call, refused := s.prepareGitHub(r.Context(), host, req)
+		if refused != nil {
+			traceRequestStatus(host, req, refused.status)
+			req.Body.Close()
+			refused.writeTo(conn)
+			return
+		}
+		if call == nil && s.requestDenied(host, req) {
+			traceRequestStatus(host, req, 403)
+			req.Body.Close()
+			writeError(conn, 403, "request denied")
+			return
+		}
 		req.RequestURI = ""
 		req.URL.Scheme = "https"
 		req.URL.Host = host
 		req.Host = host
 		dropHopHeaders(req.Header)
-		if s.providerAuthorization(req) != nil {
-			traceRequestStatus(host, req, 403)
-			req.Body.Close()
-			writeError(conn, 403, "provider grant expired, revoked or unavailable")
-			return
-		}
-		if !githubGitReadAllowed(s.Config, req) {
-			req.Body.Close()
-			writeError(conn, 403, "request denied")
-			return
-		}
-		if s.githubCredentials(req) != nil {
-			req.Body.Close()
-			writeError(conn, 502, "GitHub repository authorization unavailable")
-			return
-		}
-		if s.museCredentials(req) != nil {
-			req.Body.Close()
-			writeError(conn, 502, "Muse subscription authorization unavailable")
-			return
+		if call != nil {
+			call.inject(req)
+		} else {
+			if s.providerAuthorization(req) != nil {
+				traceRequestStatus(host, req, 403)
+				req.Body.Close()
+				writeError(conn, 403, "provider grant expired, revoked or unavailable")
+				return
+			}
+			if !githubGitReadAllowed(s.Config, req) {
+				req.Body.Close()
+				writeError(conn, 403, "request denied")
+				return
+			}
+			if s.githubCredentials(req) != nil {
+				req.Body.Close()
+				writeError(conn, 502, "GitHub repository authorization unavailable")
+				return
+			}
+			if s.museCredentials(req) != nil {
+				req.Body.Close()
+				writeError(conn, 502, "Muse subscription authorization unavailable")
+				return
+			}
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 		req = req.WithContext(ctx)
@@ -430,10 +467,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			req.Body.Close()
 			cancel()
+			s.finishGitHub(call, 0, e)
 			slog.Warn("proxy upstream request failed", "failure_kind", failureKind(e))
 			writeError(conn, 502, "upstream unavailable")
 			return
 		}
+		s.finishGitHub(call, res.StatusCode, nil)
 		traceRequestStatus(host, req, res.StatusCode)
 		dropHopHeaders(res.Header)
 		res.Close = true
@@ -446,9 +485,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return // One request per tunnel bounds connection lifetime and revocation delay.
 	}
 }
-func requestDenied(cfg Config, host string, req *http.Request) bool {
+func (s *Server) requestDenied(host string, req *http.Request) bool {
+	if s.requestMalformed(host, req) {
+		return true
+	}
+	return !Allowed(s.Config, host, req.Method, req.URL.Path) && !s.brokeredAllowed(host, req.Method, req.URL.Path)
+}
+
+// requestMalformed rejects alternate authorities, absolute targets, escaped
+// paths and protocol upgrades before any policy looks at the request.
+func (s *Server) requestMalformed(host string, req *http.Request) bool {
 	reqHost := strings.TrimSuffix(req.Host, ":443")
-	return reqHost != host || req.URL.IsAbs() || req.Method == "CONNECT" || req.Header.Get("Upgrade") != "" || strings.Contains(req.URL.EscapedPath(), "%") || !Allowed(cfg, host, req.Method, req.URL.Path)
+	return reqHost != host || req.URL.IsAbs() || req.Method == "CONNECT" || req.Header.Get("Upgrade") != "" || strings.Contains(req.URL.EscapedPath(), "%")
 }
 
 // serveHTTP2 inspects each HTTP/2 stream. It is not an opaque tunnel.
@@ -462,7 +510,7 @@ func (s *Server) serveHTTP2(ctx context.Context, conn net.Conn, host string) {
 				return
 			}
 			traceRequestRoute(host, req)
-			if requestDenied(s.Config, host, req) {
+			if s.requestMalformed(host, req) {
 				traceRequestStatus(host, req, 403)
 				http.Error(w, "request denied", http.StatusForbidden)
 				return
@@ -472,37 +520,54 @@ func (s *Server) serveHTTP2(ctx context.Context, conn net.Conn, host string) {
 				return
 			}
 			req.Body = http.MaxBytesReader(w, req.Body, 128<<20)
+			call, refused := s.prepareGitHub(req.Context(), host, req)
+			if refused != nil {
+				traceRequestStatus(host, req, refused.status)
+				refused.writeHTTP(w)
+				return
+			}
+			if call == nil && s.requestDenied(host, req) {
+				traceRequestStatus(host, req, 403)
+				http.Error(w, "request denied", http.StatusForbidden)
+				return
+			}
 			forward := req.Clone(req.Context())
 			forward.RequestURI = ""
 			forward.URL.Scheme = "https"
 			forward.URL.Host = host
 			forward.Host = host
 			dropHopHeaders(forward.Header)
-			if s.providerAuthorization(forward) != nil {
-				traceRequestStatus(host, req, 403)
-				http.Error(w, "provider grant expired, revoked or unavailable", http.StatusForbidden)
-				return
-			}
-			if !githubGitReadAllowed(s.Config, forward) {
-				http.Error(w, "request denied", http.StatusForbidden)
-				return
-			}
-			if s.githubCredentials(forward) != nil {
-				http.Error(w, "GitHub repository authorization unavailable", http.StatusBadGateway)
-				return
-			}
-			if s.museCredentials(forward) != nil {
-				http.Error(w, "Muse subscription authorization unavailable", http.StatusBadGateway)
-				return
+			if call != nil {
+				call.inject(forward)
+			} else {
+				if s.providerAuthorization(forward) != nil {
+					traceRequestStatus(host, req, 403)
+					http.Error(w, "provider grant expired, revoked or unavailable", http.StatusForbidden)
+					return
+				}
+				if !githubGitReadAllowed(s.Config, forward) {
+					http.Error(w, "request denied", http.StatusForbidden)
+					return
+				}
+				if s.githubCredentials(forward) != nil {
+					http.Error(w, "GitHub repository authorization unavailable", http.StatusBadGateway)
+					return
+				}
+				if s.museCredentials(forward) != nil {
+					http.Error(w, "Muse subscription authorization unavailable", http.StatusBadGateway)
+					return
+				}
 			}
 			callCtx, cancel := context.WithTimeout(req.Context(), 2*time.Minute)
 			defer cancel()
 			res, e := s.roundTrip(forward.WithContext(callCtx))
 			if e != nil {
+				s.finishGitHub(call, 0, e)
 				slog.Warn("proxy upstream request failed", "failure_kind", failureKind(e))
 				http.Error(w, "upstream unavailable", http.StatusBadGateway)
 				return
 			}
+			s.finishGitHub(call, res.StatusCode, nil)
 			traceRequestStatus(host, req, res.StatusCode)
 			defer res.Body.Close()
 			dropHopHeaders(res.Header)
@@ -557,6 +622,9 @@ func Run(ctx context.Context) error {
 	s.GitHubToken = gatewayGitHubToken
 	s.MuseSubscriptionKey = gatewayMuseSubscriptionKey
 	s.ProviderGrants = gatewayProviderGrants
+	s.BrokeredList = gatewayBrokeredProviders
+	s.GitHubPolicy = gatewayFile(GitHubPolicyKey)
+	s.GitHubAccess = gatewayFile(GitHubAccessKey)
 	server := &http.Server{Addr: ":3128", Handler: s, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 32 << 10}
 	control := &http.Server{Addr: ControlAddress, Handler: s.ControlHandler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, MaxHeaderBytes: 8 << 10}
 	go func() {

@@ -23,8 +23,8 @@ jobs:
           version: v4.0.0
       - name: Install Kubernetes test API server
         run: |
-          go install sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.0.0-20260125163108-a19ec76a3c5d
-          echo "KUBEBUILDER_ASSETS=$(setup-envtest use 1.34.1 -p path)" >> "$GITHUB_ENV"
+          go install sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.24.1
+          echo "KUBEBUILDER_ASSETS=$(setup-envtest use 1.36.2 -p path)" >> "$GITHUB_ENV"
       - name: Go race tests, vet and Helm qualification
         run: |
           make test vet build

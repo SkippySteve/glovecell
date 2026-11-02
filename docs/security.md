@@ -86,6 +86,24 @@ end for certain. Every add and remove is an immutable audit record with the
 operator, project, address, ports and time, and the controller records each
 applied policy.
 
+## Brokered subscription providers
+
+`spec.providers` gives a project's worker short-lived, access-only leases for
+Grok and Cursor; see [brokered providers](brokered-providers.md). Only OIDC
+operators change the opt-in. The provider broker holds `pods/exec` on the
+offline owner pods and writes one lease Secret in its own namespace; it has no
+rights in project namespaces. The controller copies a lease only into the
+projects that opted in, and CiliumNetworkPolicy `providers` lets only that
+project's proxy reach the provider's hosts. The proxy admits a provider request
+only with the project's current, unexpired grant and a matching bearer token,
+and always refuses Cursor's account routes. Revocation removes the grant,
+the policy rule and restarts the proxy while the worker keeps running. All
+opted-in projects receive the same access token; a copied token stays usable
+outside the sandbox until it expires, so grant providers only to projects
+whose other egress you would trust with it. Deployments should add admission
+policies that keep `providers` proxy-only TCP 443 to the reviewed hosts and
+confine the broker's exec to the owner pods.
+
 ## Downloads into a sandbox
 
 "Download into sandbox" is off unless `DOWNLOADS_ENABLED=true`. It never
@@ -145,6 +163,36 @@ through its own inspecting proxy, as the worker's user, and writes it itself.
   destination, size and SHA-256. Query strings are replaced by a SHA-256
   prefix in every record and log line; only the operator's own console view
   shows them, masked until "Show query strings" is ticked.
+
+**Uploads** (`agent-project-controller put`) reuse the helper's path rules,
+temporary file and atomic publish. The file comes from the operator's browser
+through the console: it is never fetched by anything in the cluster, so no
+grant, proxy rule or network policy is involved, and whatever credentials the
+operator used to obtain it stay in the browser. The controller streams each
+part straight into the helper's stdin through a 64 KiB buffer; nothing is
+stored in controller memory or on its disk. The helper is told the exact size
+up front (`--size`, checked against `--max-bytes`, and the controller refuses
+anything above the cap before starting it) and keeps nothing unless exactly
+that many bytes arrive: a short stream, a cancel, two idle minutes or
+SIGTERM/SIGHUP/SIGINT remove the temporary file. A broken stdout no longer
+kills the helper (it ignores SIGPIPE), so cleanup still runs. Raw parts are
+accepted only as `PUT` with `application/octet-stream` and `X-Upload-Offset`
+from a same-origin, signed-in OIDC operator; both headers force a CORS
+preflight, so a cross-site page cannot send one. Records and logs carry the
+file name, size, SHA-256, destination and outcome, never contents.
+
+sandbox-control workspaces follow the same rules with sandbox-control as the
+proxy: grants live in its egress proxy, bound to the workspace and its current
+pod UID, and sandbox-control execs the helper (this binary, installed as
+`/usr/local/bin/sandbox-download`) through the Kubernetes WebSocket exec API.
+Its Role grants `pods/exec` only on each enrolled workspace pod by name, and an
+admission policy allows its exec only for that pod's download container with
+the command exactly `[/usr/local/bin/sandbox-download, fetch]` or the upload
+shape `[/usr/local/bin/sandbox-download, put, --home=…, --dest=…, --size=N,
+--max-bytes=N, --sha256=[hex], --overwrite=true|false]` (fixed order), stdin and no
+TTY; attach and port-forward are refused. The helper accepts a home directory
+outside `/workspace` (`/home/agent` there) and walks every directory from `/`
+without following symlinks.
 
 Limits: the agent in the sandbox can see the file, and the token while the
 helper runs if it can read that process's memory. A sandbox process that

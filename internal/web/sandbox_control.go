@@ -37,7 +37,11 @@ func sandboxRoute(path string, method string) bool {
 		// Read-only JSON views for the console's workspace sections. /api/lan and
 		// /api/cluster are reads; their changes still go through the POST list below
 		// (LAN actions on /egress; cluster grants stay on the classic page).
-		case "/", "/status", "/workspaces", "/history", "/export", "/api/workspace", "/api/egress", "/api/previews", "/api/devlinks", "/api/activity", "/api/reports", "/api/lan", "/api/cluster":
+		case "/", "/status", "/workspaces", "/history", "/export", "/api/workspace", "/api/egress", "/api/previews", "/api/devlinks", "/api/activity", "/api/reports", "/api/lan", "/api/cluster",
+			// Download into sandbox: list and poll (sandbox-control download_jobs.go).
+			"/api/downloads", "/api/download-check", "/api/download",
+			// Upload into sandbox: poll one upload.
+			"/api/upload":
 			return true
 		}
 		return strings.HasPrefix(path, "/static/") && !strings.Contains(path, "..") && !strings.Contains(path, "//")
@@ -46,7 +50,10 @@ func sandboxRoute(path string, method string) bool {
 		return false
 	}
 	switch path {
-	case "/egress", "/access", "/policy", "/packages", "/packages-import", "/allow-request", "/catalog", "/lifecycle", "/rollback", "/profile", "/decision", "/devlink-decision", "/services", "/dismiss-report":
+	case "/egress", "/access", "/policy", "/packages", "/packages-import", "/allow-request", "/catalog", "/lifecycle", "/rollback", "/profile", "/decision", "/devlink-decision", "/services", "/dismiss-report",
+		"/download-check", "/download", "/download-cancel",
+		// Upload into sandbox. /upload-data carries a raw file part; see Handler.
+		"/upload-start", "/upload-data", "/upload-cancel":
 		return true
 	}
 	return false
@@ -110,6 +117,12 @@ func (c SandboxControl) Handler(consoleOrigin string) http.Handler {
 		}
 		if r.Method == "POST" && r.Header.Get("Origin") != consoleOrigin {
 			http.Error(w, "same-origin request required", 403)
+			return
+		}
+		if path == "/upload-data" && (r.Header.Get("Content-Type") != "application/octet-stream" || r.Header.Get("X-Sandbox-CSRF") == "") {
+			// A raw part carries its CSRF token in a header; a cross-site form
+			// can set neither this content type nor the header.
+			http.Error(w, "upload parts need application/octet-stream and X-Sandbox-CSRF", http.StatusUnsupportedMediaType)
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 26<<20)
