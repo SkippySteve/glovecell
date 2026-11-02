@@ -176,14 +176,17 @@ it writes the same `spec.github.approvals` entry.
   never sees a 401 and never prompts. Clone with `https://github.com/<owner>/<repo>.git`.
 - **REST and GraphQL**: any client, any placeholder token, for example
   `curl -H 'Authorization: token placeholder' https://api.github.com/...`.
-- **gh**: the real GitHub CLI works with `GH_TOKEN=<placeholder>` and the
+- **gh**: the workspace image ships the official GitHub CLI (pinned release,
+  checksum-verified). For projects with `spec.github` the controller sets
+  `GH_TOKEN=brokered-by-project-proxy` (a placeholder, not a credential),
+  `GH_PROMPT_DISABLED=1` and `GH_NO_UPDATE_NOTIFIER=1` in the workspace; other
+  projects get none of them, so `gh` there has no token. It works with the
   default host. `gh pr create`, `gh issue create`, `gh pr comment` and
   `gh repo create` are expected to use the brokered GraphQL mutations above or
   their REST equivalents, both handled (expected from gh's behaviour; its
   source could not be re-read while writing this, so check once). Flags that need
   other mutations (labels, reviewers, projects on `pr create`) are refused
-  after the PR exists. The workspace image does not ship `gh` yet (a pinned
-  release must be added with its checksum). Tools that are not the real CLI,
+  after the PR exists. Tools that are not the real CLI,
   such as a Forgejo `gh` shim, must not be pointed at github.com.
 - An optional `X-Agent-Identity` header names the agent in audit records. It
   is a claim and is never forwarded.

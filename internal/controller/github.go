@@ -132,6 +132,25 @@ func githubNarrowed(before, after []byte) bool {
 	return !reflect.DeepEqual(b, a)
 }
 
+// githubPlaceholderToken is what the worker's gh sends as its token. It is not
+// a credential: the project's proxy replaces every Authorization header to
+// GitHub with the brokered token (internal/proxy/github_broker.go).
+const githubPlaceholderToken = "brokered-by-project-proxy"
+
+// githubWorkerEnv is the worker environment that lets the stock GitHub CLI run
+// against a brokered project. It is empty for projects without spec.github, so
+// gh there has no token and cannot reach GitHub at all.
+func githubWorkerEnv(w *api.ProjectWorkspace) []corev1.EnvVar {
+	if w.Spec.GitHub == nil {
+		return nil
+	}
+	return []corev1.EnvVar{
+		{Name: "GH_TOKEN", Value: githubPlaceholderToken},
+		{Name: "GH_PROMPT_DISABLED", Value: "1"},
+		{Name: "GH_NO_UPDATE_NOTIFIER", Value: "1"},
+	}
+}
+
 // githubProxyData is the proxy-ca content for GitHub brokering.
 func githubProxyData(state *githubState) map[string][]byte {
 	out := map[string][]byte{}
