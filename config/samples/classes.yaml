@@ -1,0 +1,26 @@
+# Example ProviderClass and ForgeClass (docs/classes.md). Admin-only and
+# cluster-scoped. The Helm chart generates equivalent defaults.
+apiVersion: projects.agentwork.dev/v1alpha1
+kind: ProviderClass
+metadata:
+  name: grok
+  annotations:
+    projects.agentwork.dev/is-default-class: "true"
+spec:
+  driver: provider-broker
+  provider: grok
+  parameters:
+    leasesSecret: provider-broker/provider-leases
+---
+apiVersion: projects.agentwork.dev/v1alpha1
+kind: ForgeClass
+metadata:
+  name: forgejo
+spec:
+  driver: forgejo
+  baseURL: https://forgejo.example.com
+  credentialsSecretRef:
+    name: controller-secrets
+    key: forgejo-token
+  parameters:
+    owner: operator

@@ -42,9 +42,11 @@ func policyHosts(cfg proxy.Config) []string {
 	return hosts
 }
 
-// withReference replaces the labelled rules of cfg with the current list.
-func (r *Reconciler) withReference(cfg proxy.Config) proxy.Config {
+// withLabelled replaces the labelled rules of cfg with the cell's profile
+// rules followed by the deployment's reference list.
+func (r *Reconciler) withLabelled(cfg proxy.Config, profile []api.HTTPSRule) proxy.Config {
 	rules := slices.DeleteFunc(slices.Clone(cfg.Rules), func(rule api.HTTPSRule) bool { return rule.Source != "" })
+	rules = append(rules, profile...)
 	cfg.Rules = append(rules, r.Config.ReferenceRules...)
 	return cfg
 }
@@ -69,7 +71,11 @@ func (r *Reconciler) syncReferenceRules(ctx context.Context, w *api.ProjectWorks
 	if len(cm.Data) != 1 || json.Unmarshal([]byte(cm.Data["policy.json"]), &current) != nil {
 		return errors.New("proxy policy drift detected")
 	}
-	want := r.withReference(current)
+	profile, err := r.profileRules(ctx, w)
+	if err != nil {
+		return err
+	}
+	want := r.withLabelled(current, profile)
 	currentRaw, _ := json.Marshal(current)
 	wantRaw, _ := json.Marshal(want)
 	if string(currentRaw) == string(wantRaw) {

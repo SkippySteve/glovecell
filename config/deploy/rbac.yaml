@@ -11,6 +11,29 @@ rules:
   - apiGroups: [projects.agentwork.dev]
     resources: [projectworkspaces, projectworkspaces/status, projectworkspaces/finalizers]
     verbs: [get, list, watch, create, update, patch, delete]
+  # Access levels: profiles are read only here (managed in Git or by an
+  # admin); grants are written by the console API and expired by the controller.
+  - apiGroups: [projects.agentwork.dev]
+    resources: [accessprofiles]
+    verbs: [get, list, watch]
+  - apiGroups: [projects.agentwork.dev]
+    resources: [accessgrants, accessgrants/status]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # Orchestrator classes: read them, and report Accepted on the ones whose
+  # controllerName starts with projects.agentwork.dev/. No create or delete.
+  - apiGroups: [projects.agentwork.dev]
+    resources: [orchestratorclasses]
+    verbs: [get, list, watch]
+  - apiGroups: [projects.agentwork.dev]
+    resources: [orchestratorclasses/status]
+    verbs: [get, update, patch]
+  # ProviderClass and ForgeClass are admin-owned: read and report status only.
+  - apiGroups: [projects.agentwork.dev]
+    resources: [providerclasses, forgeclasses]
+    verbs: [get, list, watch]
+  - apiGroups: [projects.agentwork.dev]
+    resources: [providerclasses/status, forgeclasses/status]
+    verbs: [get, update, patch]
   # No cluster-wide Secrets and no cluster-wide namespace delete: Secrets come
   # from Role controller-secrets (control namespace) and the project access
   # ClusterRole bound in each project namespace, which also lets the
@@ -155,3 +178,29 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: controller
+---
+# Workspace lifecycle Events (events.k8s.io/v1) in the control namespace,
+# where every ProjectWorkspace lives: create, and patch for repeated Events
+# in a series. Nothing cluster-wide and no read: Events expire, so the
+# console's history does not read them (it reads the audit records).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: workspace-events
+rules:
+  - apiGroups: [events.k8s.io]
+    resources: [events]
+    verbs: [create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: workspace-events
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: workspace-events
+subjects:
+  - kind: ServiceAccount
+    name: controller
+    namespace: agent-project-controller

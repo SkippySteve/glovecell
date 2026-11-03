@@ -26,3 +26,30 @@ func TestRegistryRules(t *testing.T) {
 		}
 	}
 }
+
+func TestStandardRulesAreReadOnlyAndValid(t *testing.T) {
+	rules := StandardRules()
+	if len(rules) != 7+len(StandardDownloadHosts) {
+		t.Fatalf("got %d rules", len(rules))
+	}
+	seen := map[string]bool{}
+	for _, rule := range rules {
+		if seen[rule.Host] {
+			t.Fatalf("host %s listed twice", rule.Host)
+		}
+		seen[rule.Host] = true
+		for _, method := range rule.Methods {
+			if method != "GET" && method != "HEAD" {
+				t.Fatalf("%s allows %s", rule.Host, method)
+			}
+		}
+	}
+	if err := Validate(Config{Rules: rules}); err != nil {
+		t.Fatal(err)
+	}
+	// Callers get their own copy: changing one result must not change the next.
+	rules[0].Host = "changed.example.com"
+	if StandardRules()[0].Host == "changed.example.com" {
+		t.Fatal("StandardRules shares its backing array")
+	}
+}

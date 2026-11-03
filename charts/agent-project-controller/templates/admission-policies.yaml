@@ -1,0 +1,270 @@
+{{- /*
+ValidatingAdmissionPolicies for ProjectWorkspace (README "Admission policies").
+The API server refuses invalid requests before they are stored; the
+controller repeats every check when it reconciles (defence in depth).
+Deployment settings reach the policies through one params ConfigMap
+(paramKind v1/ConfigMap); a missing params object denies (fail closed).
+Each policy only re-checks the fields a request changes, so a later, narrower
+deployment setting never blocks finalizer removal or unrelated edits; the
+controller refuses such an object when it reconciles.
+*/ -}}
+{{- if not (kindIs "bool" .Values.admissionPolicies.enabled) }}
+{{- fail "admissionPolicies.enabled must be a boolean" }}
+{{- end }}
+{{- if .Values.admissionPolicies.enabled }}
+{{- $prefix := include "apc.policyPrefix" . }}
+{{- $gitHost := default "forgejo" (index .Values.config "GIT_HOST" | toString) }}
+{{- $owner := "" }}
+{{- $reserved := list }}
+{{- if eq $gitHost "github" }}
+{{- $owner = index .Values.config "GITHUB_OWNER" | toString }}
+{{- $reserved = list "github.com" "api.github.com" }}
+{{- else }}
+{{- $owner = index .Values.config "FORGEJO_OWNER" | toString }}
+{{- $origin := urlParse (index .Values.config "FORGEJO_ORIGIN" | toString) }}
+{{- $reserved = list (get $origin "hostname" | lower) }}
+{{- end }}
+{{- $githubOwner := "" }}
+{{- if .Values.additionalGitHub.enabled }}
+{{- $githubOwner = .Values.additionalGitHub.owner | toString }}
+{{- end }}
+{{- $split := "[,\\s]+" }}
+{{- $allowed := list }}
+{{- range regexSplit $split (index .Values.config "LAN_GRANT_ALLOWED_CIDRS" | default "" | toString | trim) -1 }}{{ if . }}{{ $allowed = append $allowed . }}{{ end }}{{ end }}
+{{- $denied := list }}
+{{- range regexSplit $split (index .Values.config "LAN_GRANT_DENIED_CIDRS" | default "" | toString | trim) -1 }}{{ if . }}{{ $denied = append $denied . }}{{ end }}{{ end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: admission-params
+  labels:
+    app.kubernetes.io/component: admission-params
+data:
+  # forgejo or github: the host of every project's primary repository.
+  gitHost: {{ $gitHost | quote }}
+  # Owner every primary (and enrolled Forgejo) repository must belong to.
+  repositoryOwner: {{ $owner | quote }}
+  # Owner of private GitHub repositories that may be enrolled; empty: none.
+  additionalGitHubOwner: {{ $githubOwner | quote }}
+  # Git-host names whose rules the controller manages; project HTTPS rules may not name them.
+  reservedHTTPSHosts: {{ join "," $reserved | quote }}
+  # LAN_GRANT_ALLOWED_CIDRS and LAN_GRANT_DENIED_CIDRS, comma separated. Empty allowed: LAN grants off.
+  lanAllowedCIDRs: {{ join "," $allowed | quote }}
+  lanDeniedCIDRs: {{ join "," $denied | quote }}
+  # "true" when PROVIDER_LEASES_SECRET is set, so spec.providers may be used.
+  providersEnabled: {{ ternary "true" "false" (not (empty (index .Values.config "PROVIDER_LEASES_SECRET"))) | quote }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $prefix }}-workspace-name
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [projects.agentwork.dev]
+        apiVersions: [v1alpha1]
+        operations: [CREATE]
+        resources: [projectworkspaces]
+  validations:
+    - expression: "object.metadata.name.matches('^[a-z][a-z0-9-]{0,39}$')"
+      message: Project names start with a lowercase letter and use at most 40 lowercase letters, digits and hyphens.
+      reason: Invalid
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $prefix }}-workspace-repositories
+spec:
+  failurePolicy: Fail
+  paramKind:
+    apiVersion: v1
+    kind: ConfigMap
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [projects.agentwork.dev]
+        apiVersions: [v1alpha1]
+        operations: [CREATE, UPDATE]
+        resources: [projectworkspaces]
+  matchConditions:
+    - name: repositories-changed
+      expression: >-
+        oldObject == null ||
+        has(object.spec.repositories) != has(oldObject.spec.repositories) ||
+        (has(object.spec.repositories) && object.spec.repositories != oldObject.spec.repositories)
+  variables:
+    - name: repos
+      expression: "has(object.spec.repositories) ? object.spec.repositories : []"
+  validations:
+    - expression: "oldObject != null || object.spec.repository.split('/')[0] == params.data.repositoryOwner"
+      messageExpression: "'spec.repository must belong to the configured owner ' + params.data.repositoryOwner"
+      reason: Forbidden
+    - expression: >-
+        variables.repos.all(p, p.host != 'forgejo' ||
+          (params.data.gitHost != 'github' && !(has(p.public) && p.public) &&
+           p.repository.split('/')[0] == params.data.repositoryOwner))
+      message: Forgejo enrollment requires the configured owner and repository grant.
+      reason: Forbidden
+    - expression: >-
+        variables.repos.all(p, p.host != 'github' || (has(p.public) && p.public) ||
+          (params.data.additionalGitHubOwner != '' && p.repository.split('/')[0] == params.data.additionalGitHubOwner))
+      message: Private GitHub enrollment requires trusted GitHub authorization; no anonymous fallback.
+      reason: Forbidden
+    - expression: >-
+        variables.repos.all(p,
+          variables.repos.filter(q, q.host == p.host && q.repository == p.repository).size() == 1 &&
+          !(p.host == params.data.gitHost && p.repository == object.spec.repository))
+      message: Duplicate repository enrollment.
+      reason: Invalid
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $prefix }}-workspace-https
+spec:
+  failurePolicy: Fail
+  paramKind:
+    apiVersion: v1
+    kind: ConfigMap
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [projects.agentwork.dev]
+        apiVersions: [v1alpha1]
+        operations: [CREATE, UPDATE]
+        resources: [projectworkspaces]
+  matchConditions:
+    - name: https-or-repositories-changed
+      expression: >-
+        oldObject == null ||
+        has(object.spec.https) != has(oldObject.spec.https) ||
+        (has(object.spec.https) && object.spec.https != oldObject.spec.https) ||
+        has(object.spec.repositories) != has(oldObject.spec.repositories) ||
+        (has(object.spec.repositories) && object.spec.repositories != oldObject.spec.repositories)
+  variables:
+    - name: rules
+      expression: "has(object.spec.https) ? object.spec.https : []"
+    - name: reserved
+      expression: >-
+        params.data.reservedHTTPSHosts.split(',').filter(h, h != '') +
+        (has(object.spec.repositories) && object.spec.repositories.exists(p, p.host == 'github') ? ['github.com'] : [])
+  validations:
+    - expression: >-
+        variables.rules.all(r,
+          r.host.matches('^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$') && !isIP(r.host))
+      message: HTTPS rules require exact lowercase DNS hosts; wildcards, IP addresses and empty or overlong labels are refused.
+      reason: Invalid
+    - expression: >-
+        variables.rules.all(r, r.paths.all(p,
+          !['%', '?', '*', '#', '\\', '..', '//'].exists(s, p.contains(s))))
+      message: "HTTPS paths are literal prefixes: no wildcards, patterns, queries, fragments, percent-encoding, backslashes, '..' or '//'."
+      reason: Invalid
+    - expression: "variables.rules.all(r, !(r.host in variables.reserved))"
+      message: Repository access is controller-managed; HTTPS rules cannot override Git-host permissions.
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $prefix }}-workspace-lan-hosts
+spec:
+  failurePolicy: Fail
+  paramKind:
+    apiVersion: v1
+    kind: ConfigMap
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [projects.agentwork.dev]
+        apiVersions: [v1alpha1]
+        operations: [CREATE, UPDATE]
+        resources: [projectworkspaces]
+  matchConditions:
+    - name: lan-hosts-changed
+      expression: >-
+        oldObject == null ||
+        has(object.spec.lanHosts) != has(oldObject.spec.lanHosts) ||
+        (has(object.spec.lanHosts) && object.spec.lanHosts != oldObject.spec.lanHosts)
+  variables:
+    - name: hosts
+      expression: "has(object.spec.lanHosts) ? object.spec.lanHosts : []"
+    - name: allowed
+      expression: "params.data.lanAllowedCIDRs.split(',').filter(c, c != '')"
+    # A bare address in the denylist means that one address.
+    - name: denied
+      expression: "params.data.lanDeniedCIDRs.split(',').filter(c, c != '').map(c, c.contains('/') ? c : c + '/32')"
+  validations:
+    - expression: "size(variables.hosts) == 0 || size(variables.allowed) > 0"
+      message: LAN host grants are disabled on this controller.
+      reason: Forbidden
+    - expression: >-
+        variables.hosts.all(h, !['0.0.0.0/8', '127.0.0.0/8', '169.254.0.0/16', '224.0.0.0/4', '240.0.0.0/4']
+          .exists(c, cidr(c).containsIP(h.address)))
+      message: "Refused: an unspecified, loopback, link-local, cloud metadata, multicast, broadcast or reserved address."
+      reason: Forbidden
+    - expression: "variables.hosts.all(h, variables.allowed.exists(c, cidr(c).containsIP(h.address)))"
+      messageExpression: "'Refused: LAN hosts must be inside the allowed LAN ranges ' + variables.allowed.join(', ')"
+      reason: Forbidden
+    - expression: "variables.hosts.all(h, !variables.denied.exists(c, cidr(c).containsIP(h.address)))"
+      message: "Refused: the address is in the operator denylist (node, VIP, cluster or gateway addresses)."
+      reason: Forbidden
+    # Network and broadcast addresses never name one host: x.x.x.0 and
+    # x.x.x.255, and for allowed ranges of /25 to /30 the first and last
+    # address of the range ((last octet + 1) mod range size is 0 or 1).
+    - expression: >-
+        variables.hosts.all(h, !h.address.endsWith('.0') && !h.address.endsWith('.255') &&
+          variables.allowed.filter(c, cidr(c).containsIP(h.address) && cidr(c).prefixLength() >= 25 && cidr(c).prefixLength() <= 30)
+            .all(c, (int(h.address.split('.')[3]) + 1) % [128, 64, 32, 16, 8, 4][cidr(c).prefixLength() - 25] > 1))
+      message: "Refused: a network or broadcast address."
+      reason: Forbidden
+    - expression: >-
+        variables.hosts.all(h, !has(h.note) ||
+          (size(bytes(h.note)) <= 200 && !h.note.matches('[\\p{Cc}\\x{FFFD}]')))
+      message: Notes must be printable text on one line, at most 200 bytes.
+      reason: Invalid
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $prefix }}-workspace-providers
+spec:
+  failurePolicy: Fail
+  paramKind:
+    apiVersion: v1
+    kind: ConfigMap
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [projects.agentwork.dev]
+        apiVersions: [v1alpha1]
+        operations: [CREATE, UPDATE]
+        resources: [projectworkspaces]
+  matchConditions:
+    - name: providers-changed
+      expression: >-
+        oldObject == null ||
+        has(object.spec.providers) != has(oldObject.spec.providers) ||
+        (has(object.spec.providers) && object.spec.providers != oldObject.spec.providers)
+  validations:
+    - expression: "!has(object.spec.providers) || size(object.spec.providers) == 0 || params.data.providersEnabled == 'true'"
+      message: Brokered providers are not configured on this controller; remove spec.providers.
+      reason: Forbidden
+{{- range $name := list "workspace-name" "workspace-repositories" "workspace-https" "workspace-lan-hosts" "workspace-providers" }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $prefix }}-{{ $name }}
+spec:
+  policyName: {{ $prefix }}-{{ $name }}
+  validationActions: [Deny]
+{{- if ne $name "workspace-name" }}
+  paramRef:
+    name: admission-params
+    namespace: {{ $.Release.Namespace }}
+    parameterNotFoundAction: Deny
+{{- end }}
+  # Only this release's control namespace: another installation binds its own.
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: {{ $.Release.Namespace }}
+{{- end }}
+{{- end }}

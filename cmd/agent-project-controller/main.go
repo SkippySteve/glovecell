@@ -19,10 +19,12 @@ import (
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/connect"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/controller"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/download"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/forge"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/forgejo"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/githubbroker"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/githubhost"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/network"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/orchestrator"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/preflight"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/projects"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/providerbroker"
@@ -36,8 +38,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -176,7 +180,7 @@ func positiveID(key string) (int64, error) {
 	}
 	return n, nil
 }
-func openGitHost() (forgejo.Host, string, string, string, error) {
+func openGitHost() (forge.Forge, string, string, string, error) {
 	switch env("GIT_HOST", "forgejo") {
 	case "forgejo":
 		token, err := secret("FORGEJO_TOKEN_FILE")
@@ -392,6 +396,16 @@ func run(ctx context.Context) error {
 	} else if os.Getenv("ADDITIONAL_GITHUB_OWNER") != "" {
 		return errors.New("additional GitHub owner requires a trusted repository token")
 	}
+	// Lifecycle Events (events.k8s.io/v1) regarding each workspace replace
+	// the deprecated status.audit list (D12).
+	clientset, e := kubernetes.NewForConfig(config)
+	if e != nil {
+		return e
+	}
+	broadcaster := events.NewBroadcaster(&events.EventSinkImpl{Interface: clientset.EventsV1()})
+	broadcaster.StartRecordingToSink(ctx.Done())
+	defer broadcaster.Shutdown()
+	reconciler.Events = broadcaster.NewRecorder(scheme, controller.EventReportingController)
 	reconciler.IndependentCodexWorkspaceUID = os.Getenv("INDEPENDENT_CODEX_WORKSPACE_UID")
 	reconciler.MuseSubscriptionKeyFile = os.Getenv("MUSE_SUBSCRIPTION_KEY_FILE")
 	if reconciler.ProviderLeases, e = providerLeasesFromEnv(networkProvider); e != nil {
@@ -427,6 +441,12 @@ func run(ctx context.Context) error {
 	if e = reconciler.Config.Validate(); e != nil {
 		return e
 	}
+	// Orchestrator adapters an OrchestratorClass may name. Orca and command
+	// clients grant nothing in the cluster today (the control-host registrar
+	// does); T3 joins when T3 Connect is configured below.
+	if reconciler.Orchestrators, e = orchestrator.NewRegistry(orchestrator.NewOrca(direct, ns), orchestrator.NewCommand(direct, ns)); e != nil {
+		return e
+	}
 	if v := os.Getenv("T3_CONNECT_ENABLED"); v != "" && v != "true" && v != "false" {
 		return errors.New("T3_CONNECT_ENABLED must be true or false")
 	}
@@ -437,13 +457,35 @@ func run(ctx context.Context) error {
 			return e
 		}
 		access := &t3.Managed{Registry: &t3.Registry{Client: direct, Namespace: ns, Cloud: cloud}, Config: config, Connector: env("T3_CONNECT_CONNECTOR", "/opt/t3/cloudflared")}
+		// Workspaces without a class keep using T3 Connect: it is the
+		// default (translated "t3" class), and also the adapter for classes
+		// naming projects.agentwork.dev/t3.
 		reconciler.Access = access
+		if e = reconciler.Orchestrators.Register(access); e != nil {
+			return e
+		}
 		if e = manager.Add(access); e != nil {
 			return e
 		}
 	}
+	// Workspaces may name a ForgeClass; an empty name keeps the forge above.
+	reconciler.Forges = &forge.Resolver{Client: direct, Namespace: ns, Default: &forge.Resolved{Driver: gitHost, Origin: origin, Owner: owner, Forge: host}}
 	if e = reconciler.Setup(manager); e != nil {
 		return e
+	}
+	if e = (&orchestrator.ClassReconciler{Client: direct, Registry: reconciler.Orchestrators}).Setup(manager); e != nil {
+		return e
+	}
+	// Class status needs the ProviderClass and ForgeClass CRDs. Without them
+	// the controller runs as before: bare provider names and the configured
+	// forge keep working, and named classes fail closed.
+	if controller.ClassesServed(manager.GetRESTMapper()) {
+		classes := &controller.ClassReconciler{Client: direct, ProviderLeases: reconciler.ProviderLeases, Forges: reconciler.Forges}
+		if e = classes.Setup(manager); e != nil {
+			return e
+		}
+	} else {
+		slog.Warn("ProviderClass and ForgeClass CRDs not installed; class status is off and named classes fail closed")
 	}
 	if e = manager.AddHealthzCheck("healthz", healthz.Ping); e != nil {
 		return e

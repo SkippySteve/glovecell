@@ -141,7 +141,7 @@ func TestBrokeredProviderValidation(t *testing.T) {
 	for _, providers := range [][]api.ProviderGrant{{{Name: "codex"}}, {{Name: "grok"}, {Name: "grok"}}, {{Name: "muse"}}, {{Name: "grok"}, {Name: "cursor"}, {Name: "cursor"}}} {
 		r, w := providerFixture(t)
 		w.Spec.Providers = providers
-		if r.validateProviders(w) == nil {
+		if r.validateProviders(context.Background(), w) == nil {
 			t.Fatal("accepted", providers)
 		}
 	}

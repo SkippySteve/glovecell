@@ -1,0 +1,106 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: orchestratorclasses.projects.agentwork.dev
+spec:
+  group: projects.agentwork.dev
+  scope: Cluster
+  names:
+    plural: orchestratorclasses
+    singular: orchestratorclass
+    kind: OrchestratorClass
+    listKind: OrchestratorClassList
+    shortNames: [oc]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Controller
+          type: string
+          jsonPath: .spec.controllerName
+        - name: Accepted
+          type: string
+          jsonPath: .status.conditions[?(@.type=="Accepted")].status
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          description: An agent orchestrator (T3, Orca, a custom command client) and the controller adapter that implements it. ProjectWorkspaces select one with spec.orchestratorClassName.
+          type: object
+          required: [spec]
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              required: [controllerName]
+              x-kubernetes-validations:
+                - rule: "!(has(self.parameters) && has(self.parametersRef))"
+                  message: Set parameters or parametersRef, not both.
+              properties:
+                controllerName:
+                  description: The adapter that serves this class, a domain-prefixed path such as projects.agentwork.dev/t3. Immutable.
+                  type: string
+                  minLength: 1
+                  maxLength: 253
+                  pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*\/[A-Za-z0-9\/\-._~%!$&''()*+,;=:]+$'
+                  x-kubernetes-validations:
+                    - rule: self == oldSelf
+                      message: controllerName is immutable; create a new class.
+                parametersRef:
+                  description: Adapter-specific configuration held in another object. Adapters that take no parameters refuse the class.
+                  type: object
+                  required: [group, kind, name]
+                  properties:
+                    group:
+                      type: string
+                      maxLength: 253
+                    kind:
+                      type: string
+                      minLength: 1
+                      maxLength: 63
+                    name:
+                      type: string
+                      minLength: 1
+                      maxLength: 253
+                    namespace:
+                      type: string
+                      maxLength: 63
+                parameters:
+                  description: Inline adapter-specific configuration. Adapters that take no parameters refuse the class.
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+            status:
+              type: object
+              properties:
+                conditions:
+                  type: array
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys: [type]
+                  items:
+                    type: object
+                    required: [type, status, reason, message, lastTransitionTime]
+                    properties:
+                      type:
+                        type: string
+                      status:
+                        type: string
+                        enum: ['True', 'False', Unknown]
+                      reason:
+                        type: string
+                      message:
+                        type: string
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                      observedGeneration:
+                        type: integer
+                        format: int64

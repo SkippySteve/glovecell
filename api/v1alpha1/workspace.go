@@ -36,6 +36,16 @@ type WorkspaceSpec struct {
 	// runs: removing an entry revokes that provider for this project only.
 	// The controller needs a configured provider lease source.
 	Providers []ProviderGrant `json:"providers,omitempty"`
+	// AccessProfileName names the cluster-scoped AccessProfile (accessprofile_types.go).
+	AccessProfileName string `json:"accessProfileName,omitempty"`
+	// OrchestratorClassName names the OrchestratorClass whose adapter manages
+	// agent orchestrator access. Empty means none (the deployment default).
+	// Immutable once set.
+	OrchestratorClassName string `json:"orchestratorClassName,omitempty"`
+	// ForgeClassName names the cluster-scoped ForgeClass that hosts
+	// Repository (forgeclass_types.go). Empty keeps the controller's configured
+	// forge. Immutable: revocation must reach the forge that granted access.
+	ForgeClassName string `json:"forgeClassName,omitempty"`
 	// GitHub opts the project into brokered GitHub access: the project's proxy
 	// attaches a GitHub credential, held outside the project, to requests the
 	// GitHub policy allows. Off by default; editable while running. Removing
@@ -84,9 +94,13 @@ type GitHubApproval struct {
 // receives the provider's short-lived access lease, and the project proxy may
 // reach the provider's reviewed hosts. Refresh material never leaves its owner.
 type ProviderGrant struct {
-	Name    string       `json:"name"`
-	AddedBy string       `json:"addedBy,omitempty"`
-	AddedAt *metav1.Time `json:"addedAt,omitempty"`
+	Name string `json:"name"`
+	// ProviderClassName names the cluster-scoped ProviderClass that supplies
+	// the lease (providerclass_types.go). Empty resolves to the default class
+	// for Name, which matches the behaviour before classes existed.
+	ProviderClassName string       `json:"providerClassName,omitempty"`
+	AddedBy           string       `json:"addedBy,omitempty"`
+	AddedAt           *metav1.Time `json:"addedAt,omitempty"`
 }
 
 // LANHost is one operator grant: outbound TCP from the worker to Address on Ports.
@@ -107,17 +121,30 @@ type RepositoryProject struct {
 	Repository string `json:"repository"`
 	Public     bool   `json:"public,omitempty"`
 }
+
+// AuditEvent is one entry of the deprecated status.audit list.
+//
+// Deprecated: recent lifecycle transitions are Kubernetes Events
+// (events.k8s.io/v1) regarding the workspace (`kubectl events --for
+// projectworkspace/<name>`); the durable history is the console's History.
 type AuditEvent struct {
 	Time       metav1.Time `json:"time"`
 	Action     string      `json:"action"`
 	Generation int64       `json:"generation"`
 }
 type WorkspaceStatus struct {
-	Phase              string             `json:"phase,omitempty"`
-	Namespace          string             `json:"namespace,omitempty"`
-	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
-	Conditions         []metav1.Condition `json:"conditions,omitempty"`
-	Audit              []AuditEvent       `json:"audit,omitempty"`
+	Phase              string `json:"phase,omitempty"`
+	Namespace          string `json:"namespace,omitempty"`
+	ObservedGeneration int64  `json:"observedGeneration,omitempty"`
+	// Conditions carry the current state; each records the generation it
+	// was computed from (observedGeneration).
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	// Audit is the old in-object phase history.
+	//
+	// Deprecated: the controller no longer appends to it. Existing entries
+	// stay readable for one release. Use Events for recent transitions and
+	// the console's History for the durable record.
+	Audit []AuditEvent `json:"audit,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -146,8 +173,14 @@ func (w *ProjectWorkspaceList) DeepCopyObject() runtime.Object {
 	_ = json.Unmarshal(b, out)
 	return out
 }
+
+// knownTypes collects the kinds other files in this package define, so a new
+// kind registers itself without editing AddToScheme.
+var knownTypes []runtime.Object
+
 func AddToScheme(s *runtime.Scheme) error {
 	s.AddKnownTypes(GroupVersion, &ProjectWorkspace{}, &ProjectWorkspaceList{})
+	s.AddKnownTypes(GroupVersion, knownTypes...)
 	metav1.AddToGroupVersion(s, GroupVersion)
 	return nil
 }
