@@ -13,7 +13,6 @@ import (
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/controller"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/network"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -196,7 +195,6 @@ func (s *Server) lanAudit(ctx context.Context, obj *api.ProjectWorkspace, action
 	verb := map[string]string{"lan-host-added": "added", "lan-host-removed": "removed"}[action]
 	now := time.Now().UTC().Format(time.RFC3339)
 	slog.InfoContext(ctx, "LAN host grant "+verb, "workspace", obj.Name, "workspace_uid", string(obj.UID), "generation", obj.Generation, "actor", actor, "address", grant.Address, "ports", summary, "time", now)
-	immutable := true
 	name := fmt.Sprintf("audit-%s-%d-%s-%s", stringUID(obj), obj.Generation, action, strings.ReplaceAll(grant.Address, ".", "-"))
 	ports := strings.TrimPrefix(summary, grant.Address+" tcp/")
 	data := map[string]string{
@@ -207,5 +205,5 @@ func (s *Server) lanAudit(ctx context.Context, obj *api.ProjectWorkspace, action
 	if grant.Note != "" {
 		data["note"] = grant.Note
 	}
-	return s.Client.Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: s.Namespace, Labels: map[string]string{api.OwnerLabel: string(obj.UID)}}, Immutable: &immutable, Data: data})
+	return s.auditLog().Record(ctx, string(obj.UID), name, data, "console")
 }

@@ -224,9 +224,9 @@ Telemetry outages do not authorize access or prevent revocation. Workspace appli
 
 ## Upgrades and uninstall
 
-Keep one controller replica. OIDC sessions are invalidated on restart; credentials, requests and audit records persist in Kubernetes. Back up control-plane state through an operator-controlled encrypted backup procedure. If the credential ledger is lost, the controller deliberately leaves cleanup incomplete rather than guessing at external access.
+Keep one controller replica. OIDC sessions are invalidated on restart. Credentials and requests persist in Kubernetes; history, approvals and access requests persist in PostgreSQL ([database](database.md)), so back up both. Back up control-plane state through an operator-controlled encrypted backup procedure. If the credential ledger is lost, the controller deliberately leaves cleanup incomplete rather than guessing at external access.
 
-Before uninstalling, set every workspace's desired state to `Removed` and verify its status, disabled Forgejo account and deleted backing volume. Do not remove the CRD, force finalizers, uninstall the controller or prune its control namespace while active workspaces remain. Those actions can strand grants and data. The controller retains scrubbed credential tombstones and immutable audit ConfigMaps; their retention is an operator decision.
+Before uninstalling, set every workspace's desired state to `Removed` and verify its status, disabled Forgejo account and deleted backing volume. Do not remove the CRD, force finalizers, uninstall the controller or prune its control namespace while active workspaces remain. Those actions can strand grants and data. The controller retains scrubbed credential tombstones, immutable audit ConfigMaps from before the database and the database's history (retention settings in [database](database.md#retention)); keeping them longer is an operator decision.
 
 ## Single-package installation
 

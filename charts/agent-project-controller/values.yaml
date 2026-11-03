@@ -78,6 +78,12 @@ config:
   OIDC_GROUPS_CLAIM: groups
   OIDC_ALLOWED_GROUPS: agent-project-operators
   OIDC_SCOPES: profile,groups
+  # Who may approve or deny access requests and revoke exact approvals
+  # (comma-separated groups; empty means nobody). Members must also be able
+  # to sign in (OIDC_ALLOWED_GROUPS). The claim defaults to OIDC_GROUPS_CLAIM.
+  # The automation token and static login never approve. docs/database.md.
+  OIDC_APPROVER_GROUPS: agent-project-approvers
+  OIDC_APPROVER_GROUPS_CLAIM: ''
   ALLOW_STATIC_LOGIN: 'false'
   OTEL_ENABLED: 'false'
 # ValidatingAdmissionPolicies (admissionregistration.k8s.io/v1, Kubernetes
@@ -87,6 +93,73 @@ config:
 # a cluster without the API; that leaves the controller's checks alone.
 admissionPolicies:
   enabled: true
+# PostgreSQL holds exact approvals, access requests, history and per-request
+# proxy summaries (docs/database.md). It is required.
+database:
+  # cloudnativepg: render a CloudNativePG Cluster (install the CloudNativePG
+  # operator first). external: use an existing PostgreSQL.
+  mode: cloudnativepg
+  # The controller always connects with TLS (sslmode=verify-full).
+  maxConnections: 10
+  # How long to keep records: Go durations of at least 24h, or '0' to keep
+  # them. Approvals, pending requests and the ledger actions the controller
+  # relies on for safety are never pruned.
+  historyRetention: 8760h
+  decidedRequestRetention: 8760h
+  proxySummaryRetention: 720h
+  cloudnativepg:
+    # Cluster name; empty means <release>-db. The operator creates the
+    # Secrets <name>-app (connection URI) and <name>-ca (CA certificate).
+    name: ''
+    # One instance is the default; more add streaming replicas.
+    instances: 1
+    # Optional digest-pinned PostgreSQL image; empty uses the operator default.
+    imageName: ''
+    database: apc
+    owner: apc
+    storage:
+      size: 5Gi
+      # Empty uses the cluster's default StorageClass.
+      storageClass: ''
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 1Gi
+    monitoring:
+      # Needs the Prometheus operator's PodMonitor CRD.
+      enablePodMonitor: false
+    # Where the CloudNativePG operator runs, for the database NetworkPolicy.
+    operator:
+      namespace: cnpg-system
+      podLabels:
+        app.kubernetes.io/name: cloudnative-pg
+    # Further peers that may reach PostgreSQL on 5432 (NetworkPolicy peers),
+    # for example a backup job.
+    extraIngressFrom: []
+    backup:
+      enabled: false
+      # plugin: the Barman Cloud plugin (install it and an ObjectStore first).
+      # barmanObjectStore: CloudNativePG's in-tree Barman (deprecated upstream).
+      method: plugin
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        # For the Barman Cloud plugin: {barmanObjectName: <ObjectStore>}.
+        parameters: {}
+      # spec.backup.barmanObjectStore for method barmanObjectStore
+      # (destinationPath, s3Credentials, ...).
+      barmanObjectStore: {}
+      retentionPolicy: 30d
+      # ScheduledBackup: six-field cron (seconds first).
+      schedule: '0 0 3 * * *'
+  external:
+    # Existing Secret in the release namespace with a postgres:// URI.
+    existingSecret: ''
+    uriKey: uri
+    # Key of the server's CA certificate in that Secret; empty trusts the
+    # system roots (a publicly trusted server certificate).
+    caKey: ''
 controllerResources:
   requests:
     cpu: 100m

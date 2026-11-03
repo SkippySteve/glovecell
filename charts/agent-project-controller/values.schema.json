@@ -2,6 +2,165 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "cloudnativepg",
+            "external"
+          ]
+        },
+        "maxConnections": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 100
+        },
+        "historyRetention": {
+          "type": "string",
+          "pattern": "^(0|[0-9]+h)$"
+        },
+        "decidedRequestRetention": {
+          "type": "string",
+          "pattern": "^(0|[0-9]+h)$"
+        },
+        "proxySummaryRetention": {
+          "type": "string",
+          "pattern": "^(0|[0-9]+h)$"
+        },
+        "cloudnativepg": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string",
+              "pattern": "^([a-z]([-a-z0-9]{0,48}[a-z0-9])?)?$"
+            },
+            "instances": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9
+            },
+            "imageName": {
+              "type": "string"
+            },
+            "database": {
+              "type": "string",
+              "pattern": "^[a-z_][a-z0-9_]{0,62}$"
+            },
+            "owner": {
+              "type": "string",
+              "pattern": "^[a-z_][a-z0-9_]{0,62}$"
+            },
+            "storage": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "size": {
+                  "type": "string"
+                },
+                "storageClass": {
+                  "type": "string"
+                }
+              }
+            },
+            "resources": {
+              "type": "object"
+            },
+            "monitoring": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enablePodMonitor": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "operator": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "namespace": {
+                  "type": "string"
+                },
+                "podLabels": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "extraIngressFrom": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            },
+            "backup": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "method": {
+                  "enum": [
+                    "plugin",
+                    "barmanObjectStore"
+                  ]
+                },
+                "plugin": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "parameters": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "barmanObjectStore": {
+                  "type": "object"
+                },
+                "retentionPolicy": {
+                  "type": "string",
+                  "pattern": "^[1-9][0-9]*[dwm]$"
+                },
+                "schedule": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "external": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "existingSecret": {
+              "type": "string"
+            },
+            "uriKey": {
+              "type": "string",
+              "minLength": 1
+            },
+            "caKey": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
     "admissionPolicies": {
       "type": "object",
       "additionalProperties": false,

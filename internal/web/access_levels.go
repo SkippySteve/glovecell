@@ -479,14 +479,9 @@ func randomSuffix() string {
 func (s *Server) accessAudit(ctx context.Context, obj *api.ProjectWorkspace, action, actor, message string, details map[string]string) error {
 	raw, _ := json.Marshal(details)
 	sum := sha256.Sum256([]byte(action + "\n" + actor + "\n" + message + "\n" + string(raw)))
-	immutable := true
 	data := map[string]string{"workspace": obj.Name, "workspaceUID": string(obj.UID), "generation": fmt.Sprint(obj.Generation), "action": action, "actor": actor, "time": time.Now().UTC().Format(time.RFC3339), "message": message}
 	for k, v := range details {
 		data[k] = v
 	}
-	cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("audit-%s-%d-%s-%s", stringUID(obj), obj.Generation, action, hex.EncodeToString(sum[:6])), Namespace: s.Namespace, Labels: map[string]string{api.OwnerLabel: string(obj.UID)}}, Immutable: &immutable, Data: data}
-	if err := s.Client.Create(ctx, cm); err != nil && !apierrors.IsAlreadyExists(err) {
-		return err
-	}
-	return nil
+	return s.auditLog().Record(ctx, string(obj.UID), fmt.Sprintf("audit-%s-%d-%s-%s", stringUID(obj), obj.Generation, action, hex.EncodeToString(sum[:6])), data, "console")
 }

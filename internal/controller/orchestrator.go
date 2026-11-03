@@ -8,8 +8,6 @@ import (
 
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/orchestrator"
-	corev1 "k8s.io/api/core/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // orchestratorBound is the audit action recorded before a workspace's named
@@ -101,16 +99,7 @@ func sameAccess(a, b ProjectAccess) bool {
 }
 
 func (r *Reconciler) orchestratorWasBound(ctx context.Context, w *api.ProjectWorkspace) (bool, error) {
-	var records corev1.ConfigMapList
-	if e := r.List(ctx, &records, client.InNamespace(r.Config.Namespace), client.MatchingLabels{api.OwnerLabel: string(w.UID)}); e != nil {
-		return false, e
-	}
-	for _, record := range records.Items {
-		if record.Data["action"] == orchestratorBound {
-			return true, nil
-		}
-	}
-	return false, nil
+	return r.auditLog().Has(ctx, string(w.UID), orchestratorBound)
 }
 
 // classRejection returns the Ready reason for a refused workspace.

@@ -8,6 +8,23 @@ Supply digest-pinned `controllerImage` and `workspaceImage`, plus the Forgejo or
 
 Keep `config.NETWORK_PROVIDER` at `cilium` for the qualified profile. `network-policy` is an unvalidated experiment. The `0.1.0-alpha.1` images do not contain that provider or workspace-image replacement.
 
+## Database
+
+PostgreSQL is required. It holds exact approvals, access requests, history and per-request proxy summaries ([database](../../docs/database.md)). `database.mode` selects where it comes from:
+
+- `cloudnativepg` (the default) renders a CloudNativePG `Cluster` with one instance. **Install the [CloudNativePG operator](https://cloudnative-pg.io/documentation/current/installation_upgrade/) before this chart**: the chart doesn't install it, and without its CRDs the install fails. The operator creates the Secrets `<release>-db-app` and `<release>-db-ca`, which the controller mounts (only the `uri` and `ca.crt` keys).
+- `external` uses an existing Secret (`database.external.existingSecret`) with a `postgres://` URI and, optionally, the server's CA.
+
+The connection always uses TLS with `sslmode=verify-full`. The chart also sets:
+
+- instances, storage size and class, resources, `monitoring.enablePodMonitor`, and an optional backup (Barman Cloud plugin or `barmanObjectStore`; off by default);
+- a NetworkPolicy that lets only the controller, the operator and the Cluster's own instances reach PostgreSQL;
+- retention (`database.historyRetention` and the related settings).
+
+`config.OIDC_APPROVER_GROUPS` (default `agent-project-approvers`) names who may approve access requests.
+
+The controller's readiness includes database health. The console Service publishes not-ready addresses, so the console can still explain an outage. While the database is down, new approvals and requests are refused and proxies keep their cached approvals.
+
 ## CRDs and upgrades
 
 `crds/` holds every CRD of `projects.agentwork.dev/v1alpha1`: `ProjectWorkspace`, `AccessProfile` and `AccessGrant` ([access levels](../../docs/access-levels.md)), `OrchestratorClass` ([orchestrator classes](../../docs/orchestrators.md)), and `ProviderClass` and `ForgeClass` ([provider and forge classes](../../docs/classes.md)). Helm installs them on first install but never upgrades them. Before upgrading the chart, apply the directory yourself:
@@ -22,7 +39,7 @@ To connect an agent runtime's handoff intake, set `config.HANDOFF_URL` and `conf
 
 ## Lifecycle Events
 
-The controller publishes each workspace's lifecycle transitions as Kubernetes Events (`events.k8s.io/v1`, reporting controller `projects.agentwork.dev/agent-project-controller`) regarding the `ProjectWorkspace`: phase changes (action `ChangePhase`, reason = the Ready condition's reason, type `Warning` for `Blocked` and `CleanupPending`) and a new not-ready reason or message in the same phase (`UpdateCondition`). Read them with `kubectl events -n <namespace> --for projectworkspace/<name>`. Audit records publish no Events: they are the durable history, which the console reads through its history store (audit ConfigMaps today). The Role `workspace-events` lets the controller create and patch Events in the release namespace only.
+The controller publishes each workspace's lifecycle transitions as Kubernetes Events (`events.k8s.io/v1`, reporting controller `projects.agentwork.dev/agent-project-controller`) regarding the `ProjectWorkspace`: phase changes (action `ChangePhase`, reason = the Ready condition's reason, type `Warning` for `Blocked` and `CleanupPending`) and a new not-ready reason or message in the same phase (`UpdateCondition`). Read them with `kubectl events -n <namespace> --for projectworkspace/<name>`. Audit records publish no Events: they are the durable history, kept in PostgreSQL (see [Database](#database)). The Role `workspace-events` lets the controller create and patch Events in the release namespace only.
 
 Events expire (kube-apiserver `--event-ttl`, one hour by default), so they show recent activity only. The console's History reads the durable audit records. `status.audit` is deprecated: the controller no longer appends to it, and existing entries stay readable for one release.
 

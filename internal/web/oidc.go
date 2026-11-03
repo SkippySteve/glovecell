@@ -18,6 +18,11 @@ import (
 type OIDCConfig struct {
 	Issuer, ClientID, ClientSecret, Origin, GroupsClaim string
 	Scopes, AllowedGroups, AllowedSubjects              []string
+	// ApproverGroups may approve or deny access requests and revoke
+	// approvals (D13). Empty means nobody can. ApproverGroupsClaim names the
+	// ID token claim holding them; it defaults to GroupsClaim.
+	ApproverGroups      []string
+	ApproverGroupsClaim string
 }
 type transaction struct {
 	Nonce, Verifier string
@@ -26,6 +31,10 @@ type transaction struct {
 type session struct {
 	Subject string
 	Expires time.Time
+	// ApproverGroup is the approver group the identity held at sign-in, or
+	// "". Sessions last at most 15 minutes, so a removed membership ends
+	// approval rights within that time.
+	ApproverGroup string
 }
 type OIDC struct {
 	config       OIDCConfig
@@ -64,6 +73,9 @@ func newOIDC(ctx context.Context, c OIDCConfig, client *http.Client) (*OIDC, err
 	}
 	if c.GroupsClaim == "" {
 		c.GroupsClaim = "groups"
+	}
+	if c.ApproverGroupsClaim == "" {
+		c.ApproverGroupsClaim = c.GroupsClaim
 	}
 	return &OIDC{config: c, oauth: oauth2.Config{ClientID: c.ClientID, ClientSecret: c.ClientSecret, Endpoint: provider.Endpoint(), RedirectURL: c.Origin + "/auth/callback", Scopes: scopes}, verifier: provider.VerifierContext(ctx, &oidc.Config{ClientID: c.ClientID}), httpClient: client, transactions: map[string]transaction{}, sessions: map[string]session{}}, nil
 }
@@ -166,7 +178,7 @@ func (o *OIDC) Callback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "login busy", 503)
 		return
 	}
-	o.sessions[sid] = session{Subject: o.config.Issuer + "#" + id.Subject, Expires: expires}
+	o.sessions[sid] = session{Subject: o.config.Issuer + "#" + id.Subject, Expires: expires, ApproverGroup: o.approverGroup(claims)}
 	o.mu.Unlock()
 	http.SetCookie(w, &http.Cookie{Name: "__Host-apc-session", Value: sid, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: int(time.Until(expires).Seconds())})
 	http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -194,23 +206,68 @@ func (o *OIDC) allowed(subject string, claims map[string]any) bool {
 	}
 	return false
 }
-func (o *OIDC) Subject(r *http.Request) (string, bool) {
+
+// claimStrings reads a claim that is a list of strings or one string.
+func claimStrings(claims map[string]any, name string) []string {
+	switch v := claims[name].(type) {
+	case string:
+		return []string{v}
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, g := range v {
+			if s, ok := g.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// approverGroup returns the first configured approver group the identity
+// holds, or "".
+func (o *OIDC) approverGroup(claims map[string]any) string {
+	for _, g := range claimStrings(claims, o.config.ApproverGroupsClaim) {
+		for _, allowed := range o.config.ApproverGroups {
+			if g != "" && g == allowed {
+				return g
+			}
+		}
+	}
+	return ""
+}
+
+func (o *OIDC) session(r *http.Request) (session, bool) {
 	cookie, e := r.Cookie("__Host-apc-session")
 	if e != nil {
-		return "", false
+		return session{}, false
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	sess, ok := o.sessions[cookie.Value]
 	if !ok {
-		return "", false
+		return session{}, false
 	}
 	if time.Now().After(sess.Expires) {
 		delete(o.sessions, cookie.Value)
-		return "", false
+		return session{}, false
 	}
-	return sess.Subject, true
+	return sess, true
 }
+
+func (o *OIDC) Subject(r *http.Request) (string, bool) {
+	sess, ok := o.session(r)
+	return sess.Subject, ok
+}
+
+// ApproverGroup returns the approver group of the request's session, or "".
+func (o *OIDC) ApproverGroup(r *http.Request) string {
+	sess, _ := o.session(r)
+	return sess.ApproverGroup
+}
+
+// Approvers reports whether any approver group is configured.
+func (o *OIDC) Approvers() bool { return o != nil && len(o.config.ApproverGroups) > 0 }
 func (o *OIDC) Logout(w http.ResponseWriter, r *http.Request) {
 	if c, e := r.Cookie("__Host-apc-session"); e == nil {
 		o.mu.Lock()
