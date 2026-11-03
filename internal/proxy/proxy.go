@@ -28,6 +28,7 @@ import (
 	"time"
 
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/credentials"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/download"
 	"golang.org/x/net/http2"
 )
@@ -148,14 +149,14 @@ func GenerateCA() ([]byte, []byte, error) {
 }
 
 type Server struct {
-	Config              Config
-	CA                  *x509.Certificate
-	Key                 any
-	ReaderTransport     *http.Transport
-	Transport           *http.Transport
-	GitHubToken         func() (string, error)
-	MuseSubscriptionKey func() (string, error)
-	ProviderGrants      func() ([]byte, error)
+	Config          Config
+	CA              *x509.Certificate
+	Key             any
+	ReaderTransport *http.Transport
+	Transport       *http.Transport
+	// Credentials resolves the secrets the proxy injects (credentials.go).
+	Credentials    credentials.Provider
+	ProviderGrants func() ([]byte, error)
 	// BrokeredList returns the project's opted-in brokered providers (brokered.go).
 	BrokeredList func() ([]byte, error)
 	// GrantTransport carries one-time download grants (download_grants.go).
@@ -425,14 +426,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeError(conn, 403, "request denied")
 			return
 		}
-		if s.githubCredentials(req) != nil {
+		if e = s.githubCredentials(req); e != nil {
 			req.Body.Close()
-			writeError(conn, 502, "GitHub repository authorization unavailable")
+			writeError(conn, credentials.Status(e), "GitHub repository authorization unavailable")
 			return
 		}
-		if s.museCredentials(req) != nil {
+		if e = s.museCredentials(req); e != nil {
 			req.Body.Close()
-			writeError(conn, 502, "Muse subscription authorization unavailable")
+			writeError(conn, credentials.Status(e), "Muse subscription authorization unavailable")
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
@@ -501,12 +502,12 @@ func (s *Server) serveHTTP2(ctx context.Context, conn net.Conn, host string) {
 				http.Error(w, "request denied", http.StatusForbidden)
 				return
 			}
-			if s.githubCredentials(forward) != nil {
-				http.Error(w, "GitHub repository authorization unavailable", http.StatusBadGateway)
+			if err := s.githubCredentials(forward); err != nil {
+				http.Error(w, "GitHub repository authorization unavailable", credentials.Status(err))
 				return
 			}
-			if s.museCredentials(forward) != nil {
-				http.Error(w, "Muse subscription authorization unavailable", http.StatusBadGateway)
+			if err := s.museCredentials(forward); err != nil {
+				http.Error(w, "Muse subscription authorization unavailable", credentials.Status(err))
 				return
 			}
 			callCtx, cancel := context.WithTimeout(req.Context(), 2*time.Minute)
@@ -568,8 +569,7 @@ func Run(ctx context.Context) error {
 	if e != nil {
 		return e
 	}
-	s.GitHubToken = gatewayGitHubToken
-	s.MuseSubscriptionKey = gatewayMuseSubscriptionKey
+	s.Credentials = gatewayCredentials()
 	s.ProviderGrants = gatewayProviderGrants
 	s.BrokeredList = gatewayBrokeredProviders
 	server := &http.Server{Addr: ":3128", Handler: s, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 32 << 10}
