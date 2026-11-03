@@ -150,7 +150,9 @@ func TestHelmVoice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("async-only render: %v: %s", err, out)
 	}
-	if !strings.Contains(string(out), `{name: APPROVAL_ENABLED, value: "false"}`) || strings.Contains(string(out), "FORGEJO_TOKEN_FILE") || strings.Contains(string(out), `secretName: "glovecell-voice-forgejo"`) {
+	// Only the voice pod counts: the controller has its own FORGEJO_TOKEN_FILE.
+	asyncDep := toYAML(t, voiceDocs(t, out)["Deployment/glovecell-voice"])
+	if !strings.Contains(string(out), `{name: APPROVAL_ENABLED, value: "false"}`) || strings.Contains(asyncDep, "FORGEJO_TOKEN_FILE") || strings.Contains(asyncDep, "glovecell-voice-forgejo") {
 		t.Fatal("async-only deployment requires or mounts merge credentials")
 	}
 	voice["database"] = map[string]any{"mode": "external", "existingSecret": "voice-db", "uriKey": "url", "caKey": "ca"}
