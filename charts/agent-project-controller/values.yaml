@@ -271,3 +271,83 @@ classes:
 tailscaleIngress:
   enabled: false
   hostname: ''
+# glovecell-voice (docs/voice.md): Matrix voice tasks, the /v1/notify API for
+# agents and the voice approval gate (docs/approval-gate.md). Off by default.
+# Build the image from the Dockerfile's voice target and pin it by digest.
+voice:
+  enabled: false
+  image: ''
+  # The homeserver's https URL (the bot refuses plain http to a non-local host).
+  homeserver: ''
+  speech:
+    # OpenAI-compatible speech API, for example a speaches Service.
+    baseURL: ''
+    sttModel: Systran/faster-distil-whisper-small.en
+    ttsModel: speaches-ai/Kokoro-82M-v1.0-ONNX
+    voice: af_heart
+    language: en
+    # Existing Secret with key api-key, for a cloud provider only.
+    apiKeySecret: ''
+  # Forgejo API origin for the gate; empty uses config.FORGEJO_ORIGIN.
+  forgejoURL: ''
+  orca:
+    # orca-pilot handoff intake and run-record publisher (docs/voice.md).
+    handoffURL: ''
+    runRecordsURL: ''
+  approval:
+    # Enable only after asynchronous tasks and audit backups are qualified.
+    enabled: false
+    # OWNER/NAME or OWNER/* the gate may merge in; required for the gate.
+    repos: []
+    codeTTL: 24h
+    maxMergesPerHour: 10
+  # OWNER/NAME for task rooms without their own repository.
+  defaultRepo: ''
+  # Which targets each notify caller speaks for: caller=target|target,...
+  notifyCallerTargets: ''
+  # Existing Secrets in this namespace (the chart creates none). matrix and
+  # owner are required; the others are optional and switch features on.
+  #   matrix:  user_id, access_token, device_id (or password), pickle_key
+  #   owner:   mxid, master_key (pinned cross-signing master key), rooms
+  #   forgejo: token (the approval-gate user; used only with approval.enabled)
+  #   handoff: token (the orca-pilot handoff intake bearer)
+  #   notify:  one token file per caller, named after the caller
+  secrets:
+    matrix: glovecell-voice-matrix
+    owner: glovecell-voice-owner
+    forgejo: glovecell-voice-forgejo
+    handoff: glovecell-voice-handoff
+    notify: glovecell-voice-notify
+  # Optional JSON details (docs/examples/glovecell-voice-config.json): per-room
+  # targets and repositories, target aliases, the summarizer. No secrets.
+  config: {}
+  database:
+    # shared: the controller's database (CloudNativePG or external) with
+    # its own voice_* tables and mautrix's crypto_* and mx_* tables.
+    # external: a separate PostgreSQL (existingSecret with uriKey/caKey).
+    mode: shared
+    existingSecret: ''
+    uriKey: uri
+    caKey: ''
+    maxConnections: 5
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: '1'
+      memory: 512Mi
+  scheduling:
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+  networkPolicy:
+    enabled: true
+    # NetworkPolicy peers allowed to call /v1/notify (8080: agent cells,
+    # orchestrators) and to scrape /metrics (8081). Empty denies ingress.
+    notifyFrom: []
+    metricsFrom: []
+    # Egress rules beyond DNS and the shared CloudNativePG database: the
+    # Matrix homeserver, the speech server, Forgejo, the Orca intake (8791)
+    # and run records (8790). NetworkPolicy egress rules as YAML.
+    egress: []

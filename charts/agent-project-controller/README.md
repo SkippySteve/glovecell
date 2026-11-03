@@ -75,3 +75,20 @@ The CRD schema already enforces the remaining field rules: the `desiredState` en
 The controller keeps all of its checks as defence in depth, including those the policies repeat. Some rules depend on cluster state that admission cannot read, so only the controller enforces them: a LAN host must not be a node address, the network provider must support LAN and provider policies, the runtime and storage classes must exist, and the total proxy rule count must fit. It refuses such a project before granting anything. No admission webhook is needed.
 
 Set `admissionPolicies.enabled: false` only on a cluster without the API. It turns off every policy above, including the ForgeClass one. The controller's checks still apply.
+
+## Voice service (optional)
+
+`voice.enabled: true` adds glovecell-voice ([docs/voice.md](../../docs/voice.md), [docs/approval-gate.md](../../docs/approval-gate.md)):
+
+- a single-replica Deployment with no Kubernetes token, running the image from the Dockerfile's `voice` target (by digest);
+- a ClusterIP Service on 8080 (`POST /v1/notify` only), with probes and metrics on 8081;
+- an optional ConfigMap for the JSON details;
+- a NetworkPolicy, whose notify, metrics and egress peers you list in `voice.networkPolicy`.
+
+It mounts existing Secrets, `voice.secrets.matrix` and `voice.secrets.owner` (both required), plus optional `forgejo`, `handoff` and `notify`. The chart creates none of them.
+
+By default it uses the controller's database (`voice.database.mode: shared`), and the database NetworkPolicy then admits the voice pod. Set `external` for a separate database.
+
+Voice approvals are separately off by default (`voice.approval.enabled: false`).
+In this mode the chart mounts no Forgejo merge token. Qualify asynchronous voice
+tasks and spoken completions first; see [voice stages](../../docs/voice.md#complete-asynchronous-voice-before-enabling-approvals).

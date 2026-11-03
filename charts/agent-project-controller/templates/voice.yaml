@@ -1,0 +1,334 @@
+{{- /*
+glovecell-voice (docs/voice.md, docs/approval-gate.md): the Matrix voice
+service, the /v1/notify API and the voice approval gate. Off by default. It
+runs here, in the trusted control namespace, never in a project sandbox: it
+holds the Matrix bot's credentials and the approval-gate Forgejo token.
+*/ -}}
+{{- if .Values.voice.enabled }}
+{{- $v := .Values.voice }}
+{{- if not (regexMatch "^.+@sha256:[a-f0-9]{64}$" (toString $v.image)) }}
+{{- fail "voice.image must be a digest-pinned image (@sha256:...)" }}
+{{- end }}
+{{- if not (and $v.secrets.matrix $v.secrets.owner) }}
+{{- fail "voice.secrets.matrix and voice.secrets.owner are required (docs/voice.md lists their keys)" }}
+{{- end }}
+{{- if not (regexMatch "^https://" (toString $v.homeserver)) }}
+{{- fail "voice.homeserver must be the homeserver's https URL" }}
+{{- end }}
+{{- if not $v.speech.baseURL }}
+{{- fail "voice.speech.baseURL is required" }}
+{{- end }}
+{{- if not (has $v.database.mode (list "shared" "external")) }}
+{{- fail "voice.database.mode must be shared or external" }}
+{{- end }}
+{{- if and (eq $v.database.mode "external") (not $v.database.existingSecret) }}
+{{- fail "voice.database.existingSecret is required in external mode" }}
+{{- end }}
+{{- $dbSecret := ternary (include "apc.databaseSecret" .) $v.database.existingSecret (eq $v.database.mode "shared") }}
+{{- $dbKey := ternary (ternary .Values.database.external.uriKey "uri" (eq .Values.database.mode "external")) $v.database.uriKey (eq $v.database.mode "shared") }}
+{{- $caSecret := "" }}
+{{- $caKey := "" }}
+{{- if eq $v.database.mode "shared" }}
+{{- if eq .Values.database.mode "cloudnativepg" }}
+{{- $caSecret = printf "%s-ca" (include "apc.databaseCluster" .) }}
+{{- $caKey = "ca.crt" }}
+{{- else if .Values.database.external.caKey }}
+{{- $caSecret = $dbSecret }}
+{{- $caKey = .Values.database.external.caKey }}
+{{- end }}
+{{- else if $v.database.caKey }}
+{{- $caSecret = $dbSecret }}
+{{- $caKey = $v.database.caKey }}
+{{- end }}
+{{- if $v.config }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: glovecell-voice
+  labels:
+    app.kubernetes.io/name: glovecell-voice
+    app.kubernetes.io/part-of: agent-project-controller
+data:
+  config.json: {{ toJson $v.config | quote }}
+---
+{{- end }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: glovecell-voice
+  labels:
+    app.kubernetes.io/name: glovecell-voice
+# The service never talks to the Kubernetes API.
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: glovecell-voice
+  labels:
+    app.kubernetes.io/name: glovecell-voice
+    app.kubernetes.io/part-of: agent-project-controller
+spec:
+  # One Matrix device and one gate: never two replicas.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: glovecell-voice
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ toJson (omit $v "networkPolicy" "resources" "scheduling") | sha256sum }}
+      labels:
+        app.kubernetes.io/name: glovecell-voice
+        app.kubernetes.io/part-of: agent-project-controller
+    spec:
+      serviceAccountName: glovecell-voice
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+{{- with $v.scheduling.nodeSelector }}
+      nodeSelector:
+{{ toYaml . | indent 8 }}
+{{- end }}
+{{- with $v.scheduling.tolerations }}
+      tolerations:
+{{ toYaml . | indent 8 }}
+{{- end }}
+{{- with $v.scheduling.affinity }}
+      affinity:
+{{ toYaml . | indent 8 }}
+{{- end }}
+{{- with .Values.controllerImagePullSecrets }}
+      imagePullSecrets:
+{{ toYaml . | indent 8 }}
+{{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: voice
+          image: {{ $v.image | quote }}
+          args: [serve]
+          # The cluster contract (infra/agent-workplace/glovecell-voice in the
+          # deployment repository uses the same names). Credentials are files.
+          env:
+            - {name: VOICE_LISTEN_ADDR, value: ":8080"}
+            - {name: VOICE_HEALTH_ADDR, value: ":8081"}
+            - {name: MATRIX_HOMESERVER, value: {{ $v.homeserver | quote }}}
+            - {name: MATRIX_DEVICE_NAME, value: glovecell-voice}
+            - {name: MATRIX_CREDENTIALS_DIR, value: /var/run/glovecell-voice/matrix}
+            - {name: VOICE_OWNER_DIR, value: /var/run/glovecell-voice/owner}
+            - {name: SPEECH_BASE_URL, value: {{ $v.speech.baseURL | quote }}}
+{{- range $env, $key := dict "SPEECH_STT_MODEL" "sttModel" "SPEECH_TTS_MODEL" "ttsModel" "SPEECH_VOICE" "voice" "SPEECH_LANGUAGE" "language" }}
+{{- with index $v.speech $key }}
+            - {name: {{ $env }}, value: {{ . | quote }}}
+{{- end }}
+{{- end }}
+{{- with $v.speech.apiKeySecret }}
+            - {name: SPEECH_API_KEY_FILE, value: /var/run/glovecell-voice/speech/api-key}
+{{- end }}
+{{- with (default .Values.config.FORGEJO_ORIGIN $v.forgejoURL) }}
+            - {name: FORGEJO_URL, value: {{ . | quote }}}
+{{- end }}
+{{- if and $v.approval.enabled $v.secrets.forgejo }}
+            - {name: FORGEJO_TOKEN_FILE, value: /var/run/glovecell-voice/forgejo/token}
+{{- end }}
+{{- with $v.orca.handoffURL }}
+            - {name: ORCA_HANDOFF_URL, value: {{ . | quote }}}
+{{- end }}
+{{- with $v.orca.runRecordsURL }}
+            - {name: ORCA_RUN_RECORDS_URL, value: {{ . | quote }}}
+{{- end }}
+{{- if $v.secrets.handoff }}
+            - {name: ORCA_HANDOFF_TOKEN_FILE, value: /var/run/glovecell-voice/handoff/token}
+{{- end }}
+{{- if $v.secrets.notify }}
+            - {name: NOTIFY_TOKENS_DIR, value: /var/run/glovecell-voice/notify}
+{{- end }}
+{{- with $v.notifyCallerTargets }}
+            - {name: NOTIFY_CALLER_TARGETS, value: {{ . | quote }}}
+{{- end }}
+            - {name: DATABASE_URL_FILE, value: /var/run/glovecell-voice/database/uri}
+{{- if $caKey }}
+            - {name: DATABASE_CA_FILE, value: /var/run/glovecell-voice/database-ca/ca.crt}
+{{- end }}
+            - {name: DATABASE_MAX_CONNS, value: {{ $v.database.maxConnections | toString | quote }}}
+            - {name: APPROVAL_ENABLED, value: {{ $v.approval.enabled | toString | quote }}}
+            - {name: APPROVAL_CODE_TTL, value: {{ $v.approval.codeTTL | quote }}}
+            - {name: APPROVAL_MAX_MERGES_PER_HOUR, value: {{ $v.approval.maxMergesPerHour | toString | quote }}}
+{{- with $v.approval.repos }}
+            - {name: APPROVAL_REPOS, value: {{ join "," . | quote }}}
+{{- end }}
+{{- with $v.defaultRepo }}
+            - {name: VOICE_DEFAULT_REPO, value: {{ . | quote }}}
+{{- end }}
+{{- if $v.config }}
+            - {name: VOICE_CONFIG_FILE, value: /etc/glovecell-voice/config.json}
+{{- end }}
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: health
+              containerPort: 8081
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 20
+            failureThreshold: 6
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+{{- with $v.resources }}
+          resources:
+{{ toYaml . | indent 12 }}
+{{- end }}
+          volumeMounts:
+{{- if $v.config }}
+            - {name: config, mountPath: /etc/glovecell-voice, readOnly: true}
+{{- end }}
+{{- range $name := list "matrix" "owner" "forgejo" "handoff" "notify" }}
+{{- if and (index $v.secrets $name) (or (ne $name "forgejo") $v.approval.enabled) }}
+            - {name: {{ $name }}, mountPath: /var/run/glovecell-voice/{{ $name }}, readOnly: true}
+{{- end }}
+{{- end }}
+{{- if $v.speech.apiKeySecret }}
+            - {name: speech, mountPath: /var/run/glovecell-voice/speech, readOnly: true}
+{{- end }}
+            - {name: database, mountPath: /var/run/glovecell-voice/database, readOnly: true}
+{{- if $caKey }}
+            - {name: database-ca, mountPath: /var/run/glovecell-voice/database-ca, readOnly: true}
+{{- end }}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+{{- if $v.config }}
+        - name: config
+          configMap:
+            name: glovecell-voice
+{{- end }}
+{{- range $name := list "matrix" "owner" "forgejo" "handoff" "notify" }}
+{{- if or (ne $name "forgejo") $v.approval.enabled }}
+{{- with index $v.secrets $name }}
+        - name: {{ $name }}
+          secret:
+            secretName: {{ . | quote }}
+            defaultMode: 0440
+{{- end }}
+{{- end }}
+{{- end }}
+{{- with $v.speech.apiKeySecret }}
+        - name: speech
+          secret:
+            secretName: {{ . | quote }}
+            defaultMode: 0440
+            items:
+              - {key: api-key, path: api-key}
+{{- end }}
+        - name: database
+          secret:
+            secretName: {{ $dbSecret | quote }}
+            defaultMode: 0440
+            items:
+              - key: {{ $dbKey | quote }}
+                path: uri
+{{- if $caKey }}
+        - name: database-ca
+          secret:
+            secretName: {{ $caSecret | quote }}
+            defaultMode: 0444
+            items:
+              - key: {{ $caKey | quote }}
+                path: ca.crt
+{{- end }}
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: glovecell-voice
+  labels:
+    app.kubernetes.io/name: glovecell-voice
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: glovecell-voice
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+{{- if $v.networkPolicy.enabled }}
+---
+# Ingress only from the notify callers (8080) and metrics scrapers (8081)
+# named in values;
+# egress only to DNS, the database and the destinations named in values
+# (homeserver, speech server, Forgejo, the Orca intake and run records).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: glovecell-voice
+  labels:
+    app.kubernetes.io/name: glovecell-voice
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: glovecell-voice
+  policyTypes: [Ingress, Egress]
+  ingress:
+{{- if or $v.networkPolicy.notifyFrom $v.networkPolicy.metricsFrom }}
+{{- with $v.networkPolicy.notifyFrom }}
+    - from:
+{{ toYaml . | indent 8 }}
+      ports:
+        - protocol: TCP
+          port: 8080
+{{- end }}
+{{- with $v.networkPolicy.metricsFrom }}
+    - from:
+{{ toYaml . | indent 8 }}
+      ports:
+        - protocol: TCP
+          port: 8081
+{{- end }}
+{{- end }}
+    # Kubelet probes are not subject to NetworkPolicy on most providers.
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.config.DNS_SERVICE_NAMESPACE | default "kube-system" | quote }}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+{{- if eq $v.database.mode "shared" }}
+{{- if eq .Values.database.mode "cloudnativepg" }}
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: {{ include "apc.databaseCluster" . }}
+      ports:
+        - protocol: TCP
+          port: 5432
+{{- end }}
+{{- end }}
+{{- with $v.networkPolicy.egress }}
+{{ toYaml . | indent 4 }}
+{{- end }}
+{{- end }}
+{{- end }}

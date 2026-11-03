@@ -62,7 +62,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [runtime, workspace]
+        target: [runtime, workspace, voice]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install pinned Trivy
@@ -147,5 +147,20 @@ jobs:
           CI_PUBLISHER_TOKEN: ${{ secrets.CI_PUBLISHER_TOKEN }}
         run: >-
           python3 /tmp/monorepo/.forgejo/scripts/promote.py --component project-workspace
+          --image "$IMAGE" --source-repo "$GITHUB_REPOSITORY" --source-sha "$GITHUB_SHA"
+          --require-status "CI / checks (push)"
+      # glovecell-voice (Dockerfile target voice): promote/glovecell-voice moves
+      # the pin in infra/agent-workplace/glovecell-voice/deployment.yaml.
+      - name: Push the gated voice image
+        if: matrix.target == 'voice' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          CI_IMAGE_TOKEN: ${{ secrets.CI_IMAGE_TOKEN }}
+        run: /tmp/monorepo/.forgejo/scripts/push-image.sh "candidate-voice:${GITHUB_SHA}" git.cluster.aimingupward.com/image-publisher/glovecell-voice
+      - name: Open the voice promotion PR
+        if: matrix.target == 'voice' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          CI_PUBLISHER_TOKEN: ${{ secrets.CI_PUBLISHER_TOKEN }}
+        run: >-
+          python3 /tmp/monorepo/.forgejo/scripts/promote.py --component glovecell-voice
           --image "$IMAGE" --source-repo "$GITHUB_REPOSITORY" --source-sha "$GITHUB_SHA"
           --require-status "CI / checks (push)"

@@ -31,6 +31,28 @@ USER 1000:1000
 ENTRYPOINT ["/usr/local/bin/agent-project-controller"]
 CMD ["controller"]
 
+# glovecell-voice (docs/voice.md): the Matrix voice service and approval gate.
+# It needs no console bundle, so it builds without the Node stage. -tags goolm
+# selects mautrix's pure-Go Olm, so the image stays CGO_ENABLED=0.
+FROM ${GO_IMAGE} AS voice-build
+ARG VERSION=dev
+ARG SOURCE_REVISION=unknown
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY api/ api/
+COPY cmd/ cmd/
+COPY internal/ internal/
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 go build -tags goolm -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${SOURCE_REVISION}" -o /glovecell-voice ./cmd/glovecell-voice
+
+FROM ${RUNTIME_IMAGE} AS voice
+RUN apk add --no-cache ca-certificates && addgroup -g 1000 agent && adduser -D -u 1000 -G agent agent
+COPY --from=voice-build /glovecell-voice /usr/local/bin/glovecell-voice
+COPY third_party/licenses/ /usr/share/agent-project-controller/licenses/
+USER 1000:1000
+ENTRYPOINT ["/usr/local/bin/glovecell-voice"]
+CMD ["serve"]
+
 # Optional coding environment. The controller and proxy can use the smaller runtime target.
 FROM ${GO_IMAGE} AS toolchain
 FROM ${WORKSPACE_IMAGE} AS workspace

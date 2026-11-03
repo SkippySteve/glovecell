@@ -120,6 +120,11 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: agent-project-controller
+{{- if and .Values.voice.enabled (eq .Values.voice.database.mode "shared") }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: glovecell-voice
+{{- end }}
 {{- with $c.extraIngressFrom }}
 {{ toYaml . | indent 8 }}
 {{- end }}

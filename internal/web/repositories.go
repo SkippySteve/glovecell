@@ -36,7 +36,7 @@ func (s *Server) enrollRepository(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if (request.Project.Host == s.GitHost || request.Project.Host=="forgejo" && s.GitHost=="") && request.Project.Repository == obj.Spec.Repository {
+	if (request.Project.Host == s.GitHost || request.Project.Host == "forgejo" && s.GitHost == "") && request.Project.Repository == obj.Spec.Repository {
 		http.Error(w, "repository is already the original checkout", 409)
 		return
 	}
