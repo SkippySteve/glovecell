@@ -366,3 +366,15 @@ func TestExactTaskCompletionWithinSharedThread(t *testing.T) {
 		t.Fatalf("duplicate completion accepted: %v", err)
 	}
 }
+
+func TestAsyncModeCannotRequestOrActOnApproval(t *testing.T) {
+	r := newRig(t)
+	r.svc.SetGate(nil)
+	if err := r.svc.RequestCard(ctx, Caller{Name: "orca-pilot"}, repo, 93, "ready"); err == nil {
+		t.Fatal("async-only service accepted an approval card request")
+	}
+	r.svc.HandleMessage(ctx, r.voice(approvals, "Approve 4721"))
+	if r.forge.MergedCount() != 0 || len(r.orca.Tasks()) != 0 {
+		t.Fatal("approval in disabled room merged or launched an agent")
+	}
+}
