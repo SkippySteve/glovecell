@@ -57,6 +57,8 @@ type Server struct {
 	Downloads *Downloads
 	// Providers enables brokered provider opt-in (providers.go).
 	Providers *Providers
+	// GitHubBrokering enables per-project GitHub opt-in (github_access.go).
+	GitHubBrokering bool
 	// Reference is the deployment's reference rules, shown read only next to
 	// every project's own rules (README "Reference rules").
 	Reference Reference
@@ -212,6 +214,9 @@ func (s *Server) Handler() (http.Handler, error) {
 	})
 	mux.HandleFunc("POST /api/v1/workspaces/{name}/providers", s.addProvider)
 	mux.HandleFunc("DELETE /api/v1/workspaces/{name}/providers/{provider}", s.removeProvider)
+	mux.HandleFunc("PUT /api/v1/workspaces/{name}/github", s.setGitHub)
+	mux.HandleFunc("DELETE /api/v1/workspaces/{name}/github", s.removeGitHub)
+	mux.HandleFunc("POST /api/v1/workspaces/{name}/github/approvals", s.approveGitHub)
 	mux.HandleFunc("GET /api/v1/workspaces/{name}/audit", s.audit)
 	mux.HandleFunc("GET /api/v1/database", s.databaseStatus)
 	mux.HandleFunc("GET /api/v1/workspaces/{name}/access-requests", s.listRequests)

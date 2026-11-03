@@ -38,7 +38,7 @@ rules, so upgrading never widens it.
 
 Two kinds in `projects.agentwork.dev/v1alpha1` (they move to `glovecell.dev` with the D2 rename):
 
-- **AccessProfile** (cluster-scoped): a named preset. `spec.level`, `description`, read-only `https` rules,
+- **AccessProfile** (cluster-scoped): a named preset. `spec.level`, `description`, read-only `rules`,
   `registries`, `allowedGrants` (internet, lan, package), `maxGrantDuration` per grant type and `approveRequests`.
   The chart installs `locked` (cluster default, annotation `accessprofile.projects.agentwork.dev/is-default`), `ask`,
   `standard`, `open` and `custom` from `config/samples/accessprofiles.yaml` (`accessProfiles.install`).
@@ -50,6 +50,63 @@ Two kinds in `projects.agentwork.dev/v1alpha1` (they move to `glovecell.dev` wit
 A cell (ProjectWorkspace) names its profile in `spec.accessProfileName`. Open is the `open` profile plus a live
 internet grant; Custom is the `custom` profile with the cell's own rules and explicit grants; **Lock now** deletes
 every grant of the cell, then sets the `locked` profile.
+
+### Profile rules use Agent Substrate's shape
+
+Profile rules use the shape of [Agent Substrate](https://github.com/agent-substrate/substrate)'s
+`EgressPolicy` rules, so a profile can later move to Substrate (or to a gateway that follows its
+[egress contract](https://github.com/agent-substrate/substrate/blob/main/docs/guides/network-egress.md))
+without being redesigned. Example:
+
+```yaml
+rules:
+  - https:
+      hostnames: [github.com, codeload.github.com, "*.docs.example.org"]
+      ports: {numbers: [443]}   # optional; 443 is the default and the only port the proxy serves
+      methods: [GET, HEAD]
+      paths: [/]
+```
+
+- Each rule is a union by protocol, as in Substrate. `https` (inspected) is the only member, because
+  the project proxy inspects every request. Substrate's `http` and `tls_passthrough` would be added
+  as the `http` and `tlsPassthrough` members.
+- `hostnames` uses Substrate's pattern syntax:
+  - a lowercase DNS name, or one with `*` as its whole leftmost label;
+  - `*.example.com` matches exactly one label (`api.example.com`), not `example.com` and not
+    `a.b.example.com`;
+  - a bare `*` is refused, because opening every host is an internet grant, not a profile rule.
+- `ports.numbers` is Substrate's `Ports.numbers`.
+- `methods` and `paths` are this API's extension. Substrate decides on host and port only. Moving a
+  profile there keeps the hosts and ports, and needs Substrate's egress `ext_proc` hook for the
+  method and path checks.
+
+Two differences from Substrate:
+
+- **Overlapping rules.** Rules are a set of allows: a request passes if any rule allows it.
+  Substrate lets only the most specific matching rule decide, and refuses two rules with the same
+  hostname and port. Here several rules may name one host, for example GET everywhere and POST
+  only to `git-upload-pack`. The difference matters only when a wildcard and an exact name cover
+  the same host with different methods or paths.
+- **Size.** Each rule may list at most 16 hostnames, and a profile at most 256 in total
+  (Substrate allows 256 of each). This keeps profiles within the proxy's rule budget, which they
+  share with the deployment's reference rules.
+
+### DNS answers only names in the policy
+
+A cell resolves only the names its policy allows, the same rule Substrate's DNS relay applies:
+
+| Who | Resolves | Everything else |
+| --- | --- | --- |
+| Worker | its own proxy's Service names | refused |
+| Proxy | the hosts in its rules (a `*.` rule as a one-label pattern) | refused |
+
+With the Cilium network provider these are DNS rules in the `worker` and `proxy`
+CiliumNetworkPolicies (`internal/network/cilium.go`), and Cilium answers every other query
+`REFUSED` (its default `tofqdns-dns-reject-response-code`). Unlike Substrate, which logs nothing for
+a refused name, Hubble shows each refused query with the cell's labels, so you can see which name
+was blocked. With the experimental
+NetworkPolicy provider the worker has no DNS at all. The proxy can resolve any name there, but it
+still connects only to hosts in its rules.
 
 Enforcement on project sandboxes:
 
@@ -79,7 +136,7 @@ ValidatingAdmissionPolicies (`templates/access-admission-policies.yaml`, failure
   counted from `metadata.creationTimestamp` because CEL has no clock); an update may only move `expiresAt` earlier; the
   `projects.agentwork.dev/cell` label and exactly one ProjectWorkspace ownerReference name `spec.cell`; LAN addresses
   inside the allowlist, outside the denylist and never loopback, link-local, metadata, multicast, network or broadcast.
-- `access-profile`: rules are read only (POST only to `git-upload-pack`, never `git-receive-pack`), paths are literal,
+- `access-profile`: every rule's `https` member is read only (POST only to `git-upload-pack`, never `git-receive-pack`), paths are literal,
   only the open level allows internet grants and it must set their maximum duration.
 
 Left to a webhook or the controller (CEL cannot do them): node addresses for LAN grants (the controller reads Node

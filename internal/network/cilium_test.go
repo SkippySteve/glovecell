@@ -173,3 +173,57 @@ func TestGatewayCanAvoidCiliumSNIInterceptionWithoutWorkerPermissions(t *testing
 		t.Fatal("endpoint restriction removed")
 	}
 }
+
+// dnsNames returns the names an egress rule's DNS rules let a pod resolve,
+// marking patterns with a "pattern:" prefix.
+func dnsNames(t *testing.T, rule any) []string {
+	t.Helper()
+	ports := rule.(map[string]any)["toPorts"].([]any)[0].(map[string]any)
+	var names []string
+	for _, r := range ports["rules"].(map[string]any)["dns"].([]any) {
+		m := r.(map[string]any)
+		if len(m) != 1 {
+			t.Fatalf("DNS rule with more than one matcher: %v", m)
+		}
+		if name, ok := m["matchName"]; ok {
+			names = append(names, name.(string))
+		} else {
+			names = append(names, "pattern:"+m["matchPattern"].(string))
+		}
+	}
+	return names
+}
+
+// A cell resolves only names its policy allows, the rule Agent Substrate's
+// DNS relay applies (docs/access-levels.md): the worker only its proxy, the
+// proxy only its rule hosts. Cilium answers anything else REFUSED.
+func TestDNSAnswersOnlyPolicyNames(t *testing.T) {
+	objects := Cilium{}.Objects("project", "uid", []string{"api.example.com", "*.docs.example.org"})
+	worker, _, _ := unstructured.NestedSlice(objects[0].Object, "spec", "egress")
+	proxy, _, _ := unstructured.NestedSlice(objects[1].Object, "spec", "egress")
+
+	wantWorker := []string{"proxy", "proxy.project", "proxy.project.svc", "proxy.project.svc.cluster.local"}
+	if got := dnsNames(t, worker[0]); !reflect.DeepEqual(got, wantWorker) {
+		t.Fatalf("worker may resolve %v, want only its proxy %v", got, wantWorker)
+	}
+	wantProxy := []string{
+		"api.example.com", "api.example.com.project.svc.cluster.local", "api.example.com.svc.cluster.local", "api.example.com.cluster.local",
+		"pattern:*.docs.example.org", "pattern:*.docs.example.org.project.svc.cluster.local", "pattern:*.docs.example.org.svc.cluster.local", "pattern:*.docs.example.org.cluster.local",
+	}
+	if got := dnsNames(t, proxy[0]); !reflect.DeepEqual(got, wantProxy) {
+		t.Fatalf("proxy may resolve %v, want only its rule hosts %v", got, wantProxy)
+	}
+	// The proxy connects only to the same names, on 443.
+	fqdns := proxy[1].(map[string]any)["toFQDNs"].([]any)
+	if !reflect.DeepEqual(fqdns, []any{map[string]any{"matchName": "api.example.com"}, map[string]any{"matchPattern": "*.docs.example.org"}}) {
+		t.Fatalf("proxy FQDNs %v", fqdns)
+	}
+	// No rule lets either pod resolve every name.
+	for _, rules := range [][]string{dnsNames(t, worker[0]), dnsNames(t, proxy[0])} {
+		for _, name := range rules {
+			if name == "pattern:*" || name == "pattern:**" || name == "" {
+				t.Fatal("DNS rule allows every name")
+			}
+		}
+	}
+}
