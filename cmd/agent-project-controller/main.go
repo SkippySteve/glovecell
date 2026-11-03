@@ -22,6 +22,7 @@ import (
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/download"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/forge"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/forgejo"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/githubbroker"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/githubhost"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/network"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/orchestrator"
@@ -151,16 +152,26 @@ func lanFromEnv(provider network.Provider) (network.LANConfig, error) {
 // PROVIDER_LEASES_SECRET=<namespace>/<name>: the Secret the provider broker
 // writes in lease mode. Unset keeps spec.providers off.
 func providerLeasesFromEnv(provider network.Provider) (*types.NamespacedName, error) {
-	raw := os.Getenv("PROVIDER_LEASES_SECRET")
+	return leaseSecretFromEnv("PROVIDER_LEASES_SECRET", provider)
+}
+
+// githubLeaseFromEnv reads GITHUB_LEASE_SECRET=<namespace>/<name>: the lease
+// Secret the GitHub broker writes. Unset keeps spec.github off.
+func githubLeaseFromEnv(provider network.Provider) (*types.NamespacedName, error) {
+	return leaseSecretFromEnv("GITHUB_LEASE_SECRET", provider)
+}
+
+func leaseSecretFromEnv(variable string, provider network.Provider) (*types.NamespacedName, error) {
+	raw := os.Getenv(variable)
 	if raw == "" {
 		return nil, nil
 	}
 	ns, name, ok := strings.Cut(raw, "/")
 	if !ok || len(validation.IsDNS1123Label(ns)) != 0 || len(validation.IsDNS1123Subdomain(name)) != 0 {
-		return nil, errors.New("PROVIDER_LEASES_SECRET must be <namespace>/<secret name>")
+		return nil, errors.New(variable + " must be <namespace>/<secret name>")
 	}
 	if _, ok := provider.(network.ProviderPolicy); !ok {
-		return nil, errors.New("PROVIDER_LEASES_SECRET requires NETWORK_PROVIDER=cilium")
+		return nil, errors.New(variable + " requires NETWORK_PROVIDER=cilium")
 	}
 	return &types.NamespacedName{Namespace: ns, Name: name}, nil
 }
@@ -268,6 +279,20 @@ func run(ctx context.Context) error {
 				return errors.New("trusted broker client unavailable")
 			}
 			return providerbroker.Run(ctx, c, config)
+		case "github-broker":
+			config, err := ctrl.GetConfig()
+			if err != nil {
+				return errors.New("trusted Kubernetes client unavailable")
+			}
+			scheme := runtime.NewScheme()
+			if err := clientgoscheme.AddToScheme(scheme); err != nil {
+				return err
+			}
+			c, err := client.New(config, client.Options{Scheme: scheme})
+			if err != nil {
+				return errors.New("trusted broker client unavailable")
+			}
+			return githubbroker.Run(ctx, c, os.Args[2:])
 		case "register-projects":
 			return projects.Register(ctx)
 		case "version", "--version":
@@ -424,6 +449,9 @@ func run(ctx context.Context) error {
 	if reconciler.ProviderLeases, e = providerLeasesFromEnv(networkProvider); e != nil {
 		return e
 	}
+	if reconciler.GitHubLease, e = githubLeaseFromEnv(networkProvider); e != nil {
+		return e
+	}
 	if host := os.Getenv("READER_HTTPS_HOST"); host != "" {
 		route := &proxy.ReaderRoute{Host: host, Upstream: os.Getenv("READER_UPSTREAM")}
 		if err := route.Validate(); err != nil {
@@ -546,6 +574,7 @@ func run(ctx context.Context) error {
 	if reconciler.ProviderLeases != nil {
 		server.Providers = &web.Providers{Status: reconciler.ProviderLeaseStatus}
 	}
+	server.GitHubBrokering = reconciler.GitHubLease != nil
 	if lan.Enabled() {
 		server.LAN = &web.LANGrants{Config: lan, Nodes: network.NodeAddresses}
 	}

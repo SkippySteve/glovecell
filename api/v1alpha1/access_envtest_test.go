@@ -39,13 +39,22 @@ func TestAccessCRDValidation(t *testing.T) {
 
 	// Profiles: read-only methods and known levels only.
 	for name, spec := range map[string]AccessProfileSpec{
-		"bad-level":  {Level: "wide"},
-		"write-rule": {Level: AccessLevelCustom, HTTPS: []HTTPSRule{{Host: "api.example.com", Methods: []string{"PUT"}, Paths: []string{"/"}}}},
-		"bad-grant":  {Level: AccessLevelCustom, AllowedGrants: []AccessGrantType{"shell"}},
+		"bad-level":     {Level: "wide"},
+		"write-rule":    {Level: AccessLevelCustom, Rules: []EgressRule{{HTTPS: &HTTPSEgressRule{Hostnames: []string{"api.example.com"}, Methods: []string{"PUT"}, Paths: []string{"/"}}}}},
+		"no-protocol":   {Level: AccessLevelCustom, Rules: []EgressRule{{}}},
+		"other-port":    {Level: AccessLevelCustom, Rules: []EgressRule{{HTTPS: &HTTPSEgressRule{Hostnames: []string{"api.example.com"}, Ports: &EgressPorts{Numbers: []int32{8443}}, Methods: []string{"GET"}, Paths: []string{"/"}}}}},
+		"deep-wildcard": {Level: AccessLevelCustom, Rules: []EgressRule{{HTTPS: &HTTPSEgressRule{Hostnames: []string{"*.*.example.com"}, Methods: []string{"GET"}, Paths: []string{"/"}}}}},
+		"any-host":      {Level: AccessLevelCustom, Rules: []EgressRule{{HTTPS: &HTTPSEgressRule{Hostnames: []string{"*"}, Methods: []string{"GET"}, Paths: []string{"/"}}}}},
+		"url-host":      {Level: AccessLevelCustom, Rules: []EgressRule{{HTTPS: &HTTPSEgressRule{Hostnames: []string{"https://api.example.com"}, Methods: []string{"GET"}, Paths: []string{"/"}}}}},
+		"bad-grant":     {Level: AccessLevelCustom, AllowedGrants: []AccessGrantType{"shell"}},
 	} {
 		if err = c.Create(ctx, &AccessProfile{ObjectMeta: metav1.ObjectMeta{Name: name}, Spec: spec}); !apierrors.IsInvalid(err) {
 			t.Fatal(name, "accepted", err)
 		}
+	}
+	docs := []EgressRule{{HTTPS: &HTTPSEgressRule{Hostnames: []string{"docs.example.com", "*.docs.example.org"}, Ports: &EgressPorts{Numbers: []int32{443}}, Methods: []string{"GET", "HEAD"}, Paths: []string{"/"}}}}
+	if err = c.Create(ctx, &AccessProfile{ObjectMeta: metav1.ObjectMeta{Name: "docs"}, Spec: AccessProfileSpec{Level: AccessLevelCustom, Rules: docs}}); err != nil {
+		t.Fatal("Substrate-shaped rule refused", err)
 	}
 	if err = c.Create(ctx, &AccessProfile{ObjectMeta: metav1.ObjectMeta{Name: "standard"}, Spec: AccessProfileSpec{Level: AccessLevelStandard, Registries: []string{"npm"},
 		MaxGrantDuration: map[AccessGrantType]metav1.Duration{AccessGrantLAN: {Duration: time.Hour}}, AllowedGrants: []AccessGrantType{AccessGrantLAN}}}); err != nil {

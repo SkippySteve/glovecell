@@ -86,6 +86,37 @@ end for certain. Every add and remove is an immutable audit record with the
 operator, project, address, ports and time, and the controller records each
 applied policy.
 
+## Credentials the proxy injects
+
+Some credentials never enter the worker. The worker sends a placeholder, and
+the project proxy replaces it on the way out:
+
+- the GitHub read grant for private repositories;
+- the Muse subscription key.
+
+The proxy names each credential with a URI, such as
+`ate-secret://cell.agentwork.dev/tls/github-token`, and fetches it through a
+provider interface (`internal/credentials`) on every request. A replaced or
+revoked Secret therefore applies at once.
+
+The URI syntax and the failure rules copy
+[Agent Substrate's credential providers](https://github.com/agent-substrate/substrate/blob/main/docs/guides/egress-credential-injection.md):
+
+| Situation | Proxy answers |
+| --- | --- |
+| Credential missing (`NotFound`) or not granted to this cell (`PermissionDenied`) | 403 |
+| Backend unavailable, timed out, or no provider configured | 503 (retryable) |
+| Credential empty, too long, or containing a control character | 503 |
+
+Either way, the request never leaves without its credential.
+
+The built-in provider reads the proxy's own Secret volume, which only the
+proxy mounts. It serves only the listed keys, so a URI can't reach the CA key
+or other files there. A backend such as OpenBao can implement the same
+interface later (the reserved `openbao-broker` ProviderClass driver). It must
+check that the calling cell may have the credential: `Request.Cell` names the
+cell, and a shared backend refuses requests that leave it empty.
+
 ## Brokered subscription providers
 
 `spec.providers` gives a project's worker short-lived, access-only leases for
