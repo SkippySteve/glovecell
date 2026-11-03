@@ -54,6 +54,7 @@ func clusterEnv(t *testing.T) string {
 		"APPROVAL_CODE_TTL":            "24h",
 		"APPROVAL_MAX_MERGES_PER_HOUR": "10",
 		"APPROVAL_REPOS":               "steve/*",
+		"APPROVAL_ENABLED":             "true",
 		"VOICE_DEFAULT_REPO":           "steve/agent-project-controller",
 	} {
 		t.Setenv(k, v)
@@ -98,6 +99,11 @@ func TestLoadWithConfigFile(t *testing.T) {
 
 func TestLoadRefusals(t *testing.T) {
 	for name, mutate := range map[string]func(dir string){
+		"missing gate token": func(dir string) { os.Remove(filepath.Join(dir, "forgejo", "token")) },
+		"bad gate switch": func(dir string) { t.Setenv("APPROVAL_ENABLED", "yes") },
+		"gate without room": func(dir string) {
+			os.WriteFile(filepath.Join(dir, "owner", "rooms"), []byte("!inbox:matrix.example.com inbox"), 0o600)
+		},
 		"no pinned key":      func(dir string) { os.Remove(filepath.Join(dir, "owner", "master_key")) },
 		"no pickle key":      func(dir string) { os.Remove(filepath.Join(dir, "matrix", "pickle_key")) },
 		"no owner":           func(dir string) { t.Setenv("VOICE_OWNER_DIR", "") },
@@ -129,8 +135,9 @@ func TestLoadRefusals(t *testing.T) {
 	}
 }
 
-func TestGateOffWithoutToken(t *testing.T) {
+func TestGateOffForAsyncTasks(t *testing.T) {
 	dir := clusterEnv(t)
+	t.Setenv("APPROVAL_ENABLED", "false")
 	os.Remove(filepath.Join(dir, "forgejo", "token"))
 	t.Setenv("APPROVAL_REPOS", "")
 	s, err := load()
@@ -146,5 +153,28 @@ func TestParseRooms(t *testing.T) {
 	}
 	if _, err := ParseRooms("!a:x admin"); err == nil {
 		t.Fatal("unknown word accepted")
+	}
+}
+
+func TestGateDefaultsOffEvenWithToken(t *testing.T) {
+	clusterEnv(t)
+	t.Setenv("APPROVAL_ENABLED", "")
+	s, err := load()
+	if err != nil || s.GateEnabled || s.ForgejoToken != "" {
+		t.Fatalf("gate activated or credential loaded without opt-in: %v", err)
+	}
+}
+
+func TestGateDisabledOverridesConfigFile(t *testing.T) {
+	dir := clusterEnv(t)
+	path := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(path, []byte(`{"gate":{"enabled":true}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("VOICE_CONFIG_FILE", path)
+	t.Setenv("APPROVAL_ENABLED", "false")
+	s, err := load()
+	if err != nil || s.GateEnabled || s.ForgejoToken != "" {
+		t.Fatalf("disabled gate loaded merge credentials: %v", err)
 	}
 }

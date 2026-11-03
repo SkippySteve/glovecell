@@ -241,10 +241,16 @@ func buildBrief(t Task, footer string) string {
 	b.WriteString("\n\nWork through a pull request as usual; never merge. ")
 	b.WriteString("Finish with a short plain-language summary (two to five sentences) of what you did and anything Steve must do; it will be read aloud to him.\n")
 	if footer = strings.TrimSpace(footer); footer != "" {
-		footer = strings.NewReplacer("{thread}", t.Thread, "{task}", strconv.FormatInt(t.ID, 10)).Replace(footer)
+		footer = strings.NewReplacer("{thread}", shellQuote(t.Thread), "{task}", strconv.FormatInt(t.ID, 10)).Replace(footer)
 		b.WriteString("\n" + footer + "\n")
 	}
 	return b.String()
+}
+
+// shellQuote preserves Matrix event IDs (which start with $) in the
+// completion command, including opaque IDs with shell metacharacters.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
 }
 
 func (o *Orca) handoff(ctx context.Context, id string) (handoffRecord, error) {

@@ -150,11 +150,11 @@ func (p *Postgres) GetThread(ctx context.Context, roomID, root string) (Thread, 
 	return t, classify(err)
 }
 
-const taskColumns = `id, room_id, thread_root, source_event, origin, target, repo, external_id, state, transcript, audio_sha256, result, error, delivered, created_at, updated_at`
+const taskColumns = `id, room_id, thread_root, source_event, origin, target, repo, external_id, state, transcript, audio_sha256, result, error, delivered, created_at, updated_at, result_event_id`
 
 func scanTask(row pgx.Row) (Task, error) {
 	var t Task
-	err := row.Scan(&t.ID, &t.RoomID, &t.ThreadRoot, &t.SourceEvent, &t.Origin, &t.Target, &t.Repo, &t.ExternalID, &t.State, &t.Transcript, &t.AudioSHA256, &t.Result, &t.Error, &t.Delivered, &t.CreatedAt, &t.UpdatedAt)
+	err := row.Scan(&t.ID, &t.RoomID, &t.ThreadRoot, &t.SourceEvent, &t.Origin, &t.Target, &t.Repo, &t.ExternalID, &t.State, &t.Transcript, &t.AudioSHA256, &t.Result, &t.Error, &t.Delivered, &t.CreatedAt, &t.UpdatedAt, &t.ResultEventID)
 	return t, classify(err)
 }
 
@@ -170,9 +170,9 @@ func (p *Postgres) CreateTask(ctx context.Context, t Task) (Task, error) {
 		t.CreatedAt = now
 	}
 	t.UpdatedAt = t.CreatedAt
-	return scanTask(p.pool.QueryRow(ctx, `INSERT INTO voice_tasks (room_id, thread_root, source_event, origin, target, repo, external_id, state, transcript, audio_sha256, result, error, delivered, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING `+taskColumns,
-		t.RoomID, t.ThreadRoot, t.SourceEvent, t.Origin, t.Target, t.Repo, t.ExternalID, t.State, t.Transcript, t.AudioSHA256, t.Result, t.Error, t.Delivered, t.CreatedAt.UTC(), t.UpdatedAt.UTC()))
+	return scanTask(p.pool.QueryRow(ctx, `INSERT INTO voice_tasks (room_id, thread_root, source_event, origin, target, repo, external_id, state, transcript, audio_sha256, result, error, delivered, created_at, updated_at, result_event_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING `+taskColumns,
+		t.RoomID, t.ThreadRoot, t.SourceEvent, t.Origin, t.Target, t.Repo, t.ExternalID, t.State, t.Transcript, t.AudioSHA256, t.Result, t.Error, t.Delivered, t.CreatedAt.UTC(), t.UpdatedAt.UTC(), t.ResultEventID))
 }
 
 func (p *Postgres) GetTask(ctx context.Context, id int64) (Task, error) {
@@ -186,8 +186,8 @@ func (p *Postgres) UpdateTask(ctx context.Context, t Task) error {
 	if err := validTask(t); err != nil {
 		return err
 	}
-	n, err := p.exec(ctx, `UPDATE voice_tasks SET target = $2, external_id = $3, state = $4, result = $5, error = $6, delivered = $7, repo = $8, updated_at = $9 WHERE id = $1`,
-		t.ID, t.Target, t.ExternalID, t.State, t.Result, t.Error, t.Delivered, t.Repo, time.Now().UTC())
+	n, err := p.exec(ctx, `UPDATE voice_tasks SET target = $2, external_id = $3, state = $4, result = $5, error = $6, delivered = $7, repo = $8, updated_at = $9, result_event_id = $10 WHERE id = $1`,
+		t.ID, t.Target, t.ExternalID, t.State, t.Result, t.Error, t.Delivered, t.Repo, time.Now().UTC(), t.ResultEventID)
 	if err == nil && n == 0 {
 		return ErrNotFound
 	}
@@ -367,7 +367,7 @@ func (p *Postgres) AppendAudit(ctx context.Context, a AuditEntry) (AuditEntry, e
 		a.Time = time.Now()
 	}
 	err := p.pool.QueryRow(ctx, `INSERT INTO voice_approval_audit (occurred_at, sender, device_id, verified, room_id, event_id, transcript, audio_sha256, repo, pr, head_sha, code, card_id, decision, reason)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING id`,
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING id`,
 		a.Time.UTC(), a.Sender, a.DeviceID, a.Verified, a.RoomID, a.EventID, a.Transcript, a.AudioSHA256, a.Repo, a.PR, a.HeadSHA, a.Code, a.CardID, a.Decision, a.Reason).Scan(&a.ID)
 	return a, classify(err)
 }

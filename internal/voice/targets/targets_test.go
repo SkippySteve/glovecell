@@ -136,7 +136,7 @@ func TestOrcaHandoffLifecycle(t *testing.T) {
 		t.Fatalf("send %q %v", id, err)
 	}
 	req := in.got[0]
-	if !strings.Contains(req.Brief, "--thread $root --text") {
+	if !strings.Contains(req.Brief, "--thread '$root' --text") {
 		t.Fatalf("footer not filled: %q", req.Brief)
 	}
 	if req.Agent != "codex" || req.Repo != "steve/agent-project-controller" || !strings.Contains(req.Brief, "fix the flaky test") || !strings.Contains(req.Brief, "never merge") || req.Actor != "glovecell-voice:@steve:example.com" {
@@ -203,5 +203,12 @@ func TestOrcaRefusals(t *testing.T) {
 	}
 	if _, err := (Archon{}).Send(ctx, Task{}); !errors.Is(err, ErrUnsupported) {
 		t.Fatal("archon stub accepted a task")
+	}
+}
+
+func TestCompletionBriefQuotesThreadAndNamesTask(t *testing.T) {
+	brief := buildBrief(Task{ID: 42, Brief: "Check the build", Thread: "$root;$(false)'"}, "Report: orca-pilot voice send --kind done --task {task} --thread {thread} --text ...")
+	if !strings.Contains(brief, `--task 42 --thread '$root;$(false)'"'"'' --text`) {
+		t.Fatalf("completion command did not preserve the opaque thread: %s", brief)
 	}
 }

@@ -64,7 +64,7 @@ How an Orca task finishes:
   port 8790) has a task on the handoff's branch with a final attempt
   outcome, that outcome and its summary are the result.
 - **From the agent.** The agent can report its own outcome through notify:
-  `kind=message` with `task=<id>` and `final=true`.
+  `orca-pilot voice send --kind done --task <id> --thread '$eventid' --text "<summary>"` (requires the task-aware CLI). Use `--failed` when the task failed.
 - **Neither yet:** the task stays "running" and Steve can ask the agent
   directly.
 
@@ -81,6 +81,45 @@ only for known names:
 
 "Use the cache" or "send this to the printer" never redirect anything,
 because those names are not targets.
+
+## Complete asynchronous voice before enabling approvals
+
+First qualify one Inbox room, with `APPROVAL_ENABLED=false` (the default).
+No Forgejo merge token or branch-protection change is needed for this stage.
+The Helm chart leaves the Forgejo credential unmounted while
+`voice.approval.enabled` is false. Configure only the existing task targets
+that are ready; Archon remains a stub and live calls remain later work.
+
+The generated agent completion command names the exact task (`--task`) and
+shell-quotes the Matrix thread ID so `$` is preserved. Deploy the matching
+`orca-pilot` CLI before accepting tasks from this build. Two requests in the
+same thread can finish in either order without completing each other.
+
+Finished task text is recorded before sending its voice note. If synthesis or
+Matrix audio upload fails, polling retries audio without reposting the recorded
+text, including after a restart. A crash after a Matrix send but before its
+receipt is committed can still duplicate that message (at-least-once delivery).
+Standalone notifications still fall back to text if speech is unavailable.
+
+From the running voice container, qualify the real speech path with:
+
+```sh
+glovecell-voice check-speech
+```
+
+It uses the configured speech URL, models and key; synthesizes one fixed public
+phrase as Ogg/Opus; transcribes that audio; checks recognition; and prints JSON
+with latency, audio duration and transcript. It does not sign in to Matrix,
+start an agent or access Forgejo. A successful round trip is a speech check,
+not full voice-control acceptance. The opt-in Go equivalent is
+`GLOVECELL_SPEECH_TEST_URL=http://localhost:8000 go test ./cmd/glovecell-voice -run TestCheckSpeechLive -v`.
+
+Then send two harmless recorded requests in the same Inbox thread and confirm
+that each transcript, agent handoff and spoken completion stays with its task.
+Check restart recovery and a speech outage before accepting the stage.
+Only afterwards set `APPROVAL_ENABLED=true` (Helm:
+`voice.approval.enabled=true`), configure the approval token and verified-device
+room, and follow [approval qualification](approval-gate.md).
 
 ## The notify API
 
@@ -146,7 +185,8 @@ Every credential is a mounted file.
 | `MATRIX_CREDENTIALS_DIR` | `user_id`, `access_token` and `device_id` (or `password`), plus `pickle_key`. |
 | `VOICE_OWNER_DIR` | `mxid` (Steve), `master_key` (his pinned cross-signing master key, required) and `rooms`. |
 | `SPEECH_BASE_URL`, `SPEECH_STT_MODEL`, `SPEECH_TTS_MODEL`, `SPEECH_VOICE`, `SPEECH_LANGUAGE`, `SPEECH_API_KEY_FILE` | Speech API. |
-| `FORGEJO_URL`, `FORGEJO_TOKEN_FILE` | The gate's Forgejo API and the `approval-gate` token. HTTPS is required, except plain HTTP to an in-cluster Service (`*.svc`). The gate is on when the token exists and an Approvals room is configured. |
+| `FORGEJO_URL`, `FORGEJO_TOKEN_FILE` | The gate's Forgejo API and the `approval-gate` token. HTTPS is required, except plain HTTP to an in-cluster Service (`*.svc`). The token is loaded only when approvals are explicitly enabled. |
+| `APPROVAL_ENABLED` | `false` by default. Only exact `true` enables the gate; then a Forgejo token and Approvals room are required. An environment value overrides `gate.enabled` in JSON. |
 | `APPROVAL_REPOS` | `OWNER/*` or `OWNER/NAME`, comma-separated. Required for the gate. |
 | `APPROVAL_CODE_TTL`, `APPROVAL_MAX_MERGES_PER_HOUR`, `APPROVAL_STATUS_CONTEXT` | `24h`, `10` and `voice-approval` by default. |
 | `ORCA_HANDOFF_URL`, `ORCA_RUN_RECORDS_URL`, `ORCA_HANDOFF_TOKEN_FILE` | The Orca targets `orca` (claude) and `codex` (codex), and the Archon stub. |

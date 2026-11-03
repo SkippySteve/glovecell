@@ -69,7 +69,7 @@ func TestHelmVoice(t *testing.T) {
 		"homeserver": "https://matrix.example.com",
 		"speech":     map[string]any{"baseURL": "http://speaches.speaches.svc:8000/v1"},
 		"orca":       map[string]any{"handoffURL": "http://orca-handoff.orca.svc:8791"},
-		"approval":   map[string]any{"repos": []string{"steve/*"}},
+		"approval":   map[string]any{"enabled": true, "repos": []string{"steve/*"}},
 		"config":     cfg,
 		"networkPolicy": map[string]any{
 			"enabled":    true,
@@ -144,6 +144,14 @@ func TestHelmVoice(t *testing.T) {
 		if out, err := renderVoice(t, bad); err == nil {
 			t.Errorf("%s accepted:\n%s", name, out)
 		}
+	}
+	voice["approval"] = map[string]any{"enabled": false}
+	out, err = renderVoice(t, voice)
+	if err != nil {
+		t.Fatalf("async-only render: %v: %s", err, out)
+	}
+	if !strings.Contains(string(out), `{name: APPROVAL_ENABLED, value: "false"}`) || strings.Contains(string(out), "FORGEJO_TOKEN_FILE") || strings.Contains(string(out), `secretName: "glovecell-voice-forgejo"`) {
+		t.Fatal("async-only deployment requires or mounts merge credentials")
 	}
 	voice["database"] = map[string]any{"mode": "external", "existingSecret": "voice-db", "uriKey": "url", "caKey": "ca"}
 	out, err = renderVoice(t, voice)

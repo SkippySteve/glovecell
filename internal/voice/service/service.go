@@ -361,9 +361,11 @@ func (s *Service) finish(ctx context.Context, task store.Task, ok bool, text str
 func (s *Service) deliver(ctx context.Context, task store.Task) {
 	s.deliverMu.Lock()
 	defer s.deliverMu.Unlock()
-	if cur, err := s.store.GetTask(ctx, task.ID); err != nil || cur.Delivered {
+	cur, err := s.store.GetTask(ctx, task.ID)
+	if err != nil || cur.Delivered {
 		return
 	}
+	task = cur
 	var text, spoken string
 	switch task.State {
 	case store.TaskSucceeded:
@@ -382,9 +384,29 @@ func (s *Service) deliver(ctx context.Context, task store.Task) {
 	default:
 		return
 	}
-	if _, err := s.Post(ctx, task.RoomID, task.ThreadRoot, text, spoken); err != nil {
-		slog.Warn("task result not posted; will retry", "task", task.ID, "error", err.Error())
-		return
+	if task.ResultEventID == "" {
+		id, err := s.mx.SendText(ctx, task.RoomID, task.ThreadRoot, text)
+		if err != nil {
+			slog.Warn("task text not posted; will retry", "task", task.ID, "error", err.Error())
+			return
+		}
+		task.ResultEventID = id
+		if err := s.store.UpdateTask(ctx, task); err != nil {
+			slog.Error("task text delivery not recorded", "task", task.ID, "error", err.Error())
+			return
+		}
+	}
+	if s.tts != nil {
+		audio, err := s.tts.Synthesize(ctx, Speakable(spoken, s.cfg.MaxSpoken))
+		if err != nil {
+			slog.Warn("task speech unavailable; will retry", "task", task.ID, "error", err.Error())
+			return
+		}
+		root := orDefault(task.ThreadRoot, task.ResultEventID)
+		if _, err := s.mx.SendVoice(ctx, task.RoomID, root, audio); err != nil {
+			slog.Warn("task voice not posted; will retry", "task", task.ID, "error", err.Error())
+			return
+		}
 	}
 	task.Delivered = true
 	if err := s.store.UpdateTask(ctx, task); err != nil {

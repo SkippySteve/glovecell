@@ -164,3 +164,11 @@ one marked `approvals`.
   device.
 - The gate's Forgejo token never leaves the control namespace. Agents keep
   their own token, which cannot merge.
+
+## Activation gate
+
+`APPROVAL_ENABLED` defaults to `false` (`gate.enabled` in the optional JSON
+configuration; `voice.approval.enabled` in Helm). Disabled mode does not load
+the Forgejo token and never constructs an approval gate, even if a token file
+and an Approvals room exist. Explicit enablement requires both. Qualify
+asynchronous voice tasks, audit backups and device trust before opting in.

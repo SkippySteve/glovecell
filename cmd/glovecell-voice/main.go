@@ -59,6 +59,8 @@ func main() {
 	switch cmd {
 	case "serve", "glovecell-voice":
 		err = serve()
+	case "check-speech":
+		err = checkSpeechFromEnv(os.Stdout)
 	case "hash-token":
 		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 		if len(line) < 32 {
@@ -69,7 +71,7 @@ func main() {
 	case "version", "--version":
 		err = json.NewEncoder(os.Stdout).Encode(map[string]any{"version": version, "commit": commit, "e2ee": matrix.Enabled})
 	default:
-		err = fmt.Errorf("unknown command %q (serve, hash-token, version)", cmd)
+		err = fmt.Errorf("unknown command %q (serve, check-speech, hash-token, version)", cmd)
 	}
 	if err != nil {
 		slog.Error("glovecell-voice failed", "error", err.Error())
@@ -189,7 +191,7 @@ func serve() error {
 		}
 		svc.SetGate(gate)
 	} else if svc.ApprovalsRoom() != "" {
-		slog.Warn("approval gate off: no approval-gate Forgejo token; the Approvals room is ignored", "variable", envForgejoToken)
+		slog.Warn("approval gate off; the Approvals room is ignored", "variable", envApprovalEnabled)
 	}
 
 	// Notify callers: token files (one per caller) and/or a file of hashes.

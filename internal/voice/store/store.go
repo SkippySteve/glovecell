@@ -61,7 +61,9 @@ type Task struct {
 	Error       string    `json:"error,omitempty"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
-	// Delivered is set once the outcome was posted to Matrix.
+	// ResultEventID remembers the text outcome while its voice note retries.
+	ResultEventID string `json:"resultEventID,omitempty"`
+	// Delivered is set once both the text and voice outcome were posted.
 	Delivered bool `json:"delivered"`
 }
 

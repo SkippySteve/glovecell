@@ -295,6 +295,8 @@ voice:
     handoffURL: ''
     runRecordsURL: ''
   approval:
+    # Enable only after asynchronous tasks and audit backups are qualified.
+    enabled: false
     # OWNER/NAME or OWNER/* the gate may merge in; required for the gate.
     repos: []
     codeTTL: 24h
@@ -307,7 +309,7 @@ voice:
   # owner are required; the others are optional and switch features on.
   #   matrix:  user_id, access_token, device_id (or password), pickle_key
   #   owner:   mxid, master_key (pinned cross-signing master key), rooms
-  #   forgejo: token (the approval-gate user; turns the gate on)
+  #   forgejo: token (the approval-gate user; used only with approval.enabled)
   #   handoff: token (the orca-pilot handoff intake bearer)
   #   notify:  one token file per caller, named after the caller
   secrets:

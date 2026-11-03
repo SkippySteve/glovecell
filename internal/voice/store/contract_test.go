@@ -81,6 +81,7 @@ func TestContractTasks(t *testing.T) {
 		if err != nil || len(pending) != 1 || pending[0].ExternalID != "voice-1" || pending[0].Transcript != "fix the build" {
 			t.Fatalf("pending %+v %v", pending, err)
 		}
+		task.ResultEventID = "$result"
 		task.State, task.Result, task.Delivered = store.TaskSucceeded, "done", true
 		if err := s.UpdateTask(ctx, task); err != nil {
 			t.Fatal(err)
@@ -89,7 +90,7 @@ func TestContractTasks(t *testing.T) {
 			t.Fatalf("delivered task still pending: %+v", pending)
 		}
 		got, err := s.GetTask(ctx, task.ID)
-		if err != nil || got.Result != "done" || got.State != store.TaskSucceeded {
+		if err != nil || got.Result != "done" || got.State != store.TaskSucceeded || got.ResultEventID != "$result" {
 			t.Fatalf("get %+v %v", got, err)
 		}
 		second, _ := s.CreateTask(ctx, store.Task{RoomID: "!r", ThreadRoot: "$t", Origin: "text", State: store.TaskReceived})

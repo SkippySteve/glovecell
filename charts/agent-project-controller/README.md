@@ -88,3 +88,7 @@ Set `admissionPolicies.enabled: false` only on a cluster without the API. It tur
 It mounts existing Secrets, `voice.secrets.matrix` and `voice.secrets.owner` (both required), plus optional `forgejo`, `handoff` and `notify`. The chart creates none of them.
 
 By default it uses the controller's database (`voice.database.mode: shared`), and the database NetworkPolicy then admits the voice pod. Set `external` for a separate database.
+
+Voice approvals are separately off by default (`voice.approval.enabled: false`).
+In this mode the chart mounts no Forgejo merge token. Qualify asynchronous voice
+tasks and spoken completions first; see [voice stages](../../docs/voice.md#complete-asynchronous-voice-before-enabling-approvals).

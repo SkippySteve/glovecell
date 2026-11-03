@@ -154,13 +154,19 @@ func (s *Service) NotifyMessage(ctx context.Context, c Caller, n Note) (string, 
 
 func (s *Service) onTask(ctx context.Context, c Caller, task store.Task, label string, n Note, final bool) (string, error) {
 	if final {
-		if task.Delivered || (task.State != store.TaskRunning && task.State != store.TaskReceived) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		// Re-read under the poll lock: another completion may have won
+		// after NotifyMessage looked up this task.
+		current, err := s.store.GetTask(ctx, task.ID)
+		if err != nil {
+			return "", err
+		}
+		if current.Delivered || (current.State != store.TaskRunning && current.State != store.TaskReceived) {
 			return "", fmt.Errorf("%w: task already finished", ErrBadRequest)
 		}
-		s.mu.Lock()
-		s.finish(ctx, task, !n.Failed, n.Text)
-		s.mu.Unlock()
-		return task.ThreadRoot, nil
+		s.finish(ctx, current, !n.Failed, n.Text)
+		return current.ThreadRoot, nil
 	}
 	return s.Post(ctx, task.RoomID, task.ThreadRoot, fmt.Sprintf("%s from %s on task %d: %s", label, c.Name, task.ID, n.Text), fmt.Sprintf("%s from %s on task %d. %s", label, c.Name, task.ID, n.Text))
 }

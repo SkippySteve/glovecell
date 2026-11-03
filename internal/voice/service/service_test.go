@@ -316,3 +316,53 @@ func TestNotifyMessagesAndTaskReports(t *testing.T) {
 		}
 	}
 }
+
+func TestTaskVoiceRetriesWithoutRepeatingText(t *testing.T) {
+	r := newRig(t)
+	msg := r.voice(inbox, "Check the build")
+	r.svc.HandleMessage(ctx, msg)
+	r.orca.Finish("orca-1", targets.StateSucceeded, "The build passed.")
+	r.speech.TTSErr = errors.New("speech temporarily unavailable")
+	r.svc.Poll(ctx)
+	task, _ := r.store.GetTask(ctx, 1)
+	if task.Delivered || task.ResultEventID == "" || !contains(r.mx.Texts(), "The build passed") {
+		t.Fatalf("speech failure lost the pending voice: %+v", task)
+	}
+	before := len(r.mx.Texts())
+	// A fresh service using the same durable state retries the voice only.
+	r.speech.TTSErr = nil
+	restarted, err := New(r.svc.cfg, r.store, r.speech, r.speech, r.mx, r.svc.targets, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted.Poll(ctx)
+	task, _ = r.store.GetTask(ctx, 1)
+	if !task.Delivered || r.mx.Voices() != 1 || len(r.mx.Texts()) != before {
+		t.Fatalf("restart did not deliver voice once: %+v", task)
+	}
+	restarted.Poll(ctx)
+	if r.mx.Voices() != 1 {
+		t.Fatal("voice delivered twice")
+	}
+}
+
+func TestExactTaskCompletionWithinSharedThread(t *testing.T) {
+	r := newRig(t)
+	first := r.text(inbox, "First task")
+	r.svc.HandleMessage(ctx, first)
+	second := r.text(inbox, "Second task")
+	second.ThreadRoot = first.ThreadRoot
+	r.svc.HandleMessage(ctx, second)
+	caller := Caller{Name: "orca-pilot", Targets: []string{"orca"}}
+	if _, err := r.svc.NotifyMessage(ctx, caller, Note{Kind: "done", Task: 1, Thread: first.ThreadRoot, Text: "First finished"}); err != nil {
+		t.Fatal(err)
+	}
+	one, _ := r.store.GetTask(ctx, 1)
+	two, _ := r.store.GetTask(ctx, 2)
+	if one.State != store.TaskSucceeded || two.State != store.TaskRunning {
+		t.Fatalf("completion applied to wrong task: %s %s", one.State, two.State)
+	}
+	if _, err := r.svc.NotifyMessage(ctx, caller, Note{Kind: "done", Task: 1, Text: "duplicate"}); !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("duplicate completion accepted: %v", err)
+	}
+}

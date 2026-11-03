@@ -53,13 +53,14 @@ const (
 	envCodeTTL         = "APPROVAL_CODE_TTL"
 	envMaxMerges       = "APPROVAL_MAX_MERGES_PER_HOUR"
 	envApprovalRepos   = "APPROVAL_REPOS"
+	envApprovalEnabled = "APPROVAL_ENABLED"
 	envApprovalContext = "APPROVAL_STATUS_CONTEXT"
 	envPollInterval    = "VOICE_POLL_INTERVAL"
 )
 
 // defaultOrcaFooter tells Orca agents how to report back; {thread} and
 // {task} are filled in per task.
-const defaultOrcaFooter = "When you finish, tell Steve with: orca-pilot voice send --kind done --thread {thread} --text \"<two to five plain sentences>\"."
+const defaultOrcaFooter = "When you finish, tell Steve with: orca-pilot voice send --kind done --task {task} --thread {thread} --text \"<two to five plain sentences>\"."
 
 // Config is the optional JSON file.
 type Config struct {
@@ -105,6 +106,7 @@ type TargetConfig struct {
 }
 
 type GateConfig struct {
+	Enabled          bool     `json:"enabled,omitempty"`
 	ForgejoOrigin    string   `json:"forgejoOrigin,omitempty"`
 	Repos            []string `json:"repos,omitempty"`
 	MaxMergesPerHour int      `json:"maxMergesPerHour,omitempty"`
@@ -283,6 +285,13 @@ func load() (Settings, error) {
 		}
 	}
 
+	if v := os.Getenv(envApprovalEnabled); v != "" {
+		if v != "true" && v != "false" {
+			return s, fmt.Errorf("%s must be true or false", envApprovalEnabled)
+		}
+		c.Gate.Enabled = v == "true"
+	}
+
 	// The bot's credentials.
 	var err error
 	if v, err := dirFile(envMatrixDir, "user_id", false); err != nil {
@@ -384,8 +393,10 @@ func load() (Settings, error) {
 		}
 	}
 
-	if s.ForgejoToken, err = secret(envForgejoToken, false); err != nil {
-		return s, err
+	if c.Gate.Enabled {
+		if s.ForgejoToken, err = secret(envForgejoToken, true); err != nil {
+			return s, err
+		}
 	}
 	if s.OrcaToken, err = secret(envOrcaToken, false); err != nil {
 		return s, err
@@ -408,7 +419,10 @@ func load() (Settings, error) {
 	for _, r := range c.Rooms {
 		approvals = approvals || r.Approvals
 	}
-	s.GateEnabled = approvals && s.ForgejoToken != ""
+	if c.Gate.Enabled && !approvals {
+		return s, errors.New("approval gate enabled without an Approvals room")
+	}
+	s.GateEnabled = c.Gate.Enabled && approvals && s.ForgejoToken != ""
 	return s, s.validate()
 }
 
