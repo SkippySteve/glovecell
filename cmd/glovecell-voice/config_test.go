@@ -100,7 +100,7 @@ func TestLoadWithConfigFile(t *testing.T) {
 func TestLoadRefusals(t *testing.T) {
 	for name, mutate := range map[string]func(dir string){
 		"missing gate token": func(dir string) { os.Remove(filepath.Join(dir, "forgejo", "token")) },
-		"bad gate switch": func(dir string) { t.Setenv("APPROVAL_ENABLED", "yes") },
+		"bad gate switch":    func(dir string) { t.Setenv("APPROVAL_ENABLED", "yes") },
 		"gate without room": func(dir string) {
 			os.WriteFile(filepath.Join(dir, "owner", "rooms"), []byte("!inbox:matrix.example.com inbox"), 0o600)
 		},

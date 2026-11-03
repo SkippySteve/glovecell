@@ -367,7 +367,7 @@ func (p *Postgres) AppendAudit(ctx context.Context, a AuditEntry) (AuditEntry, e
 		a.Time = time.Now()
 	}
 	err := p.pool.QueryRow(ctx, `INSERT INTO voice_approval_audit (occurred_at, sender, device_id, verified, room_id, event_id, transcript, audio_sha256, repo, pr, head_sha, code, card_id, decision, reason)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING id`,
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING id`,
 		a.Time.UTC(), a.Sender, a.DeviceID, a.Verified, a.RoomID, a.EventID, a.Transcript, a.AudioSHA256, a.Repo, a.PR, a.HeadSHA, a.Code, a.CardID, a.Decision, a.Reason).Scan(&a.ID)
 	return a, classify(err)
 }

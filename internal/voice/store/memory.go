@@ -138,6 +138,7 @@ func (m *Memory) UpdateTask(_ context.Context, t Task) error {
 	}
 	cur := &m.tasks[t.ID-1]
 	cur.Target, cur.ExternalID, cur.State, cur.Result, cur.Error, cur.Delivered, cur.Repo = t.Target, t.ExternalID, t.State, t.Result, t.Error, t.Delivered, t.Repo
+	cur.ResultEventID = t.ResultEventID
 	cur.UpdatedAt = time.Now()
 	return nil
 }
