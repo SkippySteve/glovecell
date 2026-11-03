@@ -5,6 +5,10 @@ command line tools against the operator's own subscription. The login never
 enters the sandbox. Each project opts in per provider, the default is off, and
 an operator can revoke one provider for one project while it runs.
 
+GitHub has its own broker, where the credential never enters the sandbox at
+all and the project proxy enforces a per-request policy: see
+[GitHub brokering](design/github-brokering.md).
+
 ## Parts
 
 ```
