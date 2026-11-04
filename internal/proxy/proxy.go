@@ -34,6 +34,7 @@ import (
 )
 
 type Config struct {
+	VendorTelemetry           bool            `json:"vendorTelemetry,omitempty"`
 	IndependentCodex          bool            `json:"independentCodex,omitempty"`
 	Reader                    *ReaderRoute    `json:"reader,omitempty"`
 	Rules                     []api.HTTPSRule `json:"rules"`
@@ -105,6 +106,9 @@ func Allowed(c Config, host, method, path string) bool {
 		if seg == ".." || seg == "." {
 			return false
 		}
+	}
+	if vendorTelemetryEndpoint(host, path) {
+		return c.VendorTelemetry && method == "POST"
 	}
 	for _, r := range c.Rules {
 		if !hostMatches(r.Host, host) {
