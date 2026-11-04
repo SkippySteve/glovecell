@@ -381,3 +381,18 @@ Sources checked 2026-11-04: [OpenAI metrics controls](https://learn.chatgpt.com/
 Anthropic's two Datadog log paths and versioned event path were also observed in
 the installed vendor binary. Collection must still be qualified with the pinned
 workspace clients; offline route tests alone do not show successful delivery.
+
+## Go workspace toolchain
+
+The workspace target copies the full pinned Go 1.27.3 distribution, including
+`go` and `gofmt`, to `/usr/local/go` and puts its bin directory on PATH.
+The image build runs `apc-check-go-toolchain` after switching to UID/GID 1000.
+It formats Go source and compiles/runs a small standard-library test with module
+and toolchain downloads disabled, using disposable writable caches. A missing,
+incompatible or unusable compiler/formatter fails the workspace build.
+
+After launching a cell, run `go version` and `apc-check-go-toolchain` in its
+terminal. This verifies the actual mounted worker environment as well. Project
+dependency downloads still require approved registry access; this check itself
+needs no network. The small controller/voice runtime targets are separate from
+the coding workspace and do not need a compiler.
