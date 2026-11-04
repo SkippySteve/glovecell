@@ -108,7 +108,9 @@ RUN ln -s apc-provider /usr/local/bin/grok \
 COPY --from=build /agent-project-controller /usr/local/bin/agent-project-controller
 ENTRYPOINT ["/usr/local/bin/agent-project-controller"]
 COPY third_party/licenses/ /usr/share/agent-project-controller/licenses/
+COPY --chmod=0755 scripts/check-go-toolchain.sh /usr/local/bin/apc-check-go-toolchain
 USER 1000:1000
+RUN /usr/local/bin/apc-check-go-toolchain
 CMD ["controller"]
 
 # Trusted T3 Connect registrar. Project T3 servers and agent CLIs stay in workers.

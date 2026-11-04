@@ -79,6 +79,9 @@ type Config struct {
 	// list in audit records.
 	ReferenceRules  []api.HTTPSRule
 	ReferenceDigest string
+
+	// VendorTelemetry allows the fixed vendor collection routes in the proxy.
+	VendorTelemetry bool
 }
 
 func (c Config) Validate() error {

@@ -343,3 +343,59 @@ missing route destinations and `dnsPolicy: None` without a resolver. Runtime
 configuration also rejects malformed placement JSON. These controls preserve
 the isolation settings; configuring another cluster is not evidence that its
 runtime or networking has passed qualification.
+
+## Vendor telemetry
+
+`VENDOR_TELEMETRY_ENABLED` defaults to `true`. Set it to exactly `false` on the
+controller (Helm: `config.VENDOR_TELEMETRY_ENABLED: "false"`) to disable the
+built-in vendor collection routes. Invalid values refuse startup. Reconciliation
+updates existing project proxy policies and Cilium hosts and restarts their
+proxies; workers and their volumes stay in place. The switch is carried in the
+mounted proxy policy, so a broad per-cell rule cannot re-enable a recognized
+collection route while it is disabled. A checkpoint on the policy ConfigMap
+retries the proxy restart after interruption.
+
+The fixed catalog allows **POST** only:
+
+| Provider | Host | Path prefix |
+| --- | --- | --- |
+| OpenAI | `ab.chatgpt.com` | `/` (dedicated vendor analytics host) |
+| Anthropic | `api.anthropic.com` | `/api/event_logging` (including versioned batch paths) |
+| Anthropic operational events | `http-intake.logs.us5.datadoghq.com` | `/api/v2/logs` |
+| Anthropic error reports | `browser-intake-us5-datadoghq.com` | `/api/v2/logs` |
+
+Cursor and Grok continue using their existing brokered model hosts, live grants
+and bearer-token checks. Other collection hosts remain subject to ordinary
+operator rules. The catalog grants no model inference, account login, renewal,
+updater, wildcard domain or direct-worker network access.
+The proxy still inspects HTTPS and checks upstream TLS.
+
+The two Datadog intake hosts are shared infrastructure. These rules do not
+authenticate an Anthropic tenant or filter telemetry bodies.
+
+This is permission to send data outside the cluster. Vendor clients and their
+privacy/analytics settings determine the payload; the proxy does not prove it
+contains no prompts, filenames or personal data. Allowing egress does not force
+a client to collect data or override a client opt-out. Disabling the switch
+removes the catalog allowance, rather than erasing data already received.
+
+Sources checked 2026-11-04: [OpenAI metrics controls](https://learn.chatgpt.com/docs/config-file/config-advanced#metrics),
+[Anthropic network requirements](https://code.claude.com/docs/en/network-config#network-access-requirements).
+Anthropic's two Datadog log paths and versioned event path were also observed in
+the installed vendor binary. Collection must still be qualified with the pinned
+workspace clients; offline route tests alone do not show successful delivery.
+
+## Go workspace toolchain
+
+The workspace target copies the full pinned Go 1.27.3 distribution, including
+`go` and `gofmt`, to `/usr/local/go` and puts its bin directory on PATH.
+The image build runs `apc-check-go-toolchain` after switching to UID/GID 1000.
+It formats Go source and compiles/runs a small standard-library test with module
+and toolchain downloads disabled, using disposable writable caches. A missing,
+incompatible or unusable compiler/formatter fails the workspace build.
+
+After launching a cell, run `go version` and `apc-check-go-toolchain` in its
+terminal. This verifies the actual mounted worker environment as well. Project
+dependency downloads still require approved registry access; this check itself
+needs no network. The small controller/voice runtime targets are separate from
+the coding workspace and do not need a compiler.
