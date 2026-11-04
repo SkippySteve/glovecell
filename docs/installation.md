@@ -367,8 +367,11 @@ The fixed catalog allows **POST** only:
 Cursor and Grok continue using their existing brokered model hosts, live grants
 and bearer-token checks. Other collection hosts remain subject to ordinary
 operator rules. The catalog grants no model inference, account login, renewal,
-updater, general Sentry/Datadog tenant, wildcard or direct-worker network access.
+updater, wildcard domain or direct-worker network access.
 The proxy still inspects HTTPS and checks upstream TLS.
+
+The two Datadog intake hosts are shared infrastructure. These rules do not
+authenticate an Anthropic tenant or filter telemetry bodies.
 
 This is permission to send data outside the cluster. Vendor clients and their
 privacy/analytics settings determine the payload; the proxy does not prove it

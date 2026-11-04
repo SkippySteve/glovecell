@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
+	"strings"
 	"testing"
 
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
@@ -36,6 +37,15 @@ func TestVendorTelemetryToggleAndInterruptedRestart(t *testing.T) {
 		}
 		if err := r.Get(ctx, types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, pod); err == nil {
 			t.Fatal("proxy was not restarted on telemetry change")
+		}
+		networkRaw, err := json.Marshal(proxyNetworkPolicy(t, r, w).Object["spec"])
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, host := range proxy.VendorTelemetryHosts() {
+			if strings.Contains(string(networkRaw), `"matchName":"`+host+`"`) != enabled {
+				t.Fatal("rendered Cilium policy did not follow switch", host)
+			}
 		}
 		_, got := proxyPolicy(t, r, w)
 		if proxy.Allowed(got, "ab.chatgpt.com", "POST", "/otlp/v1/metrics") != enabled {

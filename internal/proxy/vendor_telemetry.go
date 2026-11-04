@@ -2,10 +2,10 @@ package proxy
 
 import "strings"
 
-// VendorTelemetryHosts is deliberately finite. Do not allow shared telemetry
-// domains or wildcard tenants: these are the collection hosts used by the
-// provider clients. Cursor/Grok requests on their model hosts still require
-// their existing live broker grant and bearer-token checks.
+// VendorTelemetryHosts is deliberately finite, with no wildcard domains.
+// Datadog intake hosts are shared infrastructure: host/path rules do not
+// authenticate the vendor tenant or inspect the telemetry payload. Cursor/Grok
+// model hosts still require their live broker grant and bearer-token checks.
 func VendorTelemetryHosts() []string {
 	return []string{
 		"ab.chatgpt.com",
