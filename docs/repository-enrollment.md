@@ -7,7 +7,8 @@ through the controller first.
 In the controller, open the project sandbox → **Credentials**, select Pause and
 wait for Paused. Under **Repositories in this sandbox**, enter a directory name
 and an `owner/repository`, then **Add repository**. Wait for the controller to
-apply the grant, then Resume. The original `/workspace/repo` remains in place.
+apply the grant, then Resume. Pause keeps the hubspoke Orca environment; only
+removal revokes it. The original `/workspace/repo` remains in place.
 Additional checkouts are cloned onto the existing volume at
 `/workspace/projects/<name>`. Hubspoke then runs `orca repo add` for each new
 path on the same spoke environment (the primary `/workspace/repo` was
