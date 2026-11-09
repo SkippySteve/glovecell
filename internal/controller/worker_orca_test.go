@@ -24,6 +24,9 @@ func TestUsesOrcaSpoke(t *testing.T) {
 	if !strings.Contains(cmd, "orcad") || !strings.Contains(cmd, "orca-runtime.apc-") {
 		t.Fatal(cmd)
 	}
+	if !strings.Contains(cmd, "/opt/orca/runtimes/node-") || !strings.Contains(cmd, "/opt/orca/node/bin/node") {
+		t.Fatal("spoke start must probe both Node layouts:", cmd)
+	}
 	if svc := r.orcaSpokeService(w); svc == nil || svc.Name != "orca-runtime" {
 		t.Fatal(svc)
 	}
