@@ -81,7 +81,7 @@ function ClientRegistrations({name}: {name: string}) {
   if (failed) return <Callout variant="warning" description="Client registration status is unavailable. Check the control host before removing this sandbox." />;
   if (!clients.length) return null;
   return <Card variant="sunk" width="full">
-    <CardHeader title="Registered clients" subtitle="Project entries managed by the control-host registrar." />
+    <CardHeader title="Desktop clients" subtitle="Opened on your machine by register --watch (Local host). Phone access stays on the hub." />
     <ul className="items">{clients.map(client => <li key={client.kind}>
       <div className="item-main"><strong>{client.kind}</strong></div>
       <Tag size="sm" variant={client.state === 'registered' ? 'info' : 'neutral'} text={client.state} />

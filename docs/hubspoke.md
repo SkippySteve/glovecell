@@ -1,11 +1,17 @@
 # Hub-and-spoke orchestrators
 
-Agents run inside locked-down **spokes** (project sandboxes). Phones and
-desktops pair once with a **hub** that enrolls each Ready spoke automatically.
-New spokes appear on an already-paired phone without another scan.
+Agents run inside locked-down **spokes** (project sandboxes). **Phones** pair
+once with a **hub** that enrolls each Ready spoke automatically. New spokes
+appear on an already-paired phone without another scan.
 
-This is the production shape for Orca. T3 and Herdr use the same Go interfaces
-when their enrollment paths are verified.
+**Desktops** do not use this path for day-to-day work. They use the control-host
+registrar (`register --watch` in [clients.md](clients.md)): FUSE mounts and
+Orca/T3/Herdr project registration on Local. Hubspoke public dial and the
+console mint API are for phone (and hub enrollment), not for opening a cell in
+the desktop app's Host picker.
+
+This is the production phone shape for Orca. T3 and Herdr use the same Go
+interfaces when their enrollment paths are verified.
 
 ## Words
 
@@ -25,20 +31,23 @@ when their enrollment paths are verified.
   filesystems and holds no Kubernetes exec into them for day-to-day work
   (it only reads worker logs to obtain the one-time offer).
 - Pairing URLs are never written to ledgers, status, or logs.
-- Prefer this over a privileged FUSE registrar that mounts every checkout on
-  one host.
+- Prefer the hub for phones over asking each device to pair every spoke.
+  Desktops keep using the FUSE registrar ([clients.md](clients.md)).
 
-## Public spoke dial (desktop)
+## Public spoke dial (hub and phone)
 
-Phones reach spokes through the hub relay. Desktops need a **public** WebSocket
-per project: `wss://<project>.<HUBSPOKE_SPOKE_DOMAIN>`. Set that domain (and the
-Gateway listener) separately from `PUBLIC_ORIGIN` and from the hub's own
+Phones reach spokes through the hub relay. The hub (and optional direct phone
+tests) need a **public** WebSocket per project:
+`wss://<project>.<HUBSPOKE_SPOKE_DOMAIN>`. Set that domain (and the Gateway
+listener) separately from `PUBLIC_ORIGIN` and from the hub's own
 `hubspoke.hub.publicAddress`. The controller then creates an HTTPRoute and a
 CiliumNetworkPolicy that lets Traefik (and the hub) reach worker port 6768.
 
-Console: `POST /api/v1/workspaces/{name}/orca-pairing` (OIDC only) returns a
-one-time `orca://pair…` offer when present in worker logs. Never logged or
-stored. `GET /api/v1/session` reports `orcaSpokePairing: true` when configured.
+Console Hub page / `POST /api/v1/workspaces/{name}/orca-pairing` (OIDC only)
+mints a one-time `orca://pair…` offer for **phone** pairing when present in
+worker logs. Never logged or stored. Do not document this as the desktop
+"open project" workflow. `GET /api/v1/session` reports `orcaSpokePairing: true`
+when configured.
 
 ## Enable (inert until both flags are set)
 

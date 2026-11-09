@@ -1,14 +1,21 @@
-# Optional control-host client registration
+# Control-host client registration (desktop workflow)
 
-This source is reconciled with the current OpenUI console. Registration is
-optional; it does not replace the native Orca sandbox or managed T3 Connect.
+This is how **desktops** open Ready project sandboxes in Orca, T3 Code, Herdr,
+or another Adapter—the same path for every orchestrator. Phones use
+[hub-and-spoke](hubspoke.md) instead.
+
+A long-running registrar runs **on the operator's desktop** (or an optional
+privileged control-client pod). It mounts each Ready checkout over FUSE,
+registers the local mount path with every configured Adapter, and revokes those
+registrations when the project leaves Ready. In Orca, keep the Host on
+**Local**; open the registered project. Do not pick the spoke as a remote
+"Orca server" for day-to-day work.
+
 The optional Helm control client is disabled by default. Rebuilding this source
 does not authorize starting a registrar or deploying its privileged control pod.
-
-
-Ready project sandboxes appear in a **central control client** (T3 Code, Orca, or another Adapter) that you open from phone, browser, or desktop. A long-running registrar runs **on the same host as that control client**, mounts each Ready checkout over FUSE, registers the local mount path with every configured Adapter, and revokes those registrations when the project leaves Ready (including controller removal).
-
-This is not per-sandbox in-pod T3 (`agent-project-controller t3 WORKSPACE`). Pairing and chat stay with the central client; the registrar only publishes and withdraws project paths.
+This is not per-sandbox in-pod T3 (`agent-project-controller t3 WORKSPACE`).
+Pairing and chat stay with the central client; the registrar only publishes and
+withdraws project paths.
 
 ## Model
 
