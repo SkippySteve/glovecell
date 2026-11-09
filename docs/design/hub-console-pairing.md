@@ -19,6 +19,21 @@ product path for Steve or for OSS operators.
 or runtime offers over an authenticated control path. Not a CLI-only helper (B)
 and not full remote-server management in the console (C).
 
+## Public addresses (Helm)
+
+Hub pairing hostname is **not** derived from the console URL. Installers set
+both explicitly ([chart README](../../charts/agent-project-controller/README.md#hub-and-spoke-public-addresses)):
+
+| Value | Purpose |
+| --- | --- |
+| `config.PUBLIC_ORIGIN` | Dashboard HTTPS / OIDC (`https://…`) |
+| `hubspoke.hub.publicAddress` | Hub WSS baked into pairing offers (`wss://…`) |
+
+Same cluster may share a Traefik VIP for both, but DNS names, HTTPRoutes, and
+backends differ. Minting uses `HUBSPOKE_PUBLIC_ADDRESS` from the chart. Optional
+sanity-check: probe the configured hub endpoint when minting; never assume
+“controller reachable ⇒ hub reachable.”
+
 ## Product surface
 
 Cluster-level route `#/hub` (not per-project). When hubspoke is enabled and the
