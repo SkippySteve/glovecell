@@ -248,3 +248,8 @@ Volume and namespace deletion are infrastructure checks, not proof of physical s
 ## Reporting a vulnerability
 
 Report a vulnerability privately to steve@aimingupward.com. Do not include credentials, tokens or a proof-of-concept exploit in a public issue. The same contact is in the repository `SECURITY.md`. GitHub private vulnerability reporting applies when this commit is mirrored there. The Git mirror does not carry Forgejo issues or pull requests.
+
+The [DNS and direct-IP qualification procedure](network-qualification.md) includes
+an executable probe matrix with independent positive controls. Passing its IPv4
+probes alone does not establish isolation: correlate denials with the dataplane
+and prove effective FQDN lease expiry before accepting APC #107.
