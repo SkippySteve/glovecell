@@ -350,6 +350,7 @@ func (s *Server) serveGrant(parent context.Context, conn net.Conn, raw net.Conn,
 // ControlHandler serves the loopback-only grant API.
 func (s *Server) ControlHandler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /ready", s.readiness)
 	mux.HandleFunc("POST /grants", func(w http.ResponseWriter, r *http.Request) {
 		var g DownloadGrant
 		d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
@@ -379,7 +380,13 @@ func (s *Server) ControlHandler() http.Handler {
 		s.grants.revoke(r.PathValue("id"))
 		writeControlJSON(w, map[string]string{"id": r.PathValue("id")})
 	})
-	return mux
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.runtimeReady() {
+			http.Error(w, "proxy recovery required", 503)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
 }
 
 func writeControlJSON(w http.ResponseWriter, v any) {
