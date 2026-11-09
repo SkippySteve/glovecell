@@ -1,3 +1,7 @@
+{{- $bootstrapSource := default "workspace" (index .Values.config "BOOTSTRAP_IMAGE_SOURCE") }}
+{{- if not (has $bootstrapSource (list "workspace" "proxy")) }}
+{{- fail "config.BOOTSTRAP_IMAGE_SOURCE must be workspace or proxy" }}
+{{- end }}
 {{- if not (kindIs "bool" .Values.additionalGitHub.enabled) }}
 {{- fail "additionalGitHub.enabled must be a boolean" }}
 {{- end }}
