@@ -1,20 +1,23 @@
 # Repositories in one sandbox
 
-T3's Add project registers a directory with T3. It does not enroll a remote
-repository or authorize Git. Enroll through the controller first.
+T3's Add project and Orca's `repo add` only register a directory with the
+runtime. They do not enroll a remote repository or authorize Git. Enroll
+through the controller first.
 
-In the controller, find the existing sandbox, select Pause and wait for Paused.
-Under Repositories in this sandbox, enter a directory name and an
-`owner/repository`, then choose Enroll repository in this sandbox. Wait for the
-controller to apply the grant, then Resume. The original `/workspace/repo`
-remains in place. Additional checkouts are cloned onto the existing volume at
-`/workspace/projects/<name>` and registered with stock T3 in the same environment.
-Select the new project in T3 and start a thread in its current checkout.
-Use Ctrl+J to open its terminal and check `pwd`.
+In the controller, open the project sandbox → **Credentials**, select Pause and
+wait for Paused. Under **Repositories in this sandbox**, enter a directory name
+and an `owner/repository`, then **Add repository**. Wait for the controller to
+apply the grant, then Resume. The original `/workspace/repo` remains in place.
+Additional checkouts are cloned onto the existing volume at
+`/workspace/projects/<name>`. Hubspoke then runs `orca repo add` for each new
+path on the same spoke environment (the primary `/workspace/repo` was
+registered at enroll). On a T3-linked sandbox the same checkout is registered
+with stock T3. Select the new project in the runtime and start a thread in its
+current checkout. Use Ctrl+J (T3) or the spoke terminal to check `pwd`.
 
 This enrollment path does not create another sandbox, volume, provider login or
-T3 environment. The older Open a project form creates an isolated environment;
-use the enrollment form inside the existing sandbox for additional repositories.
+runtime environment. **New sandbox** creates an isolated environment; use the
+enrollment form inside the existing sandbox for additional repositories.
 
 ## Forgejo
 

@@ -97,7 +97,7 @@ export function ProjectRepositories({p}: {p: ProjectWorkspace}) {
     event.preventDefault(); setSaving(true);
     try {
       await api('workspaces/' + encodeURIComponent(p.metadata.name) + '/repositories', 'POST', {resourceVersion: p.metadata.resourceVersion, project: {name, host: host === 'github-private' ? 'github' : host, repository: repository.trim(), public: host === 'github'}});
-      toast('Repository enrollment requested. Wait for Paused, then Resume to clone it.');
+      toast('Repository enrollment requested. Resume to clone it; hubspoke registers it with Orca on the next sync.');
       setName(''); setRepository('');
       await reload();
     } catch (error) { toast((error as Error).message, true); }
@@ -117,7 +117,7 @@ export function ProjectRepositories({p}: {p: ProjectWorkspace}) {
       ) : (
         <form onSubmit={submit}>
           <Card variant="sunk" width="full">
-            <CardHeader title="Add a repository" subtitle="Resume afterwards to clone it and register it in T3." />
+            <CardHeader title="Add a repository" subtitle="Resume afterwards to clone it; Orca (or T3) picks it up on the spoke." />
             <div className="grid-2">
               <div className="field"><label className="field-label" htmlFor="enroll-host">Repository host</label>
                 <select id="enroll-host" className="select" value={host} onChange={event => setHost(event.target.value)}>

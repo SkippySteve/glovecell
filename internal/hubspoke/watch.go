@@ -151,7 +151,10 @@ func ensureSpoke(ctx context.Context, c client.Client, enroller Enroller, runtim
 		return err
 	}
 	if rec.State == StateEnrolled && rec.ID != "" {
-		return nil
+		// Already on the hub: still register any newly enrolled checkouts
+		// (controller Pause → Add repository → Resume clones under
+		// /workspace/projects/<name>).
+		return syncProjects(ctx, c, enroller, opts, w, rec)
 	}
 	var pods corev1.PodList
 	ns := "apc-" + strings.ReplaceAll(uid, "-", "")
@@ -183,16 +186,59 @@ func ensureSpoke(ctx context.Context, c client.Client, enroller Enroller, runtim
 	if err := enroller.Connect(ctx, enrolled.ID); err != nil {
 		return err
 	}
-	if err := enroller.RegisterProject(ctx, enrolled.ID, opts.ProjectPath); err != nil {
-		return err
-	}
-	if err := SetState(ctx, c, opts.ControlNamespace, uid, opts.Kind, LedgerRecord{
-		State: StateEnrolled,
-		ID:    enrolled.ID,
-		Name:  enrolled.Name,
-	}); err != nil {
+	rec = LedgerRecord{State: StateEnrolled, ID: enrolled.ID, Name: enrolled.Name}
+	if err := syncProjects(ctx, c, enroller, opts, w, rec); err != nil {
 		return err
 	}
 	slog.Info("enrolled spoke", "workspace", w.Name, "environment", enrolled.ID)
 	return nil
+}
+
+// projectPaths is the primary checkout plus each Spec.Repositories enrollment.
+func projectPaths(w *api.ProjectWorkspace, primary string) []string {
+	if primary == "" {
+		primary = "/workspace/repo"
+	}
+	out := []string{primary}
+	seen := map[string]bool{primary: true}
+	for _, p := range w.Spec.Repositories {
+		name := strings.TrimSpace(p.Name)
+		if name == "" {
+			continue
+		}
+		path := "/workspace/projects/" + name
+		if seen[path] {
+			continue
+		}
+		seen[path] = true
+		out = append(out, path)
+	}
+	return out
+}
+
+func syncProjects(ctx context.Context, c client.Client, enroller Enroller, opts WatchOptions, w *api.ProjectWorkspace, rec LedgerRecord) error {
+	if rec.ID == "" {
+		return errors.New("enrolled environment id required")
+	}
+	have := map[string]bool{}
+	for _, p := range rec.Projects {
+		have[p] = true
+	}
+	var registered []string
+	registered = append(registered, rec.Projects...)
+	for _, path := range projectPaths(w, opts.ProjectPath) {
+		if have[path] {
+			continue
+		}
+		if err := enroller.RegisterProject(ctx, rec.ID, path); err != nil {
+			return fmt.Errorf("register %s: %w", path, err)
+		}
+		have[path] = true
+		registered = append(registered, path)
+		slog.Info("registered spoke project", "workspace", w.Name, "path", path, "environment", rec.ID)
+	}
+	rec.Projects = registered
+	rec.State = StateEnrolled
+	rec.Kind = opts.Kind
+	return SetState(ctx, c, opts.ControlNamespace, string(w.UID), opts.Kind, rec)
 }
