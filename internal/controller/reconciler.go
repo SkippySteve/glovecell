@@ -657,7 +657,8 @@ func (r *Reconciler) ensure(ctx context.Context, w *api.ProjectWorkspace) error 
 	if e = r.updateAccessPolicy(ctx, w, s); e != nil {
 		return e
 	}
-	if e = r.enrollRepositories(ctx, w, s); e != nil {
+	restartWorkers, e := r.enrollRepositories(ctx, w, s)
+	if e != nil {
 		return e
 	}
 	if e = r.objects(ctx, w, s, brokered); e != nil {
@@ -665,6 +666,12 @@ func (r *Reconciler) ensure(ctx context.Context, w *api.ProjectWorkspace) error 
 	}
 	if e = r.saveAccessPolicy(ctx, w, s); e != nil {
 		return e
+	}
+	// Refresh workers after proxy/network policy includes the new remotes.
+	if restartWorkers {
+		if _, err := r.restartWorkersForEnrollment(ctx, w); err != nil {
+			return err
+		}
 	}
 	if !bytes.Equal(beforeCA, s.Data["ca.crt"]) {
 		return r.restartInspection(ctx, w)

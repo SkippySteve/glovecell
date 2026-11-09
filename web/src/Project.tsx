@@ -97,12 +97,15 @@ export function ProjectRepositories({p}: {p: ProjectWorkspace}) {
     event.preventDefault(); setSaving(true);
     try {
       await api('workspaces/' + encodeURIComponent(p.metadata.name) + '/repositories', 'POST', {resourceVersion: p.metadata.resourceVersion, project: {name, host: host === 'github-private' ? 'github' : host, repository: repository.trim(), public: host === 'github'}});
-      toast('Repository enrollment requested. Resume to clone it; hubspoke registers it with Orca on the next sync.');
+      toast(p.spec.desiredState === 'Running'
+        ? 'Repository enrollment requested. The worker refreshes briefly to clone it; Orca registers it on the next sync.'
+        : 'Repository enrollment requested. Resume to clone it; hubspoke registers it with Orca on the next sync.');
       setName(''); setRepository('');
       await reload();
     } catch (error) { toast((error as Error).message, true); }
     finally { setSaving(false); }
   };
+  const canEnroll = p.spec.desiredState !== 'Removed' && (pausedForEdits(p) || (p.spec.desiredState === 'Running' && p.status?.phase === 'Ready' && settled(p)));
   return (
     <div className="stack">
       <Card variant="sunk" width="full">
@@ -112,12 +115,12 @@ export function ProjectRepositories({p}: {p: ProjectWorkspace}) {
           {(p.spec.repositories || []).map(r => <li key={r.name}><div className="item-main"><strong>{r.repository}</strong><code className="subtle">/workspace/projects/{r.name}</code></div><Tag size="sm" text={hostLabel(r.host, r.public)} /></li>)}
         </ul>
       </Card>
-      {p.spec.desiredState === 'Removed' ? null : !pausedForEdits(p) ? (
-        <div className="callout-row"><Callout variant="neutral" title="Add another repository" description="Pause this sandbox to enroll another repository on its existing volume." />{p.spec.desiredState === 'Running' ? <LifecycleButton p={p} size="small" /> : null}</div>
+      {p.spec.desiredState === 'Removed' ? null : !canEnroll ? (
+        <div className="callout-row"><Callout variant="neutral" title="Add another repository" description="Wait until this sandbox is Ready, then enroll another repository on its existing volume. The worker refreshes briefly to clone it; Pause is not required." /></div>
       ) : (
         <form onSubmit={submit}>
           <Card variant="sunk" width="full">
-            <CardHeader title="Add a repository" subtitle="Resume afterwards to clone it; Orca (or T3) picks it up on the spoke." />
+            <CardHeader title="Add a repository" subtitle={p.spec.desiredState === 'Running' ? 'Clones onto the existing volume; the worker refreshes briefly. Orca picks it up on the spoke.' : 'Resume afterwards to clone it; Orca (or T3) picks it up on the spoke.'} />
             <div className="grid-2">
               <div className="field"><label className="field-label" htmlFor="enroll-host">Repository host</label>
                 <select id="enroll-host" className="select" value={host} onChange={event => setHost(event.target.value)}>

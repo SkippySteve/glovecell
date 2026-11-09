@@ -150,7 +150,7 @@ func TestPrivateGitHubTokenRemainsOnlyInGateway(t *testing.T) {
 	if err := r.Update(ctx, s); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.enrollRepositories(ctx, w, s); err != nil {
+	if _, err := r.enrollRepositories(ctx, w, s); err != nil {
 		t.Fatal(err)
 	}
 	// Prepare resources directly; no network grants or real repositories are contacted.
