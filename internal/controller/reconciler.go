@@ -1079,23 +1079,40 @@ func workspaceContainer(spec map[string]any) (map[string]any, bool) {
 }
 
 // normalizeOrcaSpokeDial ignores pairing dial fields so a public-address roll
-// can reuse the reviewed Sandbox update path.
+// can reuse the reviewed Sandbox update path. ORCA_PUBLIC_ADDRESS is on both
+// the clone init container and the workspace container (same env slice).
 func normalizeOrcaSpokeDial(spec map[string]any) {
-	container, ok := workspaceContainer(spec)
-	if !ok {
+	pod, _ := spec["podTemplate"].(map[string]any)
+	if pod == nil {
 		return
 	}
-	container["command"] = []any{"normalized"}
-	container["ports"] = []any{}
-	env, _ := container["env"].([]any)
-	for i, raw := range env {
-		item, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		if item["name"] == "ORCA_PUBLIC_ADDRESS" {
-			item["value"] = "normalized"
-			env[i] = item
+	body, _ := pod["spec"].(map[string]any)
+	if body == nil {
+		return
+	}
+	for _, key := range []string{"initContainers", "containers"} {
+		items, _ := body[key].([]any)
+		for i, raw := range items {
+			container, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			if container["name"] == "workspace" {
+				container["command"] = []any{"normalized"}
+				container["ports"] = []any{}
+			}
+			env, _ := container["env"].([]any)
+			for j, eraw := range env {
+				item, ok := eraw.(map[string]any)
+				if !ok {
+					continue
+				}
+				if item["name"] == "ORCA_PUBLIC_ADDRESS" {
+					item["value"] = "normalized"
+					env[j] = item
+				}
+			}
+			items[i] = container
 		}
 	}
 }
