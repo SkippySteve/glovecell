@@ -12,7 +12,8 @@ egress, credential injection outside the cell, pause/revoke with verified
 cleanup, and a console operators actually use.
 
 Apache-2.0. Alpha quality — see [qualification](docs/qualification.md) and
-[security](docs/security.md).
+[security](docs/security.md). Adoption and swappable-deps plan:
+[roadmap](docs/roadmap.md).
 
 ## What you get that other stacks don't
 
