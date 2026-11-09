@@ -8,6 +8,21 @@ Supply digest-pinned `controllerImage` and `workspaceImage`, plus the Forgejo or
 
 Keep `config.NETWORK_PROVIDER` at `cilium` for the qualified profile. `network-policy` is an unvalidated experiment. The `0.1.0-alpha.1` images do not contain that provider or workspace-image replacement.
 
+## Hub-and-spoke public addresses
+
+When `hubspoke.orca.enabled` or `hubspoke.hub.enabled` is true, set **both**:
+
+| Value | Role | Example |
+| --- | --- | --- |
+| `config.PUBLIC_ORIGIN` | Console HTTPS + OIDC callback | `https://projects.example` |
+| `hubspoke.hub.publicAddress` | Hub WebSocket clients dial after pairing | `wss://orca-hub.example` |
+
+They are independent. Do not rewrite one hostname into the other. The chart
+refuses to render hubspoke without a `wss://` `publicAddress`. Console
+reachability does not imply hub reachability (separate DNS, route, and
+backend). Pairing offers use `publicAddress` only
+([hubspoke](../../docs/hubspoke.md), [Hub console pairing](../../docs/design/hub-console-pairing.md)).
+
 ## Database
 
 PostgreSQL is required. It holds exact approvals, access requests, history and per-request proxy summaries ([database](../../docs/database.md)). `database.mode` selects where it comes from:
