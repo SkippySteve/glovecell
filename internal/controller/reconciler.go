@@ -94,6 +94,17 @@ type Config struct {
 	// OrcaOrchestratorClass is the OrchestratorClass name that selects the
 	// hub-spoke path (default "orca").
 	OrcaOrchestratorClass string
+	// OrcaSpokePublicDomain is the DNS suffix for desktop-reachable spoke
+	// hosts (<project>.<domain>). Empty keeps cluster-local pairing only
+	// (phone via hub still works; desktop outside the cluster cannot dial).
+	// Independent of PUBLIC_ORIGIN and hubspoke.hub.publicAddress.
+	OrcaSpokePublicDomain string
+	// OrcaSpokeGateway* select the Gateway API listener for spoke HTTPRoutes.
+	OrcaSpokeGatewayName      string
+	OrcaSpokeGatewayNamespace string
+	OrcaSpokeGatewaySection   string
+	// OrcaHubNamespace is the hub's pod namespace (Traefik CNP peer + docs).
+	OrcaHubNamespace string
 }
 
 func (c Config) Validate() error {
@@ -132,6 +143,24 @@ func (c Config) Validate() error {
 		}
 		if _, e := hex.DecodeString(digest[1]); e != nil {
 			return errors.New("invalid image digest")
+		}
+	}
+	if c.OrcaHubSpoke {
+		digest := strings.Split(c.OrcaRuntimeImage, "@sha256:")
+		if len(digest) != 2 || digest[0] == "" || len(digest[1]) != 64 {
+			return errors.New("ORCA_RUNTIME_IMAGE requires a sha256 digest when hubspoke is enabled")
+		}
+		if _, e := hex.DecodeString(digest[1]); e != nil {
+			return errors.New("invalid ORCA_RUNTIME_IMAGE digest")
+		}
+		domain := strings.TrimSpace(c.OrcaSpokePublicDomain)
+		if domain != "" {
+			if strings.Contains(domain, "/") || strings.Contains(domain, ":") || strings.HasPrefix(domain, ".") || strings.HasSuffix(domain, ".") {
+				return errors.New("HUBSPOKE_SPOKE_DOMAIN must be a DNS suffix without scheme or port")
+			}
+			if strings.TrimSpace(c.OrcaSpokeGatewayName) == "" || strings.TrimSpace(c.OrcaSpokeGatewayNamespace) == "" || strings.TrimSpace(c.OrcaSpokeGatewaySection) == "" {
+				return errors.New("HUBSPOKE_SPOKE_GATEWAY_NAME/NAMESPACE/SECTION required when HUBSPOKE_SPOKE_DOMAIN is set")
+			}
 		}
 	}
 	return nil
@@ -824,6 +853,18 @@ func (r *Reconciler) apply(ctx context.Context, w *api.ProjectWorkspace, obj cli
 			sum := sha256.Sum256([]byte(strings.Join(wantNS, ",")))
 			return r.audit(ctx, w, "dns-"+hex.EncodeToString(sum[:6]))
 		}
+		// Spoke HTTPRoute and orca-runtime CNP may gain a public dial; patch
+		// their specs. Other Cilium policies stay immutable (drift).
+		if expected.GetKind() == "HTTPRoute" || expected.GetKind() == "CiliumNetworkPolicy" && expected.GetName() == "orca-runtime" {
+			if same(got, want) {
+				return nil
+			}
+			old := current.DeepCopy()
+			if e := unstructured.SetNestedMap(current.Object, want, "spec"); e != nil {
+				return e
+			}
+			return r.Patch(ctx, current, client.MergeFrom(old))
+		}
 		if !same(got, want) {
 			return errors.New("network policy drift detected")
 		}
@@ -951,6 +992,10 @@ func (r *Reconciler) replaceWorkspaceImage(ctx context.Context, w *api.ProjectWo
 		unstructured.RemoveNestedField(wantCopy, "podTemplate", "spec", "hostname")
 	}
 	gotCopy["operatingMode"] = want["operatingMode"]
+	if r.usesOrcaSpoke(w) {
+		normalizeOrcaSpokeDial(gotCopy)
+		normalizeOrcaSpokeDial(wantCopy)
+	}
 	if !contains(gotCopy, wantCopy) {
 		return errors.New("Sandbox configuration drift detected")
 	}
@@ -962,6 +1007,7 @@ func (r *Reconciler) replaceWorkspaceImage(ctx context.Context, w *api.ProjectWo
 		return errors.New("Sandbox configuration drift detected")
 	}
 	before := current.DeepCopy()
+	wantWorkspace, hasWantWorkspace := workspaceContainer(want)
 	for _, kind := range []string{"initContainers", "containers"} {
 		items, _, err := unstructured.NestedSlice(current.Object, "spec", "podTemplate", "spec", kind)
 		if err != nil {
@@ -972,10 +1018,25 @@ func (r *Reconciler) replaceWorkspaceImage(ctx context.Context, w *api.ProjectWo
 			if !ok {
 				return errors.New("invalid Sandbox container")
 			}
-			if container["name"] == "clone" || container["name"] == "workspace" {
+			name, _ := container["name"].(string)
+			switch name {
+			case "clone":
 				container["image"] = r.Config.Image
-				items[i] = container
+			case "workspace":
+				container["image"] = r.orcaSpokeImage(w)
+				if r.usesOrcaSpoke(w) && hasWantWorkspace {
+					if cmd, ok := wantWorkspace["command"].([]any); ok {
+						container["command"] = cmd
+					}
+					if env, ok := wantWorkspace["env"].([]any); ok {
+						container["env"] = env
+					}
+					if ports, ok := wantWorkspace["ports"].([]any); ok {
+						container["ports"] = ports
+					}
+				}
 			}
+			items[i] = container
 		}
 		if err := unstructured.SetNestedSlice(current.Object, items, "spec", "podTemplate", "spec", kind); err != nil {
 			return err
@@ -993,6 +1054,50 @@ func (r *Reconciler) replaceWorkspaceImage(ctx context.Context, w *api.ProjectWo
 		return err
 	}
 	return errors.New("Sandbox workspace image is being updated with its identity retained")
+}
+
+func workspaceContainer(spec map[string]any) (map[string]any, bool) {
+	pod, _ := spec["podTemplate"].(map[string]any)
+	if pod == nil {
+		return nil, false
+	}
+	body, _ := pod["spec"].(map[string]any)
+	if body == nil {
+		return nil, false
+	}
+	items, _ := body["containers"].([]any)
+	for _, raw := range items {
+		container, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if container["name"] == "workspace" {
+			return container, true
+		}
+	}
+	return nil, false
+}
+
+// normalizeOrcaSpokeDial ignores pairing dial fields so a public-address roll
+// can reuse the reviewed Sandbox update path.
+func normalizeOrcaSpokeDial(spec map[string]any) {
+	container, ok := workspaceContainer(spec)
+	if !ok {
+		return
+	}
+	container["command"] = []any{"normalized"}
+	container["ports"] = []any{}
+	env, _ := container["env"].([]any)
+	for i, raw := range env {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if item["name"] == "ORCA_PUBLIC_ADDRESS" {
+			item["value"] = "normalized"
+			env[i] = item
+		}
+	}
 }
 func normalizeSandboxWorkloadImages(spec map[string]any) {
 	pod, _ := spec["podTemplate"].(map[string]any)
@@ -1483,6 +1588,12 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 	}
 	if svc := r.orcaSpokeService(w); svc != nil {
 		objects = append(objects, svc)
+	}
+	if route := r.orcaSpokeRoute(w); route != nil {
+		objects = append(objects, route)
+	}
+	if policy := r.orcaSpokeIngressPolicy(w); policy != nil {
+		objects = append(objects, policy)
 	}
 	r.Config.WorkerScheduling.Apply(&spec)
 	b, e := json.Marshal(spec)

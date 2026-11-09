@@ -70,6 +70,9 @@ type Server struct {
 	// Database serves access requests, exact approvals and proxy summaries
 	// (D13). Nil refuses those endpoints with an explanation.
 	Database *Database
+	// OrcaPairing mints spoke desktop pairing offers when hubspoke public
+	// domain is configured. Nil or empty Domain hides the endpoint.
+	OrcaPairing *OrcaPairing
 }
 
 // Reference is the reference list as the console shows it.
@@ -144,9 +147,10 @@ func (s *Server) Handler() (http.Handler, error) {
 		}
 		writeJSON(w, repos)
 	})
+	mux.HandleFunc("POST /api/v1/workspaces/{name}/orca-pairing", s.mintOrcaPairing)
 	mux.HandleFunc("GET /api/v1/session", func(w http.ResponseWriter, r *http.Request) {
 		actor, _ := r.Context().Value(actorKey{}).(string)
-		session := map[string]any{"actor": actor, "oidc": s.OIDC != nil, "sandboxControl": s.SandboxControl != nil, "t3Connect": s.T3Connect, "githubOwner": s.GitHubOwner, "runRecords": s.RunRecords != nil}
+		session := map[string]any{"actor": actor, "oidc": s.OIDC != nil, "sandboxControl": s.SandboxControl != nil, "t3Connect": s.T3Connect, "githubOwner": s.GitHubOwner, "runRecords": s.RunRecords != nil, "orcaSpokePairing": s.orcaPairingEnabled()}
 		if s.LAN != nil {
 			session["lanHosts"] = true
 			session["lanAllowed"] = s.LAN.Config.AllowedStrings()

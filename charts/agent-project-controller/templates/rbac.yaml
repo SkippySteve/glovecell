@@ -82,6 +82,13 @@ rules:
     resourceNames: [ciliumnetworkpolicies.cilium.io]
     verbs: [get]
 {{- end }}
+{{- if and .Values.hubspoke.orca.enabled .Values.hubspoke.spoke.publicDomain }}
+  # Per-project spoke HTTPRoute for desktop pairing (wss://<project>.<domain>).
+  - apiGroups: [gateway.networking.k8s.io]
+    resources: [httproutes]
+    verbs: [get, list, watch, create, update, patch, delete]
+{{- end }}
+
   - apiGroups: [storage.k8s.io]
     resources: [storageclasses]
     verbs: [get]
