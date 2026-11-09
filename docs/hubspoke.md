@@ -1,0 +1,84 @@
+# Hub-and-spoke orchestrators
+
+Agents run inside locked-down **spokes** (project sandboxes). Phones and
+desktops pair once with a **hub** that enrolls each Ready spoke automatically.
+New spokes appear on an already-paired phone without another scan.
+
+This is the production shape for Orca. T3 and Herdr use the same Go interfaces
+when their enrollment paths are verified.
+
+## Words
+
+- **Spoke**: one project sandbox. Runs the Runtime (Orca's `orcad` today) next
+  to the agents, under gVisor and least privilege. Holds the repo and worktrees.
+- **Hub**: one always-on control client. Relays phones to spokes. Runs no
+  project agents. Enrolls spokes with `agent-project-controller hubspoke --watch`.
+- **Runtime** (`internal/hubspoke.Runtime`): how to parse a spoke's one-time
+  pairing offer.
+- **Enroller** (`internal/hubspoke.Enroller`): how the hub adds, connects,
+  registers a project path, and revokes a spoke.
+
+## Security
+
+- A compromised spoke cannot open another spoke.
+- The hub can drive enrolled spokes' Orca sessions, but does not mount their
+  filesystems and holds no Kubernetes exec into them for day-to-day work
+  (it only reads worker logs to obtain the one-time offer).
+- Pairing URLs are never written to ledgers, status, or logs.
+- Prefer this over a privileged FUSE registrar that mounts every checkout on
+  one host.
+
+## Enable (inert until both flags are set)
+
+Controller:
+
+```yaml
+HUBSPOKE_ORCA_ENABLED: "true"
+ORCA_RUNTIME_IMAGE: git.cluster.aimingupward.com/image-publisher/orca-pilot@sha256:…
+HUBSPOKE_ORCHESTRATOR_CLASS: orca   # optional; default orca
+```
+
+Hub process (same network as the spokes, with the Orca desktop CLI that can
+relay phones — see stablyai/orca#40040 for headless relay):
+
+```bash
+CONTROL_NAMESPACE=agent-project-controller \
+HUBSPOKE_KIND=orca \
+APC_ORCA_BINARY=/path/to/orca-ide \
+HUBSPOKE_ORCHESTRATOR_CLASS=orca \
+agent-project-controller hubspoke --watch
+```
+
+Workspaces select the class:
+
+```yaml
+spec:
+  orchestratorClassName: orca
+```
+
+## Lifecycle
+
+1. Workspace becomes Ready (clone finished). The worker runs `orcad` and
+   publishes a Service `orca-runtime` on port 6768.
+2. The hub scrapes worker logs for `orca_server_ready`, enrolls with
+   `orca environment add`, **connects** (required for phone relay), and
+   `orca repo add --path /workspace/repo`.
+3. Ledger ConfigMap `hubspoke-<uid>` records `orca.state=enrolled` (never the
+   pairing URL). Controller `Ensure` does not wait on that state (that would
+   deadlock with Ready); `Remove` does wait for `revoked`.
+4. On remove, the hub runs `orca environment rm` and sets `revoked`. Controller
+   `Remove` waits for that.
+
+## T3 and Herdr
+
+| Kind | Runtime | Enroller | Status |
+| --- | --- | --- | --- |
+| `orca` | `OrcaRuntime` | `OrcaEnroller` | Implemented; phone relay needs Orca desktop (or #40040) |
+| `t3` | `T3Runtime` | `T3Enroller` | Stub; candidate `t3 environment link` |
+| `herdr` | `HerdrRuntime` | — | Stub; no pairing API yet |
+
+## Local spike
+
+A disposable Docker spike under `~/orca-spike` (operator workstation) proved
+automatic enrollment, phone visibility of new spokes without rescanning, and
+worktrees created on the spoke rather than the hub.
