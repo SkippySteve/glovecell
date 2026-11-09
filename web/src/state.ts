@@ -10,6 +10,7 @@ export const pausedForEdits = (p: Project) => p.spec.desiredState === 'Paused' &
 
 export function projectState(p: Project): Status {
   const condition = p.status?.conditions?.find(c => c.type === 'Ready'), phase = p.status?.phase || 'Requested';
+  if (condition?.status === 'False' && condition.reason === 'ProxyQuarantined') return {label: 'Gateway quarantined', variant: 'danger', attention: 'Gateway needs recovery', message: condition.message};
   if (phase === 'Removed') return {label: 'Removed', variant: 'neutral', removed: true};
   if (condition && condition.observedGeneration !== undefined && condition.observedGeneration !== p.metadata.generation) return {label: 'Updating', variant: 'info', busy: true, message: 'Update requested. Waiting for the controller to apply it.'};
   if (!condition) return {label: phase, variant: 'info', busy: true, message: 'Request saved. Waiting for preparation to begin.'};

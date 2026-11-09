@@ -59,6 +59,7 @@ type Config struct {
 	RegistrarNamespace                                                          string
 	GitHubOwner                                                                 string
 	ProxyImage                                                                  string
+	ProxyRuntimeGuard                                                           bool
 	StorageSize                                                                 string
 	WorkerResources, ProxyResources                                             ResourceProfile
 	WorkerScheduling, ProxyScheduling                                           Scheduling
@@ -371,6 +372,22 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ct
 				reason = "ProjectReady"
 				message = "Inspected clone completed and project environment is ready"
 			}
+		}
+	}
+	if r.Config.ProxyRuntimeGuard && w.Spec.DesiredState == "Running" {
+		incident, err := r.proxyHealthIncident(ctx, w)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if incident {
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, r.status(ctx, w, "Blocked", false, "ProxyQuarantined", "Gateway quarantined; forwarding stopped. Pause the project, correct the source configuration, then replace the proxy pod before resuming. Container restart or restoring a file does not clear quarantine.")
+		}
+		var deployment appsv1.Deployment
+		if err := r.Get(ctx, types.NamespacedName{Namespace: namespace(w), Name: "proxy"}, &deployment); err != nil {
+			return ctrl.Result{}, err
+		}
+		if deployment.Status.ObservedGeneration < deployment.Generation || deployment.Status.ReadyReplicas != 1 {
+			phase, ready, reason, message = "Preparing", false, "ProxyNotReady", "Waiting for healthy gateway policy, credentials and control listener"
 		}
 	}
 	access, e := r.orchestratorAccess(ctx, w)
@@ -906,10 +923,40 @@ func (r *Reconciler) apply(ctx context.Context, w *api.ProjectWorkspace, obj cli
 		}
 		gotSpec := current.Spec.DeepCopy()
 		wantSpec := expected.Spec.DeepCopy()
+		gotGuard, err := normalizeProxyRuntimeHealth(gotSpec)
+		if err != nil {
+			return errors.New("proxy runtime health configuration drift detected")
+		}
+		wantGuard, err := normalizeProxyRuntimeHealth(wantSpec)
+		if err != nil {
+			return err
+		}
 		normalizeProxyDrift(gotSpec)
 		normalizeProxyDrift(wantSpec)
 		if !contains(*gotSpec, *wantSpec) || current.Spec.Template.Spec.DNSConfig == nil || expected.Spec.Template.Spec.DNSConfig == nil {
 			return errors.New("proxy deployment drift detected")
+		}
+		if gotGuard != wantGuard {
+			if w.Spec.DesiredState != "Paused" {
+				return errors.New("pause the project before changing gateway runtime health mode")
+			}
+			if current.Spec.Replicas == nil || *current.Spec.Replicas != 0 {
+				old := current.DeepCopy()
+				current.Spec.Replicas = int32p(0)
+				if err := r.Patch(ctx, current, client.MergeFrom(old)); err != nil {
+					return err
+				}
+			}
+			gone, err := r.processesGone(ctx, w)
+			if err != nil {
+				return err
+			}
+			if !gone {
+				return errors.New("waiting for project processes before changing gateway runtime health mode")
+			}
+			old := current.DeepCopy()
+			current.Spec = *expected.Spec.DeepCopy()
+			return r.Patch(ctx, current, client.MergeFrom(old))
 		}
 		wantImage, ok := proxyContainerImage(expected.Spec)
 		gotImage, gotOK := proxyContainerImage(current.Spec)
@@ -919,9 +966,16 @@ func (r *Reconciler) apply(ctx context.Context, w *api.ProjectWorkspace, obj cli
 		dnsChanged := !reflect.DeepEqual(current.Spec.Template.Spec.DNSConfig.Nameservers, expected.Spec.Template.Spec.DNSConfig.Nameservers)
 		imageChanged := gotImage != wantImage
 		replicasChanged := !reflect.DeepEqual(current.Spec.Replicas, expected.Spec.Replicas)
-		if dnsChanged || imageChanged || replicasChanged {
+		revisionChanged := current.Spec.Template.Annotations[proxyRevisionAnnotation] != expected.Spec.Template.Annotations[proxyRevisionAnnotation]
+		if dnsChanged || imageChanged || replicasChanged || revisionChanged {
 			old := current.DeepCopy()
 			current.Spec.Replicas = expected.Spec.Replicas
+			if revisionChanged {
+				if current.Spec.Template.Annotations == nil {
+					current.Spec.Template.Annotations = map[string]string{}
+				}
+				current.Spec.Template.Annotations[proxyRevisionAnnotation] = expected.Spec.Template.Annotations[proxyRevisionAnnotation]
+			}
 			if dnsChanged {
 				current.Spec.Template.Spec.DNSConfig.Nameservers = append([]string{}, expected.Spec.Template.Spec.DNSConfig.Nameservers...)
 			}
@@ -1511,6 +1565,10 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 		gitData["projects.json"] = s.Data["projects.json"]
 	}
 	proxyData := map[string][]byte{"ca.crt": s.Data["ca.crt"], "ca.key": s.Data["ca.key"]}
+	if r.Config.ProxyRuntimeGuard && cfg.BrokeredProviders {
+		proxyData["provider-access"] = []byte("{}")
+	}
+
 	if brokered != nil && brokered.managed {
 		// applyProviders decided this reconciliation's grants; reuse them so
 		// a stale cached model-access can never re-add a revoked grant.
@@ -1583,6 +1641,9 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 	plabels := labels(w)
 	plabels["projects.agentwork.dev/role"] = "proxy"
 	proxyDeployment := &appsv1.Deployment{ObjectMeta: metadata(w, "proxy"), Spec: appsv1.DeploymentSpec{Replicas: int32p(1), Selector: &metav1.LabelSelector{MatchLabels: plabels}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: plabels}, Spec: corev1.PodSpec{DNSPolicy: corev1.DNSNone, DNSConfig: dns, AutomountServiceAccountToken: boolp(false), ServiceAccountName: "worker", TerminationGracePeriodSeconds: int64p(1), SecurityContext: &corev1.PodSecurityContext{FSGroup: int64p(1000)}, Containers: []corev1.Container{{Name: "proxy", Image: r.Config.proxyImage(), Args: []string{"proxy"}, SecurityContext: security, Resources: proxyResources, Ports: []corev1.ContainerPort{{ContainerPort: 3128}}, ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: fromInt(3128)}}}, VolumeMounts: []corev1.VolumeMount{{Name: "tls", MountPath: "/tls", ReadOnly: true}, {Name: "policy", MountPath: "/policy", ReadOnly: true}}}}, Volumes: []corev1.Volume{{Name: "tls", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "proxy-ca", DefaultMode: int32p(0440)}}}, {Name: "policy", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: "proxy-policy"}}}}}}}}}
+	if r.Config.ProxyRuntimeGuard {
+		configureProxyRuntimeHealth(proxyDeployment, raw, s.Data["ca.crt"])
+	}
 	r.Config.ProxyScheduling.Apply(&proxyDeployment.Spec.Template.Spec)
 	if w.Spec.DesiredState == "Paused" {
 		proxyDeployment.Spec.Replicas = int32p(0)

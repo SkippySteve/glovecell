@@ -1,3 +1,7 @@
+{{- $proxyGuard := default "false" (index .Values.config "PROXY_RUNTIME_GUARD_ENABLED" | toString) }}
+{{- if not (has $proxyGuard (list "true" "false")) }}
+{{- fail "config.PROXY_RUNTIME_GUARD_ENABLED must be true or false" }}
+{{- end }}
 {{- if not (kindIs "bool" .Values.additionalGitHub.enabled) }}
 {{- fail "additionalGitHub.enabled must be a boolean" }}
 {{- end }}

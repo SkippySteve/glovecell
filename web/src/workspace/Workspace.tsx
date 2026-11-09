@@ -270,7 +270,7 @@ export function ProjectWorkspace({name, section}: {name: string; section: Sectio
     : <ProjectOverview p={p} />;
   return (
     <Shell current={'p:' + name} section={section} kind="project" badges={{lan: {n: hosts}, credentials: {n: 0}}} lanOpen={lanOpen} header={header}>
-      {state.attention ? <Callout variant="warning" title={state.attention} description={<><span className="block">{state.message}</span><span className="block subtle">The controller retries automatically. Correct the setting described above; keep this sandbox request.</span></>} />
+      {state.attention ? <Callout variant="warning" title={state.attention} description={<><span className="block">{state.message}</span><span className="block subtle">{p.status?.conditions?.some(c => c.type === 'Ready' && c.reason === 'ProxyQuarantined') ? 'Forwarding remains blocked until the proxy pod is replaced after the source configuration is corrected.' : 'The controller retries automatically. Correct the setting described above; keep this sandbox request.'}</span></>} />
         : state.message ? <Callout variant="info" description={state.message} /> : null}
       {body}
     </Shell>
