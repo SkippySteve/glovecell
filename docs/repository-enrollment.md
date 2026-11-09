@@ -4,17 +4,18 @@ T3's Add project and Orca's `repo add` only register a directory with the
 runtime. They do not enroll a remote repository or authorize Git. Enroll
 through the controller first.
 
-In the controller, open the project sandbox → **Credentials**, select Pause and
-wait for Paused. Under **Repositories in this sandbox**, enter a directory name
-and an `owner/repository`, then **Add repository**. Wait for the controller to
-apply the grant, then Resume. Pause keeps the hubspoke Orca environment; only
-removal revokes it. The original `/workspace/repo` remains in place.
-Additional checkouts are cloned onto the existing volume at
-`/workspace/projects/<name>`. Hubspoke then runs `orca repo add` for each new
-path on the same spoke environment (the primary `/workspace/repo` was
-registered at enroll). On a T3-linked sandbox the same checkout is registered
-with stock T3. Select the new project in the runtime and start a thread in its
-current checkout. Use Ctrl+J (T3) or the spoke terminal to check `pwd`.
+In the controller, open the project sandbox → **Credentials**. While the
+sandbox is **Ready**, under **Repositories in this sandbox** enter a directory
+name and an `owner/repository`, then **Add repository**. Pause is not required.
+The controller grants access and refreshes the worker briefly so bootstrap
+clones onto the existing volume; agents reconnect. (Enrollment while settled
+Paused still works; Resume then clones.) The original `/workspace/repo` remains
+in place. Additional checkouts land at `/workspace/projects/<name>`. Hubspoke
+then runs `orca repo add` for each new path on the same spoke environment (the
+primary `/workspace/repo` was registered at enroll). On a T3-linked sandbox the
+same checkout is registered with stock T3. Select the new project in the
+runtime and start a thread in its current checkout. Use Ctrl+J (T3) or the
+spoke terminal to check `pwd`.
 
 This enrollment path does not create another sandbox, volume, provider login or
 runtime environment. **New sandbox** creates an isolated environment; use the

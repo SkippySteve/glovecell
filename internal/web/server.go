@@ -449,36 +449,46 @@ func (s *Server) change(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "state and resourceVersion required", 400)
 		return
 	}
-	obj := &api.ProjectWorkspace{}
-	if e := s.Client.Get(r.Context(), types.NamespacedName{Namespace: s.Namespace, Name: r.PathValue("name")}, obj); e != nil {
-		http.Error(w, "project unavailable", 404)
-		return
-	}
-	if obj.ResourceVersion != request.ResourceVersion {
-		http.Error(w, "project changed; refresh before retrying", 409)
-		return
-	}
-	if !obj.DeletionTimestamp.IsZero() || obj.Spec.DesiredState == "Removed" {
-		http.Error(w, "removed projects cannot be reopened; create a new project", 409)
-		return
-	}
-	if request.DesiredState == "Running" && obj.Spec.DesiredState == "Paused" && obj.UID != "" {
-		if obj.Status.ObservedGeneration != obj.Generation || obj.Status.Phase != "Paused" || !s.accessApplied(r, obj) {
-			http.Error(w, "wait for the paused project and access update to reconcile before resuming", 409)
+	actor, _ := r.Context().Value(actorKey{}).(string)
+	name := r.PathValue("name")
+	// Do not require the client's resourceVersion to match. Status updates bump
+	// it constantly, so Pause otherwise fails with a stale poll. Re-get and
+	// retry conflicts while applying only DesiredState.
+	for attempt := 0; attempt < 5; attempt++ {
+		obj := &api.ProjectWorkspace{}
+		if e := s.Client.Get(r.Context(), types.NamespacedName{Namespace: s.Namespace, Name: name}, obj); e != nil {
+			http.Error(w, "project unavailable", 404)
 			return
 		}
-	}
-	actor, _ := r.Context().Value(actorKey{}).(string)
-	if obj.Annotations == nil {
-		obj.Annotations = map[string]string{}
-	}
-	obj.Annotations["projects.agentwork.dev/requested-by"] = actor
-	obj.Spec.DesiredState = request.DesiredState
-	if e := s.Client.Update(r.Context(), obj); e != nil {
-		http.Error(w, "project update failed; refresh before retrying", 409)
+		if !obj.DeletionTimestamp.IsZero() || obj.Spec.DesiredState == "Removed" {
+			http.Error(w, "removed projects cannot be reopened; create a new project", 409)
+			return
+		}
+		if request.DesiredState == "Running" && obj.Spec.DesiredState == "Paused" && obj.UID != "" {
+			if obj.Status.ObservedGeneration != obj.Generation || obj.Status.Phase != "Paused" || !s.accessApplied(r, obj) {
+				http.Error(w, "wait for the paused project and access update to reconcile before resuming", 409)
+				return
+			}
+		}
+		if obj.Spec.DesiredState == request.DesiredState {
+			writeJSON(w, obj)
+			return
+		}
+		if obj.Annotations == nil {
+			obj.Annotations = map[string]string{}
+		}
+		obj.Annotations["projects.agentwork.dev/requested-by"] = actor
+		obj.Spec.DesiredState = request.DesiredState
+		if e := s.Client.Update(r.Context(), obj); e != nil {
+			if apierrors.IsConflict(e) && attempt < 4 {
+				continue
+			}
+			http.Error(w, "project update failed; refresh before retrying", 409)
+			return
+		}
+		writeJSON(w, obj)
 		return
 	}
-	writeJSON(w, obj)
 }
 func (s *Server) clients(w http.ResponseWriter, r *http.Request) {
 	obj := &api.ProjectWorkspace{}
