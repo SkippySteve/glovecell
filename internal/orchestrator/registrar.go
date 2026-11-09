@@ -39,16 +39,11 @@ type Registrar struct {
 	Namespace string
 }
 
-// NewOrca returns the Orca adapter.
-//
-// TODO(#51): the per-cell Orca runtime (orcad as the project worker, pairing
-// state machine, intake at :8791) is design only
-// (docs/design/project-orca-runtime.md, issues #50-#55). When it lands, Ensure
-// starts and checks the runtime and reads its pairing offer from the intake,
-// Suspend stops it, and Remove also verifies pairing revocation. Until then
-// this adapter covers what exists: registrar kind "orca" and the console's
-// Orca project intake (internal/web/handoffs.go), which is per deployment and
-// not per workspace.
+// NewOrca returns the legacy Orca adapter for the control-host registrar
+// (desktop FUSE mounts). Prefer hub-and-spoke when HUBSPOKE_ORCA_ENABLED=true:
+// internal/hubspoke.NewOrcaAccess, with orcad in each gVisor spoke and
+// `agent-project-controller hubspoke --watch` on the hub (docs/hubspoke.md,
+// docs/design/project-orca-runtime.md).
 func NewOrca(c client.Reader, namespace string) *Registrar {
 	return &Registrar{Name: api.OrchestratorOrca, Kind: "orca", Client: c, Namespace: namespace}
 }

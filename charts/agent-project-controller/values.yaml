@@ -236,6 +236,24 @@ t3Connect:
   enabled: false
   existingClaim: ''
   relayURL: https://relay.t3.codes
+# Hub-and-spoke Orca (docs/hubspoke.md). Off by default. When enabled, project
+# workers run orcad from orcaRuntimeImage and Ready waits for the hub process
+# (`agent-project-controller hubspoke --watch`) to enroll each spoke. The hub
+# Deployment below is also off until a digest-pinned hub image is set.
+hubspoke:
+  orca:
+    enabled: false
+    # Digest-pinned image that contains orcad (for example orca-pilot).
+    runtimeImage: ''
+    # OrchestratorClass name workspaces must set (chart default class "orca").
+    className: orca
+  # Hub pod that runs hubspoke --watch next to an Orca desktop CLI. Disabled
+  # until image is set. Phone relay today needs the Orca desktop app (or
+  # stablyai/orca#40040 for headless relay).
+  hub:
+    enabled: false
+    image: ''
+    namespace: agent-project-control-orca-hub
 # Default OrchestratorClasses (cluster-scoped) that workspaces may name in
 # spec.orchestratorClassName. All off by default. Workspaces without a class
 # keep the deployment default: T3 Connect when t3Connect.enabled, else none.
@@ -245,8 +263,8 @@ orchestratorClasses:
   t3:
     enabled: false
     name: t3
-  # projects.agentwork.dev/orca: Orca desktop registration through the
-  # control-host registrar. The per-project Orca runtime is not built yet.
+  # projects.agentwork.dev/orca: hub-and-spoke (docs/hubspoke.md) when
+  # hubspoke.orca.enabled, else the legacy control-host registrar.
   orca:
     enabled: false
     name: orca

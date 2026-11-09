@@ -24,6 +24,7 @@ import (
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/forgejo"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/githubbroker"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/githubhost"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/hubspoke"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/network"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/orchestrator"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/preflight"
@@ -370,6 +371,8 @@ func run(ctx context.Context) error {
 			return connectCLI(ctx, os.Args[2], os.Args[4:])
 		case "register":
 			return registerCLI(ctx, os.Args[2:])
+		case "hubspoke":
+			return hubspokeCLI(ctx, os.Args[2:])
 		case "controller":
 		default:
 			return errors.New("unknown command")
@@ -433,7 +436,11 @@ func run(ctx context.Context) error {
 	if e != nil {
 		return e
 	}
-	reconciler := &controller.Reconciler{LAN: lan, Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, GitHost: gitHost, ForgejoOrigin: origin, Owner: owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling, RegistrarNamespace: os.Getenv("REGISTRAR_NAMESPACE"), WorkerExecClusterRole: os.Getenv("WORKER_EXEC_CLUSTER_ROLE"), ProjectAccessClusterRole: os.Getenv("PROJECT_ACCESS_CLUSTER_ROLE"), ControllerServiceAccount: env("CONTROLLER_SERVICE_ACCOUNT", controller.DefaultControllerServiceAccount)}}
+	orcaHubSpoke := os.Getenv("HUBSPOKE_ORCA_ENABLED") == "true"
+	reconciler := &controller.Reconciler{LAN: lan, Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, GitHost: gitHost, ForgejoOrigin: origin, Owner: owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling, RegistrarNamespace: os.Getenv("REGISTRAR_NAMESPACE"), WorkerExecClusterRole: os.Getenv("WORKER_EXEC_CLUSTER_ROLE"), ProjectAccessClusterRole: os.Getenv("PROJECT_ACCESS_CLUSTER_ROLE"), ControllerServiceAccount: env("CONTROLLER_SERVICE_ACCOUNT", controller.DefaultControllerServiceAccount), OrcaHubSpoke: orcaHubSpoke, OrcaRuntimeImage: os.Getenv("ORCA_RUNTIME_IMAGE"), OrcaOrchestratorClass: env("HUBSPOKE_ORCHESTRATOR_CLASS", "orca")}}
+	if orcaHubSpoke && reconciler.Config.OrcaRuntimeImage == "" {
+		return errors.New("HUBSPOKE_ORCA_ENABLED=true requires ORCA_RUNTIME_IMAGE")
+	}
 	telemetry, e := vendorTelemetryFromEnv()
 	if e != nil {
 		return e
@@ -521,10 +528,17 @@ func run(ctx context.Context) error {
 	} else {
 		slog.Warn("no database configured (DATABASE_URL_FILE): history stays in audit ConfigMaps, and approvals and access requests are refused; PostgreSQL is required (docs/database.md)")
 	}
-	// Orchestrator adapters an OrchestratorClass may name. Orca and command
-	// clients grant nothing in the cluster today (the control-host registrar
-	// does); T3 joins when T3 Connect is configured below.
-	if reconciler.Orchestrators, e = orchestrator.NewRegistry(orchestrator.NewOrca(direct, ns), orchestrator.NewCommand(direct, ns)); e != nil {
+	// Orchestrator adapters an OrchestratorClass may name. Orca is either the
+	// legacy control-host registrar (desktop mounts) or hub-and-spoke
+	// (HUBSPOKE_ORCA_ENABLED=true): agents stay in gVisor spokes, the hub
+	// enrolls them for phone relay. T3 joins when T3 Connect is configured below.
+	orcaAdapter := orchestrator.Adapter(orchestrator.NewOrca(direct, ns))
+	if os.Getenv("HUBSPOKE_ORCA_ENABLED") == "true" {
+		orcaAdapter = hubspoke.NewOrcaAccess(direct, ns, true)
+	} else if v := os.Getenv("HUBSPOKE_ORCA_ENABLED"); v != "" && v != "false" {
+		return errors.New("HUBSPOKE_ORCA_ENABLED must be true or false")
+	}
+	if reconciler.Orchestrators, e = orchestrator.NewRegistry(orcaAdapter, orchestrator.NewCommand(direct, ns)); e != nil {
 		return e
 	}
 	if v := os.Getenv("T3_CONNECT_ENABLED"); v != "" && v != "true" && v != "false" {
@@ -669,6 +683,60 @@ func t3CLI(ctx context.Context, workspace string) error {
 		return err
 	}
 	return t3.Launch(ctx, c, config, env("CONTROL_NAMESPACE", "agent-project-controller"), workspace)
+}
+
+func hubspokeCLI(ctx context.Context, args []string) error {
+	watch := false
+	for _, a := range args {
+		switch a {
+		case "--watch":
+			watch = true
+		case "-h", "--help":
+			return errors.New("usage: agent-project-controller hubspoke --watch")
+		default:
+			return fmt.Errorf("unknown hubspoke flag %q", a)
+		}
+	}
+	if !watch {
+		return errors.New("usage: agent-project-controller hubspoke --watch")
+	}
+	config := ctrl.GetConfigOrDie()
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		return err
+	}
+	if err := api.AddToScheme(scheme); err != nil {
+		return err
+	}
+	c, err := client.New(config, client.Options{Scheme: scheme})
+	if err != nil {
+		return err
+	}
+	runtimeKind := env("HUBSPOKE_KIND", "orca")
+	var (
+		rt  hubspoke.Runtime
+		en  hubspoke.Enroller
+	)
+	switch runtimeKind {
+	case "orca":
+		rt = hubspoke.OrcaRuntime{}
+		en = &hubspoke.OrcaEnroller{
+			Binary:      env("APC_ORCA_BINARY", registration.ResolveOrcaBinary()),
+			ProjectPath: env("HUBSPOKE_PROJECT_PATH", "/workspace/repo"),
+		}
+	case "t3":
+		rt, en = hubspoke.T3Runtime{}, hubspoke.T3Enroller{}
+	default:
+		return fmt.Errorf("unsupported HUBSPOKE_KIND %q", runtimeKind)
+	}
+	opts := hubspoke.WatchOptions{
+		ControlNamespace: env("CONTROL_NAMESPACE", "agent-project-controller"),
+		Kind:             runtimeKind,
+		ProjectPath:      env("HUBSPOKE_PROJECT_PATH", "/workspace/repo"),
+		ClassName:        os.Getenv("HUBSPOKE_ORCHESTRATOR_CLASS"),
+		OfferFrom:        hubspoke.OfferFromLogs(config, rt, env("HUBSPOKE_WORKER_CONTAINER", "workspace")),
+	}
+	return hubspoke.RunWatch(ctx, c, en, rt, opts)
 }
 
 func registerCLI(ctx context.Context, args []string) error {

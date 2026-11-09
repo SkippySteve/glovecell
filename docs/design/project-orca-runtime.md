@@ -8,6 +8,16 @@ pull request 213), so this document stays deployment-neutral like the rest of
 `docs/`. Issue references below are Forgejo issues: `apc#N` is in this
 repository and `infra#N` is in the infrastructure repository.
 
+## Status (2026-11-08)
+
+Phone access uses **hub-and-spoke** ([hubspoke.md](../hubspoke.md)): each
+project sandbox runs `orcad` under gVisor; a central hub enrolls Ready spokes
+and relays an already-paired phone. Automatic enrollment and phone visibility
+of new spokes without rescanning were qualified in a disposable Docker spike.
+Per-project public hostnames below remain an optional alternative; the hub
+relay is the default path to implement first (`internal/hubspoke`, issues
+#51/#53 updated by that package).
+
 ## Goal
 
 1. **New sandbox** in the console produces a project sandbox that runs its own
