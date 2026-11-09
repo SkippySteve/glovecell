@@ -98,6 +98,7 @@ func databaseFromEnv(ctx context.Context) (*store.Postgres, store.Retention, err
 	db, err := store.Open(ctx, cfg)
 	return db, retention, err
 }
+
 // Vendor telemetry is enabled by default; malformed settings never broaden it.
 func vendorTelemetryFromEnv() (bool, error) {
 	switch env("VENDOR_TELEMETRY_ENABLED", "true") {
@@ -437,7 +438,7 @@ func run(ctx context.Context) error {
 		return e
 	}
 	orcaHubSpoke := os.Getenv("HUBSPOKE_ORCA_ENABLED") == "true"
-	reconciler := &controller.Reconciler{LAN: lan, Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, GitHost: gitHost, ForgejoOrigin: origin, Owner: owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling, RegistrarNamespace: os.Getenv("REGISTRAR_NAMESPACE"), WorkerExecClusterRole: os.Getenv("WORKER_EXEC_CLUSTER_ROLE"), ProjectAccessClusterRole: os.Getenv("PROJECT_ACCESS_CLUSTER_ROLE"), ControllerServiceAccount: env("CONTROLLER_SERVICE_ACCOUNT", controller.DefaultControllerServiceAccount), OrcaHubSpoke: orcaHubSpoke, OrcaRuntimeImage: os.Getenv("ORCA_RUNTIME_IMAGE"), OrcaOrchestratorClass: env("HUBSPOKE_ORCHESTRATOR_CLASS", "orca")}}
+	reconciler := &controller.Reconciler{LAN: lan, Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, GitHost: gitHost, ForgejoOrigin: origin, Owner: owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling, RegistrarNamespace: os.Getenv("REGISTRAR_NAMESPACE"), WorkerExecClusterRole: os.Getenv("WORKER_EXEC_CLUSTER_ROLE"), ProjectAccessClusterRole: os.Getenv("PROJECT_ACCESS_CLUSTER_ROLE"), ControllerServiceAccount: env("CONTROLLER_SERVICE_ACCOUNT", controller.DefaultControllerServiceAccount), OrcaHubSpoke: orcaHubSpoke, OrcaRuntimeImage: os.Getenv("ORCA_RUNTIME_IMAGE"), OrcaOrchestratorClass: env("HUBSPOKE_ORCHESTRATOR_CLASS", "orca"), OrcaSpokePublicDomain: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_DOMAIN")), OrcaSpokeGatewayName: env("HUBSPOKE_SPOKE_GATEWAY_NAME", "traefik-gateway"), OrcaSpokeGatewayNamespace: env("HUBSPOKE_SPOKE_GATEWAY_NAMESPACE", "traefik-system"), OrcaSpokeGatewaySection: env("HUBSPOKE_SPOKE_GATEWAY_SECTION", "websecure-cluster-aimingupward"), OrcaHubNamespace: env("HUBSPOKE_HUB_NAMESPACE", "agent-project-control-orca-hub")}}
 	if orcaHubSpoke && reconciler.Config.OrcaRuntimeImage == "" {
 		return errors.New("HUBSPOKE_ORCA_ENABLED=true requires ORCA_RUNTIME_IMAGE")
 	}
@@ -598,6 +599,15 @@ func run(ctx context.Context) error {
 	server := &web.Server{T3Connect: reconciler.Access != nil, Client: direct, Host: host, Namespace: ns, Owner: owner, Password: password, Origin: os.Getenv("PUBLIC_ORIGIN"), GitHost: gitHost, GitOrigin: origin, AllowBasic: os.Getenv("ALLOW_STATIC_LOGIN") == "true"}
 	server.GitHubOwner = reconciler.Config.GitHubOwner
 	server.Audit = auditLog
+	if orcaHubSpoke && strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_DOMAIN")) != "" {
+		server.OrcaPairing = &web.OrcaPairing{
+			Rest:      config,
+			Domain:    strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_DOMAIN")),
+			HubSpoke:  true,
+			ClassName: env("HUBSPOKE_ORCHESTRATOR_CLASS", "orca"),
+			Container: env("HUBSPOKE_WORKER_CONTAINER", "workspace"),
+		}
+	}
 	if db != nil {
 		server.Database = &web.Database{Store: db, Monitor: monitor}
 	}
@@ -714,8 +724,8 @@ func hubspokeCLI(ctx context.Context, args []string) error {
 	}
 	runtimeKind := env("HUBSPOKE_KIND", "orca")
 	var (
-		rt  hubspoke.Runtime
-		en  hubspoke.Enroller
+		rt hubspoke.Runtime
+		en hubspoke.Enroller
 	)
 	switch runtimeKind {
 	case "orca":

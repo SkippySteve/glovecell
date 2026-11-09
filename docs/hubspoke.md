@@ -28,6 +28,18 @@ when their enrollment paths are verified.
 - Prefer this over a privileged FUSE registrar that mounts every checkout on
   one host.
 
+## Public spoke dial (desktop)
+
+Phones reach spokes through the hub relay. Desktops need a **public** WebSocket
+per project: `wss://<project>.<HUBSPOKE_SPOKE_DOMAIN>`. Set that domain (and the
+Gateway listener) separately from `PUBLIC_ORIGIN` and from the hub's own
+`hubspoke.hub.publicAddress`. The controller then creates an HTTPRoute and a
+CiliumNetworkPolicy that lets Traefik (and the hub) reach worker port 6768.
+
+Console: `POST /api/v1/workspaces/{name}/orca-pairing` (OIDC only) returns a
+one-time `orca://pair…` offer when present in worker logs. Never logged or
+stored. `GET /api/v1/session` reports `orcaSpokePairing: true` when configured.
+
 ## Enable (inert until both flags are set)
 
 Controller:
@@ -36,6 +48,10 @@ Controller:
 HUBSPOKE_ORCA_ENABLED: "true"
 ORCA_RUNTIME_IMAGE: git.cluster.aimingupward.com/image-publisher/orca-pilot@sha256:…
 HUBSPOKE_ORCHESTRATOR_CLASS: orca   # optional; default orca
+HUBSPOKE_SPOKE_DOMAIN: orca.cluster.example          # desktop dial suffix
+HUBSPOKE_SPOKE_GATEWAY_NAME: traefik-gateway
+HUBSPOKE_SPOKE_GATEWAY_NAMESPACE: traefik-system
+HUBSPOKE_SPOKE_GATEWAY_SECTION: websecure-cluster-aimingupward
 ```
 
 Hub process (same network as the spokes, with the Orca desktop CLI that can

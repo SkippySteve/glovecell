@@ -254,6 +254,17 @@ hubspoke:
     enabled: false
     image: ''
     namespace: agent-project-control-orca-hub
+    # Hub WSS clients dial after pairing the hub itself (phone/desktop to hub).
+    # Independent of config.PUBLIC_ORIGIN and of spoke.publicDomain.
+    publicAddress: ''
+  # Per-project spoke dial for desktops: wss://<project>.<publicDomain>
+  # (docs/hubspoke.md, APC #113 follow-up). Requires Gateway listener + DNS.
+  spoke:
+    publicDomain: ''
+    gateway:
+      name: traefik-gateway
+      namespace: traefik-system
+      sectionName: websecure-cluster-aimingupward
 # Default OrchestratorClasses (cluster-scoped) that workspaces may name in
 # spec.orchestratorClassName. All off by default. Workspaces without a class
 # keep the deployment default: T3 Connect when t3Connect.enabled, else none.
