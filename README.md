@@ -1,4 +1,9 @@
-# Agent project controller
+# Glovecell
+
+Isolated project environments for agents on Kubernetes Agent Sandbox
+(controller, CRDs, Helm chart, and console). Continues the work previously
+published as agent-project-controller.
+
 
 A Go controller that gives selected Forgejo repositories isolated project environments on Kubernetes Agent Sandbox. Open a project from the dashboard, work on a dedicated branch, then pause it or revoke access and remove its environment.
 
