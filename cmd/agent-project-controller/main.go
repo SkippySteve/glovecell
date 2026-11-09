@@ -341,6 +341,8 @@ func run(ctx context.Context) error {
 			return bootstrap.Credential()
 		case "reader":
 			return reader.Run(ctx)
+		case "proxy-ready":
+			return proxy.ReadyCLI(ctx)
 		case "proxy":
 			return proxy.Run(ctx)
 		case "fetch":

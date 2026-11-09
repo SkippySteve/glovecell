@@ -28,6 +28,9 @@ func (r *ReaderRoute) Validate() error {
 	return nil
 }
 func (s *Server) roundTrip(req *http.Request) (*http.Response, error) {
+	if !s.runtimeReady() {
+		return nil, errors.New("proxy recovery required")
+	}
 	route := s.Config.Reader
 	if route == nil || req.URL.Hostname() != route.Host {
 		return s.Transport.RoundTrip(req)
