@@ -257,3 +257,11 @@ and prove effective FQDN lease expiry before accepting APC #107.
 The [runtime health pilot](proxy-runtime-health.md) adds a disabled-by-default
 quarantine guard and loopback readiness endpoint. It does not activate new pod
 probes or complete the live runtime-failure qualification in APC #108.
+
+Pairing offer responses use `Cache-Control: no-store` and `Pragma: no-cache`,
+including unavailable and rejected responses. These headers prohibit HTTP
+cache storage; they do not erase runtime logs or replace one-time use and
+expiry. Only an OIDC operator can retrieve an offer. Generator failures return
+a generic reason rather than the underlying error, which may contain pairing
+material. The per-workspace runtime offer endpoint is separate from the future
+phone Hub mint service.
