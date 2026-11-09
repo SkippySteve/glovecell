@@ -73,6 +73,9 @@ type Server struct {
 	// OrcaPairing mints spoke desktop pairing offers when hubspoke public
 	// domain is configured. Nil or empty Domain hides the endpoint.
 	OrcaPairing *OrcaPairing
+	// Hub mints phone pairing offers and lists/revokes hub devices when the
+	// private hub-admin mTLS endpoint is configured. Nil hides the page.
+	Hub *Hub
 }
 
 // Reference is the reference list as the console shows it.
@@ -148,9 +151,12 @@ func (s *Server) Handler() (http.Handler, error) {
 		writeJSON(w, repos)
 	})
 	mux.HandleFunc("POST /api/v1/workspaces/{name}/orca-pairing", s.mintOrcaPairing)
+	mux.HandleFunc("POST /api/v1/hub/pairing", s.mintHubPairing)
+	mux.HandleFunc("GET /api/v1/hub/devices", s.listHubDevices)
+	mux.HandleFunc("DELETE /api/v1/hub/devices/{id}", s.revokeHubDevice)
 	mux.HandleFunc("GET /api/v1/session", func(w http.ResponseWriter, r *http.Request) {
 		actor, _ := r.Context().Value(actorKey{}).(string)
-		session := map[string]any{"actor": actor, "oidc": s.OIDC != nil, "sandboxControl": s.SandboxControl != nil, "t3Connect": s.T3Connect, "githubOwner": s.GitHubOwner, "runRecords": s.RunRecords != nil, "orcaSpokePairing": s.orcaPairingEnabled()}
+		session := map[string]any{"actor": actor, "oidc": s.OIDC != nil, "sandboxControl": s.SandboxControl != nil, "t3Connect": s.T3Connect, "githubOwner": s.GitHubOwner, "runRecords": s.RunRecords != nil, "orcaSpokePairing": s.orcaPairingEnabled(), "hubPairing": s.hubEnabled()}
 		if s.LAN != nil {
 			session["lanHosts"] = true
 			session["lanAllowed"] = s.LAN.Config.AllowedStrings()

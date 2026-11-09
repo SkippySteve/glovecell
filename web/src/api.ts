@@ -14,7 +14,9 @@ export interface Project {
   status?: { phase?: string; namespace?: string; observedGeneration?: number; conditions?: Condition[] };
 }
 export interface AuditRecord { time: string; action: string; message?: string }
-export interface Session { actor?: string; oidc?: boolean; sandboxControl?: boolean; t3Connect?: boolean; githubOwner?: string; runRecords?: boolean; handoffs?: boolean; orcaProjects?: boolean; orcaSandbox?: string; orcaNamespace?: string; lanHosts?: boolean; lanAllowed?: string[]; downloads?: boolean; downloadMaxBytes?: number; uploads?: boolean; uploadChunkBytes?: number; providers?: string[] }
+export interface Session { actor?: string; oidc?: boolean; sandboxControl?: boolean; t3Connect?: boolean; githubOwner?: string; runRecords?: boolean; handoffs?: boolean; orcaProjects?: boolean; orcaSandbox?: string; orcaNamespace?: string; lanHosts?: boolean; lanAllowed?: string[]; downloads?: boolean; downloadMaxBytes?: number; uploads?: boolean; uploadChunkBytes?: number; providers?: string[]; hubPairing?: boolean; orcaSpokePairing?: boolean }
+export interface HubOffer { available: boolean; endpoint: string; pairingUrl?: string; qrDataUrl?: string; deviceId?: string; expiresAt: number }
+export interface HubDevice { deviceId: string; name: string; pairedAt: number }
 export interface Repository { full_name: string }
 
 export type EgressState = 'Open' | 'Learning' | 'Locked';

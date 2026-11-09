@@ -24,6 +24,7 @@ import (
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/forgejo"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/githubbroker"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/githubhost"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/hubadmin"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/hubspoke"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/network"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/orchestrator"
@@ -343,6 +344,8 @@ func run(ctx context.Context) error {
 			return reader.Run(ctx)
 		case "proxy-ready":
 			return proxy.ReadyCLI(ctx)
+		case "hub-admin":
+			return hubadmin.Run(ctx)
 		case "proxy":
 			return proxy.Run(ctx)
 		case "fetch":
@@ -599,6 +602,14 @@ func run(ctx context.Context) error {
 		}
 	}
 	server := &web.Server{T3Connect: reconciler.Access != nil, Client: direct, Host: host, Namespace: ns, Owner: owner, Password: password, Origin: os.Getenv("PUBLIC_ORIGIN"), GitHost: gitHost, GitOrigin: origin, AllowBasic: os.Getenv("ALLOW_STATIC_LOGIN") == "true"}
+	if adminURL := os.Getenv("HUB_ADMIN_URL"); adminURL != "" {
+		admin, err := hubadmin.NewClient(adminURL, os.Getenv("HUB_PUBLIC_ADDRESS"), hubadmin.TLSFiles{CA: os.Getenv("HUB_ADMIN_CA_FILE"), Cert: os.Getenv("HUB_ADMIN_CERT_FILE"), Key: os.Getenv("HUB_ADMIN_KEY_FILE")})
+		if err != nil {
+			return err
+		}
+		server.Hub = &web.Hub{Backend: admin, Endpoint: admin.Endpoint}
+	}
+
 	server.GitHubOwner = reconciler.Config.GitHubOwner
 	server.Audit = auditLog
 	if orcaHubSpoke && strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_DOMAIN")) != "" {
