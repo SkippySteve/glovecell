@@ -77,7 +77,10 @@ func syncOnce(ctx context.Context, c client.Client, enroller Enroller, runtime R
 		}
 		want[string(w.UID)] = w
 	}
-	// Revoke enrolled spokes that are no longer eligible.
+	// Revoke only when the workspace is leaving the cluster. Pause must keep
+	// the Orca environment: Add repository requires DesiredState=Paused, then
+	// Resume clones under /workspace/projects/<name> and syncProjects registers
+	// the new path on the same spoke id.
 	enrolled, err := enroller.List(ctx)
 	if err != nil {
 		return err
@@ -86,9 +89,13 @@ func syncOnce(ctx context.Context, c client.Client, enroller Enroller, runtime R
 	for _, e := range enrolled {
 		byName[e.Name] = e
 	}
-	for _, w := range list.Items {
+	for i := range list.Items {
+		w := &list.Items[i]
 		uid := string(w.UID)
 		if _, ok := want[uid]; ok {
+			continue
+		}
+		if !shouldRevoke(w) {
 			continue
 		}
 		rec, err := GetState(ctx, c, opts.ControlNamespace, uid, opts.Kind)
@@ -138,6 +145,26 @@ func eligible(w *api.ProjectWorkspace, opts WatchOptions) bool {
 	// explicit non-orca class.
 	switch w.Spec.OrchestratorClassName {
 	case "", "orca":
+		return true
+	default:
+		return false
+	}
+}
+
+// shouldRevoke is true only when the sandbox is being removed. Paused cells
+// stay enrolled so extra repositories can register on Resume.
+func shouldRevoke(w *api.ProjectWorkspace) bool {
+	if w == nil {
+		return false
+	}
+	if w.DeletionTimestamp != nil {
+		return true
+	}
+	if w.Spec.DesiredState == "Removed" {
+		return true
+	}
+	switch w.Status.Phase {
+	case "Removing", "Removed":
 		return true
 	default:
 		return false
