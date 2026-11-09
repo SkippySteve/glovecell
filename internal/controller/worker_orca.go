@@ -34,12 +34,22 @@ func (r *Reconciler) orcaSpokeCommand(w *api.ProjectWorkspace) []string {
 	addr := fmt.Sprintf("ws://orca-runtime.%s.svc.cluster.local:6768", namespace(w))
 	// orcad prints orca_server_ready on stdout; the hub scrapes those logs for
 	// a runtime-scope pairing offer. Keep ORCA_USER_DATA on the workspace PVC.
+	// orca-pilot lays Node under /opt/orca/runtimes/node-<sha>/bin/node.
+	// Older layouts used /opt/orca/node/bin/node; keep both.
 	return []string{"/bin/sh", "-c", fmt.Sprintf(
 		`set -e
 mkdir -p /workspace/orca /workspace/home
 export ORCA_USER_DATA=/workspace/orca HOME=/workspace/home
-if [ -x /opt/orca/node/bin/node ] && [ -f /opt/orca/server/orcad.js ]; then
-  exec /opt/orca/node/bin/node /opt/orca/server/orcad.js --port 6768 --bind 0.0.0.0 --pairing-address %q --json
+NODE=
+if [ -x /opt/orca/node/bin/node ]; then
+  NODE=/opt/orca/node/bin/node
+else
+  for cand in /opt/orca/runtimes/node-*/bin/node; do
+    if [ -x "$cand" ]; then NODE=$cand; break; fi
+  done
+fi
+if [ -n "$NODE" ] && [ -f /opt/orca/server/orcad.js ]; then
+  exec "$NODE" /opt/orca/server/orcad.js --port 6768 --bind 0.0.0.0 --pairing-address %q --json
 fi
 if command -v orcad >/dev/null 2>&1; then
   exec orcad --port 6768 --bind 0.0.0.0 --pairing-address %q --json
