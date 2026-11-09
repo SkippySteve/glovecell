@@ -1,5 +1,5 @@
 # Update these pinned references as part of reviewed dependency upgrades.
-ARG WORKSPACE_IMAGE=debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4
+ARG WORKSPACE_IMAGE=debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 ARG GO_IMAGE=golang:1.27.3-alpine3.23@sha256:8a5046497cda39860b832ffdbe8dd66018a0f05bb01352f533a36e7e2ced66a0
 ARG RUNTIME_IMAGE=alpine:3.23@sha256:ff7f0c727dd796aa36787bfcd9a64bf35a6ce72a73451b3359fde849b6703d63
 ARG NODE_IMAGE=node:24.22.2-alpine3.23@sha256:9b69af715c7f9d038150b54ccccbaeffa9064bbc93e2904c29591ca097316af1
@@ -25,7 +25,9 @@ COPY --from=console /src/internal/web/dist/ internal/web/dist/
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${SOURCE_REVISION}" -o /agent-project-controller ./cmd/agent-project-controller
 
 FROM ${RUNTIME_IMAGE} AS runtime
-RUN apk add --no-cache ca-certificates git openssh-client && addgroup -g 1000 agent && adduser -D -u 1000 -G agent agent
+RUN apk add --no-cache ca-certificates git openssh-client \
+    && apk upgrade --no-cache openssh-client openssh-client-common openssh-keygen \
+    && addgroup -g 1000 agent && adduser -D -u 1000 -G agent agent
 COPY --from=build /agent-project-controller /usr/local/bin/agent-project-controller
 USER 1000:1000
 ENTRYPOINT ["/usr/local/bin/agent-project-controller"]
