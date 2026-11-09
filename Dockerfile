@@ -59,6 +59,7 @@ CMD ["serve"]
 FROM ${GO_IMAGE} AS toolchain
 FROM ${WORKSPACE_IMAGE} AS workspace
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git openssh-client build-essential python3 nodejs npm curl jq ripgrep bash \
+    && apt-get install -y --only-upgrade zlib1g \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -g 1000 agent && useradd -m -u 1000 -g 1000 agent
 COPY --from=toolchain /usr/local/go /usr/local/go
