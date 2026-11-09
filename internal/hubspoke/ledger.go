@@ -28,6 +28,9 @@ type LedgerRecord struct {
 	State string
 	ID    string
 	Name  string
+	// Projects are absolute spoke paths already registered with the enroller
+	// (primary /workspace/repo plus /workspace/projects/<name> enrollments).
+	Projects []string
 }
 
 // ConfigMapName is hubspoke-<uid-without-dashes> in the control namespace.
@@ -55,10 +58,40 @@ func DecodeLedger(data map[string]string) map[string]LedgerRecord {
 			rec.ID = v
 		case "name":
 			rec.Name = v
+		case "projects":
+			rec.Projects = splitProjects(v)
 		}
 		out[kind] = rec
 	}
 	return out
+}
+
+func splitProjects(v string) []string {
+	if v == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(v, "\n") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func joinProjects(paths []string) string {
+	var clean []string
+	seen := map[string]bool{}
+	for _, p := range paths {
+		p = strings.TrimSpace(p)
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		clean = append(clean, p)
+	}
+	return strings.Join(clean, "\n")
 }
 
 func encodeLedger(records map[string]LedgerRecord) map[string]string {
@@ -72,6 +105,9 @@ func encodeLedger(records map[string]LedgerRecord) map[string]string {
 		}
 		if rec.Name != "" {
 			data[kind+".name"] = rec.Name
+		}
+		if joined := joinProjects(rec.Projects); joined != "" {
+			data[kind+".projects"] = joined
 		}
 	}
 	return data
