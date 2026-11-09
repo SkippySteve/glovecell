@@ -4,6 +4,10 @@ Agents run inside locked-down **spokes** (project sandboxes). Phones and
 desktops pair once with a **hub** that enrolls each Ready spoke automatically.
 New spokes appear on an already-paired phone without another scan.
 
+Operator pairing belongs in the console (**Hub** page), not kubectl: design in
+[hub-console-pairing](design/hub-console-pairing.md), tracked as
+[APC #113](https://git.cluster.aimingupward.com/steve/agent-project-controller/issues/113).
+
 This is the production shape for Orca. T3 and Herdr use the same Go interfaces
 when their enrollment paths are verified.
 
