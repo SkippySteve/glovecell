@@ -92,6 +92,10 @@ config:
   PROXY_PLATFORM_ALLOW_ALWAYS: ''
   PROXY_PLATFORM_PORTS: ''
 
+  # Publish apc-*/project host audit assignments into ConfigMap
+  # glovecell-audit-assignments (inert until true). Host sync/RBAC stay off
+  # until a separate one-way enable in the deployment repository (#217).
+  AUDIT_ASSIGNMENT_FEED_ENABLED: 'false'
 # ValidatingAdmissionPolicies (admissionregistration.k8s.io/v1, Kubernetes
 # 1.30+) that refuse invalid ProjectWorkspace requests at the API server,
 # with deployment settings from the admission-params ConfigMap (README

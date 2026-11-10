@@ -109,6 +109,14 @@ type Config struct {
 	// Platform floors (APC #106). Empty is inert; copied into every proxy
 	// policy so approvals and project rules cannot override them.
 	PlatformFloors proxy.PlatformFloors
+	// AuditAssignmentFeed publishes per-cell host audit assignments into
+	// ConfigMap AuditAssignmentFeedConfigMap in Namespace (default
+	// glovecell-audit-assignments). Off by default; enabling it is the
+	// controller half of the inert host feed in the deployment repo (#217).
+	AuditAssignmentFeed bool
+	// AuditAssignmentFeedConfigMap overrides the ConfigMap name. Empty uses
+	// glovecell-audit-assignments.
+	AuditAssignmentFeedConfigMap string
 }
 
 func (c Config) Validate() error {
@@ -679,6 +687,10 @@ func (r *Reconciler) ensure(ctx context.Context, w *api.ProjectWorkspace) error 
 	}
 	if !bytes.Equal(beforeCA, s.Data["ca.crt"]) {
 		return r.restartInspection(ctx, w)
+	}
+	// Host audit assignment for apc-*/project. No-op while the feed flag is off.
+	if e = r.syncAuditAssignmentFeed(ctx, w, true); e != nil {
+		return e
 	}
 	return nil
 }
@@ -1262,6 +1274,8 @@ func (r *Reconciler) remove(ctx context.Context, w *api.ProjectWorkspace) error 
 	if e := r.audit(ctx, w, "remove-requested"); e != nil {
 		return e
 	}
+	// Feed failure must not prevent stopping work or revoking external access.
+	feedErr := r.syncAuditAssignmentFeed(ctx, w, false)
 	stopErr := r.stop(ctx, w)
 	var accessErr error
 	if w.Spec.OrchestratorClassName != "" {
@@ -1304,7 +1318,7 @@ func (r *Reconciler) remove(ctx context.Context, w *api.ProjectWorkspace) error 
 			return errors.New("credential ledger missing; operator recovery required")
 		}
 	}
-	if e := errors.Join(stopErr, accessErr); e != nil {
+	if e := errors.Join(feedErr, stopErr, accessErr); e != nil {
 		return e
 	}
 	if e = r.audit(ctx, w, "access-revoked"); e != nil {
