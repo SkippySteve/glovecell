@@ -8,6 +8,17 @@
 {{- printf "%s-%s" .Release.Namespace .Release.Name | trunc 51 | trimSuffix "-" }}-worker-exec
 {{- end -}}
 
+{{/* ClusterRole the controller binds to the Orca hub per project namespace:
+read worker pods and their logs (pairing offers) in cells only. */}}
+{{- define "apc.hubLogsRole" -}}
+{{- printf "%s-%s" .Release.Namespace .Release.Name | trunc 54 | trimSuffix "-" }}-hub-logs
+{{- end -}}
+
+{{/* True when the controller binds the hub's log read per project. */}}
+{{- define "apc.hubLogs" -}}
+{{- if and .Values.hubspoke.orca.enabled .Values.hubspoke.hub.logsPerProject }}true{{ end }}
+{{- end -}}
+
 {{/* ClusterRole the controller binds per project namespace for that
 project's Secrets and for deleting the project namespace itself. */}}
 {{- define "apc.projectAccessRole" -}}
