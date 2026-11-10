@@ -105,6 +105,15 @@ type Config struct {
 	OrcaSpokeGatewaySection   string
 	// OrcaHubNamespace is the hub's pod namespace (Traefik CNP peer + docs).
 	OrcaHubNamespace string
+
+	// AuditAssignmentFeed publishes per-cell host audit assignments into
+	// ConfigMap AuditAssignmentFeedConfigMap in Namespace (default
+	// glovecell-audit-assignments). Off by default; enabling it is the
+	// controller half of the inert host feed in the deployment repo (#217).
+	AuditAssignmentFeed bool
+	// AuditAssignmentFeedConfigMap overrides the ConfigMap name. Empty uses
+	// glovecell-audit-assignments.
+	AuditAssignmentFeedConfigMap string
 }
 
 func (c Config) Validate() error {
@@ -675,6 +684,10 @@ func (r *Reconciler) ensure(ctx context.Context, w *api.ProjectWorkspace) error 
 	}
 	if !bytes.Equal(beforeCA, s.Data["ca.crt"]) {
 		return r.restartInspection(ctx, w)
+	}
+	// Host audit assignment for apc-*/project. No-op while the feed flag is off.
+	if e = r.syncAuditAssignmentFeed(ctx, w, true); e != nil {
+		return e
 	}
 	return nil
 }
@@ -1256,6 +1269,9 @@ func (r *Reconciler) stop(ctx context.Context, w *api.ProjectWorkspace) error {
 }
 func (r *Reconciler) remove(ctx context.Context, w *api.ProjectWorkspace) error {
 	if e := r.audit(ctx, w, "remove-requested"); e != nil {
+		return e
+	}
+	if e := r.syncAuditAssignmentFeed(ctx, w, false); e != nil {
 		return e
 	}
 	stopErr := r.stop(ctx, w)
