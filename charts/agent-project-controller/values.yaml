@@ -86,6 +86,12 @@ config:
   OIDC_APPROVER_GROUPS_CLAIM: ''
   ALLOW_STATIC_LOGIN: 'false'
   OTEL_ENABLED: 'false'
+  # Platform floors (APC #106). Empty CSVs are inert. Deployment-specific
+  # hosts belong in the deployment repository, not upstream defaults.
+  PROXY_PLATFORM_DENY_ALWAYS: ''
+  PROXY_PLATFORM_ALLOW_ALWAYS: ''
+  PROXY_PLATFORM_PORTS: ''
+
 # ValidatingAdmissionPolicies (admissionregistration.k8s.io/v1, Kubernetes
 # 1.30+) that refuse invalid ProjectWorkspace requests at the API server,
 # with deployment settings from the admission-params ConfigMap (README

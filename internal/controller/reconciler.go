@@ -105,6 +105,10 @@ type Config struct {
 	OrcaSpokeGatewaySection   string
 	// OrcaHubNamespace is the hub's pod namespace (Traefik CNP peer + docs).
 	OrcaHubNamespace string
+
+	// Platform floors (APC #106). Empty is inert; copied into every proxy
+	// policy so approvals and project rules cannot override them.
+	PlatformFloors proxy.PlatformFloors
 }
 
 func (c Config) Validate() error {

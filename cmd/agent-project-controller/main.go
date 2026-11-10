@@ -111,6 +111,36 @@ func vendorTelemetryFromEnv() (bool, error) {
 	}
 }
 
+// platformFloorsFromEnv loads APC #106 floors. Empty CSV values stay inert.
+func platformFloorsFromEnv() (proxy.PlatformFloors, error) {
+	f := proxy.PlatformFloors{
+		DenyAlways:  splitCSV(os.Getenv("PROXY_PLATFORM_DENY_ALWAYS")),
+		AllowAlways: splitCSV(os.Getenv("PROXY_PLATFORM_ALLOW_ALWAYS")),
+	}
+	for _, raw := range splitCSV(os.Getenv("PROXY_PLATFORM_PORTS")) {
+		n, err := strconv.Atoi(raw)
+		if err != nil {
+			return proxy.PlatformFloors{}, fmt.Errorf("PROXY_PLATFORM_PORTS: %w", err)
+		}
+		f.Ports = append(f.Ports, n)
+	}
+	if err := proxy.ValidatePlatformFloors(f); err != nil {
+		return proxy.PlatformFloors{}, err
+	}
+	return f, nil
+}
+
+func splitCSV(raw string) []string {
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
 func profile(prefix string) controller.ResourceProfile {
 	return controller.ResourceProfile{CPURequest: os.Getenv(prefix + "_CPU_REQUEST"), MemoryRequest: os.Getenv(prefix + "_MEMORY_REQUEST"), CPULimit: os.Getenv(prefix + "_CPU_LIMIT"), MemoryLimit: os.Getenv(prefix + "_MEMORY_LIMIT")}
 }
@@ -440,7 +470,11 @@ func run(ctx context.Context) error {
 		return e
 	}
 	orcaHubSpoke := os.Getenv("HUBSPOKE_ORCA_ENABLED") == "true"
-	reconciler := &controller.Reconciler{LAN: lan, Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, GitHost: gitHost, ForgejoOrigin: origin, Owner: owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling, RegistrarNamespace: os.Getenv("REGISTRAR_NAMESPACE"), WorkerExecClusterRole: os.Getenv("WORKER_EXEC_CLUSTER_ROLE"), ProjectAccessClusterRole: os.Getenv("PROJECT_ACCESS_CLUSTER_ROLE"), ControllerServiceAccount: env("CONTROLLER_SERVICE_ACCOUNT", controller.DefaultControllerServiceAccount), OrcaHubSpoke: orcaHubSpoke, OrcaRuntimeImage: os.Getenv("ORCA_RUNTIME_IMAGE"), OrcaOrchestratorClass: env("HUBSPOKE_ORCHESTRATOR_CLASS", "orca"), OrcaSpokePublicDomain: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_DOMAIN")), OrcaSpokeGatewayName: env("HUBSPOKE_SPOKE_GATEWAY_NAME", "traefik-gateway"), OrcaSpokeGatewayNamespace: env("HUBSPOKE_SPOKE_GATEWAY_NAMESPACE", "traefik-system"), OrcaSpokeGatewaySection: env("HUBSPOKE_SPOKE_GATEWAY_SECTION", "websecure-cluster-aimingupward"), OrcaHubNamespace: env("HUBSPOKE_HUB_NAMESPACE", "agent-project-control-orca-hub")}}
+	floors, e := platformFloorsFromEnv()
+	if e != nil {
+		return e
+	}
+	reconciler := &controller.Reconciler{LAN: lan, Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, GitHost: gitHost, ForgejoOrigin: origin, Owner: owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling, RegistrarNamespace: os.Getenv("REGISTRAR_NAMESPACE"), WorkerExecClusterRole: os.Getenv("WORKER_EXEC_CLUSTER_ROLE"), ProjectAccessClusterRole: os.Getenv("PROJECT_ACCESS_CLUSTER_ROLE"), ControllerServiceAccount: env("CONTROLLER_SERVICE_ACCOUNT", controller.DefaultControllerServiceAccount), OrcaHubSpoke: orcaHubSpoke, OrcaRuntimeImage: os.Getenv("ORCA_RUNTIME_IMAGE"), OrcaOrchestratorClass: env("HUBSPOKE_ORCHESTRATOR_CLASS", "orca"), OrcaSpokePublicDomain: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_DOMAIN")), OrcaSpokeGatewayName: env("HUBSPOKE_SPOKE_GATEWAY_NAME", "traefik-gateway"), OrcaSpokeGatewayNamespace: env("HUBSPOKE_SPOKE_GATEWAY_NAMESPACE", "traefik-system"), OrcaSpokeGatewaySection: env("HUBSPOKE_SPOKE_GATEWAY_SECTION", "websecure-cluster-aimingupward"), OrcaHubNamespace: env("HUBSPOKE_HUB_NAMESPACE", "agent-project-control-orca-hub"), PlatformFloors: floors}}
 	if orcaHubSpoke && reconciler.Config.OrcaRuntimeImage == "" {
 		return errors.New("HUBSPOKE_ORCA_ENABLED=true requires ORCA_RUNTIME_IMAGE")
 	}

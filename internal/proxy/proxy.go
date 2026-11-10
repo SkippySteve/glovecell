@@ -43,12 +43,21 @@ type Config struct {
 	PrivateGitHubRepositories []string        `json:"privateGitHubRepositories,omitempty"`
 	MuseSubscriptionGateway   bool            `json:"museSubscriptionGateway,omitempty"`
 	BrokeredProviders         bool            `json:"brokeredProviders,omitempty"`
+	// Platform floors (APC #106). Empty is inert; deny wins over allow and
+	// over project rules. Ports empty keeps today's 443-only dial.
+	Platform PlatformFloors `json:"platform,omitempty"`
 }
 
 var dnsHost = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$`)
 
 func Validate(c Config) error {
 	if err := c.Reader.Validate(); err != nil {
+		return err
+	}
+	if err := ValidatePlatformFloors(c.Platform); err != nil {
+		return err
+	}
+	if err := ProjectRulesConflictWithDeny(c.Platform, c.Rules); err != nil {
 		return err
 	}
 	if len(c.PrivateGitHubRepositories) > 16 {
@@ -107,6 +116,13 @@ func Allowed(c Config, host, method, path string) bool {
 		if seg == ".." || seg == "." {
 			return false
 		}
+	}
+	// Platform deny, then platform allow, then project rules (APC #106).
+	if PlatformDenied(c.Platform, host) {
+		return false
+	}
+	if PlatformAllowed(c.Platform, host) {
+		return true
 	}
 	if vendorTelemetryEndpoint(host, path) {
 		return c.VendorTelemetry && method == "POST"
@@ -223,8 +239,11 @@ func PublicIP(ip net.IP) bool {
 }
 func (s *Server) dial(ctx context.Context, network, address string) (net.Conn, error) {
 	host, port, e := net.SplitHostPort(address)
-	if e != nil || port != "443" {
-		return nil, errors.New("only TLS port 443 is allowed")
+	if e != nil || !PlatformPortAllowed(s.Config.Platform, port) {
+		return nil, errors.New("TLS port outside the platform port floor")
+	}
+	if PlatformDenied(s.Config.Platform, host) {
+		return nil, errors.New("host denied by platform floor")
 	}
 	private := false
 	for _, h := range s.Config.PrivateHosts {
@@ -344,11 +363,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	host, port, e := net.SplitHostPort(r.Host)
-	if e != nil || port != "443" || host != strings.ToLower(host) {
+	if e != nil || !PlatformPortAllowed(s.Config.Platform, port) || host != strings.ToLower(host) || PlatformDenied(s.Config.Platform, host) {
 		http.Error(w, "destination denied", 403)
 		return
 	}
-	if !s.inRules(host) && !s.grants.hostLive(host) && s.brokeredProvider(host) == "" && !s.githubHostLive(host) {
+	if !PlatformAllowed(s.Config.Platform, host) && !s.inRules(host) && !s.grants.hostLive(host) && s.brokeredProvider(host) == "" && !s.githubHostLive(host) {
 		http.Error(w, "destination denied", 403)
 		return
 	}
@@ -515,6 +534,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) requestDenied(host string, req *http.Request) bool {
 	if s.requestMalformed(host, req) {
+		return true
+	}
+	if PlatformDenied(s.Config.Platform, host) {
 		return true
 	}
 	return !Allowed(s.Config, host, req.Method, req.URL.Path) && !s.brokeredAllowed(host, req.Method, req.URL.Path)
