@@ -10,6 +10,14 @@ Orca/T3/Herdr project registration on Local. Hubspoke public dial and the
 console mint API are for phone (and hub enrollment), not for opening a cell in
 the desktop app's Host picker.
 
+Operator pairing belongs in the console (**Hub** page), not kubectl: design in
+[hub-console-pairing](design/hub-console-pairing.md), tracked as
+[APC #113](https://git.cluster.aimingupward.com/steve/agent-project-controller/issues/113).
+
+When hubspoke is enabled, Helm requires **both** `config.PUBLIC_ORIGIN` (console)
+and `hubspoke.hub.publicAddress` (hub `wss://…` for pairing). They are separate
+settings; do not invent the hub host from the console host.
+
 This is the production phone shape for Orca. T3 and Herdr use the same Go
 interfaces when their enrollment paths are verified.
 

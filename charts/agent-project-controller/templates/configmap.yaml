@@ -31,6 +31,11 @@
 {{- end }}
 {{- end }}
 {{- end }}
+{{- if or .Values.hubspoke.orca.enabled .Values.hubspoke.hub.enabled }}
+{{- if not (regexMatch "^wss://[a-zA-Z0-9.-]+(:[0-9]+)?$" (.Values.hubspoke.hub.publicAddress | toString)) }}
+{{- fail "hubspoke.hub.publicAddress must be a wss:// host (no path) when hubspoke is enabled; set it separately from config.PUBLIC_ORIGIN" }}
+{{- end }}
+{{- end }}
 {{- if .Values.t3Connect.enabled }}
 {{- if not (regexMatch "^https://[a-zA-Z0-9.-]+(:[0-9]+)?$" .Values.t3Connect.relayURL) }}
 {{- fail "t3Connect.relayURL must be an HTTPS origin" }}
@@ -156,13 +161,13 @@ data:
   ORCA_RUNTIME_IMAGE: {{ .Values.hubspoke.orca.runtimeImage | quote }}
   HUBSPOKE_ORCHESTRATOR_CLASS: {{ .Values.hubspoke.orca.className | quote }}
   HUBSPOKE_HUB_NAMESPACE: {{ .Values.hubspoke.hub.namespace | quote }}
-{{- if .Values.hubspoke.hub.publicAddress }}
-  HUBSPOKE_PUBLIC_ADDRESS: {{ .Values.hubspoke.hub.publicAddress | quote }}
-{{- end }}
 {{- if .Values.hubspoke.spoke.publicDomain }}
   HUBSPOKE_SPOKE_DOMAIN: {{ .Values.hubspoke.spoke.publicDomain | quote }}
   HUBSPOKE_SPOKE_GATEWAY_NAME: {{ .Values.hubspoke.spoke.gateway.name | quote }}
   HUBSPOKE_SPOKE_GATEWAY_NAMESPACE: {{ .Values.hubspoke.spoke.gateway.namespace | quote }}
   HUBSPOKE_SPOKE_GATEWAY_SECTION: {{ .Values.hubspoke.spoke.gateway.sectionName | quote }}
 {{- end }}
+{{- end }}
+{{- if .Values.hubspoke.hub.publicAddress }}
+  HUBSPOKE_PUBLIC_ADDRESS: {{ .Values.hubspoke.hub.publicAddress | quote }}
 {{- end }}
