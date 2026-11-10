@@ -3,6 +3,10 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"strings"
 	"testing"
 
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
@@ -74,4 +78,60 @@ func TestDecodeAuditAssignmentFeedRefusesForeignKeys(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected foreign key refusal")
 	}
+}
+
+func TestAuditAssignmentRemovalFailureStillStopsAndRevokes(t *testing.T) {
+	for _, failure := range []string{"malformed", "update-denied"} {
+		t.Run(failure, func(t *testing.T) {
+			ctx := context.Background()
+			r, w, h := fixture(t)
+			r.Config.AuditAssignmentFeed = true
+			if err := r.ensure(ctx, w); err != nil {
+				t.Fatal(err)
+			}
+			cm := &corev1.ConfigMap{}
+			if err := r.Get(ctx, types.NamespacedName{Namespace: "control", Name: defaultAuditAssignmentFeedConfigMap}, cm); err != nil {
+				t.Fatal(err)
+			}
+			if failure == "malformed" {
+				cm.Data[auditAssignmentFeedKey] = "invalid-json"
+				if err := r.Update(ctx, cm); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				r.Client = &denyFeedUpdate{Client: r.Client}
+			}
+			if err := r.remove(ctx, w); err == nil {
+				t.Fatal("feed failure reported cleanup complete")
+			}
+			if h.revokeCalls != 1 {
+				t.Fatalf("feed failure blocked revocation: %d", h.revokeCalls)
+			}
+			sb := &unstructured.Unstructured{}
+			sb.SetGroupVersionKind(sandboxGVK)
+			if err := r.Get(ctx, types.NamespacedName{Namespace: namespace(w), Name: "project"}, sb); err != nil {
+				t.Fatal(err)
+			}
+			mode, _, _ := unstructured.NestedString(sb.Object, "spec", "operatingMode")
+			if mode != "Suspended" {
+				t.Fatal("feed failure blocked suspension")
+			}
+			stored := &api.ProjectWorkspace{}
+			if err := r.Get(ctx, types.NamespacedName{Namespace: w.Namespace, Name: w.Name}, stored); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(strings.Join(stored.Finalizers, ","), api.Finalizer) {
+				t.Fatal("cleanup failure removed finalizer")
+			}
+		})
+	}
+}
+
+type denyFeedUpdate struct{ client.Client }
+
+func (c *denyFeedUpdate) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
+	if obj.GetName() == defaultAuditAssignmentFeedConfigMap {
+		return errors.New("feed update denied")
+	}
+	return c.Client.Update(ctx, obj, opts...)
 }

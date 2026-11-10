@@ -1271,9 +1271,8 @@ func (r *Reconciler) remove(ctx context.Context, w *api.ProjectWorkspace) error 
 	if e := r.audit(ctx, w, "remove-requested"); e != nil {
 		return e
 	}
-	if e := r.syncAuditAssignmentFeed(ctx, w, false); e != nil {
-		return e
-	}
+	// Feed failure must not prevent stopping work or revoking external access.
+	feedErr := r.syncAuditAssignmentFeed(ctx, w, false)
 	stopErr := r.stop(ctx, w)
 	var accessErr error
 	if w.Spec.OrchestratorClassName != "" {
@@ -1316,7 +1315,7 @@ func (r *Reconciler) remove(ctx context.Context, w *api.ProjectWorkspace) error 
 			return errors.New("credential ledger missing; operator recovery required")
 		}
 	}
-	if e := errors.Join(stopErr, accessErr); e != nil {
+	if e := errors.Join(feedErr, stopErr, accessErr); e != nil {
 		return e
 	}
 	if e = r.audit(ctx, w, "access-revoked"); e != nil {
