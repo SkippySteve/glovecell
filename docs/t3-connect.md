@@ -2,6 +2,8 @@
 
 With T3 Connect enabled, the Go controller starts a stock T3 v0.0.45 server in each ready project sandbox and registers its environment with one T3 account. Sign in to that account once on each phone, browser or desktop. New projects appear in the account's environment catalog. A phone does not need a desktop relay.
 
+This is Glovecell's **T3** choice beside Orca and Herdr ([clients-choice.md](clients-choice.md)). Use OrchestratorClass `t3` (or the empty default while T3 Connect is on). The live controller must run the Dockerfile **`t3-controller`** image (stock T3 CLI + cloudflared); the smaller `runtime` image is not enough.
+
 Project files, Git worktrees, terminals and provider processes stay inside their project's sandbox. The trusted controller runs the tunnel connectors and holds the T3 OAuth credential and Kubernetes credentials. Workers receive their own environment credential and cloud verification key, without the account's OAuth access or refresh token. T3 remains bound to worker loopback; authenticated Kubernetes exec carries HTTP and WebSocket streams. No worker ingress or Kubernetes credential is added, and project egress policy stays in force.
 
 The [single-page diagrams](sandbox-workflow.html) show the network and workflow. This integration uses stock server APIs rather than modified T3 app builds. T3 Connect is a separate account login from the controller dashboard's OIDC login.
