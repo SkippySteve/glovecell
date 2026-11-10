@@ -32,6 +32,13 @@ selects the path. Do not flip T3 Connect on until the t3-controller image is
 promoted and the account PVC is authorized (`t3 connect login` in
 [t3-connect.md](t3-connect.md)).
 
+Main CI builds, gates and pushes the t3-controller image by digest. The
+promotion PR step stays off (repository variable `T3_CONTROLLER_PROMOTE`)
+until the deployment repository's `promote.py` has a `project-t3-controller`
+component and a Deployment that pins it. cloudflared is built from its pinned
+upstream tag with `golang.org/x/net` v0.62.0, because the 2026.10.7 release
+binary fails the image gate (CVE-2026-78661).
+
 ## Phone / VPN posture
 
 - **Orca / Herdr:** LAN or WireGuard to the hub (no public SSH for cells).

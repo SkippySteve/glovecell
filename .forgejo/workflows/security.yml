@@ -174,8 +174,12 @@ jobs:
         env:
           CI_IMAGE_TOKEN: ${{ secrets.CI_IMAGE_TOKEN }}
         run: /tmp/monorepo/.forgejo/scripts/push-image.sh "candidate-t3-controller:${GITHUB_SHA}" git.cluster.aimingupward.com/image-publisher/agent-project-t3-controller
+      # Off until the monorepo's .forgejo/scripts/promote.py has a
+      # project-t3-controller component and a Deployment that pins it; until
+      # then promote.py rejects the unknown component and main would go red.
+      # Switch on with repository variable T3_CONTROLLER_PROMOTE=true.
       - name: Open the t3-controller promotion PR
-        if: matrix.target == 't3-controller' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: matrix.target == 't3-controller' && github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.T3_CONTROLLER_PROMOTE == 'true'
         env:
           CI_PUBLISHER_TOKEN: ${{ secrets.CI_PUBLISHER_TOKEN }}
         run: >-

@@ -116,17 +116,32 @@ USER 1000:1000
 RUN /usr/local/bin/apc-check-go-toolchain
 CMD ["controller"]
 
+# cloudflared for T3 Connect, built from the pinned upstream tag/commit. The
+# 2026.10.7 release binary still links golang.org/x/net v0.61.0
+# (CVE-2026-78661, fixed in v0.62.0), so the image gate would fail on it.
+# Drop the `go get` once an upstream release ships x/net >= v0.62.0 and go
+# back to the release binary with its published SHA-256.
+FROM ${GO_IMAGE} AS cloudflared-build
+ARG CLOUDFLARED_VERSION=2026.10.7
+ARG UPSTREAM_REV=872b241f94871665c1c157adefcf90c11f0ead96
+RUN apk add --no-cache git \
+    && git clone --depth 1 --branch "${CLOUDFLARED_VERSION}" https://github.com/cloudflare/cloudflared /src \
+    && test "$(git -C /src rev-parse HEAD)" = "${UPSTREAM_REV}"
+WORKDIR /src
+RUN go get golang.org/x/net@v0.62.0 \
+    && CGO_ENABLED=0 GOFIPS140=off go build -trimpath \
+       -ldflags "-X main.Version=${CLOUDFLARED_VERSION}" -o /cloudflared ./cmd/cloudflared
+
 # Trusted T3 Connect registrar. Project T3 servers and agent CLIs stay in workers.
 FROM ${WORKSPACE_IMAGE} AS t3-controller
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+    && apt-get install -y --only-upgrade zlib1g \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -g 1000 agent && useradd -m -u 1000 -g 1000 agent
 COPY --from=build /agent-project-controller /usr/local/bin/agent-project-controller
 COPY --from=workspace /opt/t3 /opt/t3
 COPY third_party/licenses/ /usr/share/agent-project-controller/licenses/
-RUN curl -fsSL https://github.com/cloudflare/cloudflared/releases/download/2026.5.2/cloudflared-linux-amd64 -o /opt/t3/cloudflared \
-    && echo '5286698547f03df745adb2355f04c12dde52ef425491e81f433642d695521886  /opt/t3/cloudflared' | sha256sum -c - \
-    && chmod 0755 /opt/t3/cloudflared
+COPY --from=cloudflared-build --chmod=0755 /cloudflared /opt/t3/cloudflared
 USER 1000:1000
 ENTRYPOINT ["/usr/local/bin/agent-project-controller"]
 CMD ["controller"]
