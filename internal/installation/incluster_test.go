@@ -121,8 +121,9 @@ func TestComponentsRunInTheCluster(t *testing.T) {
 // Files allowed to mention desktop services: they document existing
 // exceptions or this rule. Remove a file once its exception is retired.
 var desktopServiceDocs = map[string]bool{
-	"docs/in-cluster.md": true,
-	"docs/clients.md":    true,
+	"AGENTS.md":          true, // states the rule
+	"docs/in-cluster.md": true, // states the rule and the exceptions
+	"docs/clients.md":    true, // desktop registrar, until retired
 }
 
 func TestNoDocsInstallDesktopServices(t *testing.T) {
