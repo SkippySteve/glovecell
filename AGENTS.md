@@ -8,6 +8,18 @@ Do not include deployment-specific addresses, credentials or source from private
 
 Security changes need tests for denial and interrupted-operation recovery. Unsupported policies must fail closed. Removal must never report completion before external revocation and owned storage cleanup are verified.
 
+## Glovecell runs in the cluster
+
+Steve's rule (2026-11-10), for every component: whatever Glovecell needs to work
+runs in the cluster and is installed by the Glovecell Helm chart. An operator
+machine is only a client (browser, Orca/T3 app, one-shot CLI with the operator's
+own identity): never add a desktop daemon, `systemctl --user` unit, timer, FUSE
+mount, port-forward or Glovecell credential on it. A credential the controller
+should not hold goes in its own pod with its own narrow ServiceAccount, still in
+the chart. Classify every new subcommand in `docs/components.json`; the
+exception list may only shrink. `internal/installation/incluster_test.go`
+enforces this. Details and the current exceptions: `docs/in-cluster.md`.
+
 ## Forgejo author and reviewer identities
 
 Create automation pull requests with a dedicated automation account. Before
