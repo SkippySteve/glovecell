@@ -114,6 +114,12 @@ type Config struct {
 	// AuditAssignmentFeedConfigMap overrides the ConfigMap name. Empty uses
 	// glovecell-audit-assignments.
 	AuditAssignmentFeedConfigMap string
+
+	// CellTokens lists brokered providers whose workers receive a per-cell
+	// stand-in instead of the real access token (PROVIDER_CELL_TOKENS,
+	// cell_tokens.go). Turn on only once every cell's proxy runs an image that
+	// understands cellToken: an older proxy refuses the field (fails closed).
+	CellTokens map[string]bool
 }
 
 func (c Config) Validate() error {
