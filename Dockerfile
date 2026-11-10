@@ -104,6 +104,16 @@ RUN curl -fsSL https://downloads.cursor.com/lab/2026.10.19-6bbf2c4/linux/x64/age
 RUN curl -fsSL 'https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.7-R6101.1&file=muse-x86-linux' -o /tmp/muse \
     && echo '36e3dac91f56c15572b95be55d70ee9fd9685cd9ab49f747bab4746c8d7c2518  /tmp/muse' | sha256sum -c - \
     && mkdir /opt/muse && mv /tmp/muse /opt/muse/muse && chmod 0755 /opt/muse/muse
+# herdr-core (hc): headless runtime for Android/PC Herdr via a hub (docs/herdr.md).
+# Inert until HERDR_CORE_ENABLED=true and OrchestratorClass herdr.
+RUN curl -fsSL https://releases.herdr.dev/core/0.1.19/herdr-core-linux-x86_64.tar.gz -o /tmp/herdr-core.tar.gz \
+    && echo '4adcfb423d52f24c5cc4a1e2cd2fcad1f62d28bb77876ac472c29082a3eaa424  /tmp/herdr-core.tar.gz' | sha256sum -c - \
+    && mkdir /opt/herdr-core \
+    && tar xzf /tmp/herdr-core.tar.gz -C /opt/herdr-core \
+    && ln -s /opt/herdr-core/herdr-core /usr/local/bin/herdr-core \
+    && ln -s /opt/herdr-core/herdr-core /usr/local/bin/hc \
+    && rm /tmp/herdr-core.tar.gz \
+    && hc --version
 COPY scripts/apc-provider.py /usr/local/bin/apc-provider
 RUN ln -s apc-provider /usr/local/bin/grok \
     && ln -s apc-provider /usr/local/bin/cursor-agent \

@@ -29,7 +29,9 @@ func (T3Enroller) RegisterProject(context.Context, string, string) error {
 func (T3Enroller) Revoke(context.Context, string) error       { return ErrNotImplemented }
 func (T3Enroller) List(context.Context) ([]Enrolled, error)   { return nil, ErrNotImplemented }
 
-// HerdrRuntime is reserved. The Herdr GUI has no known pairing interface yet.
+// HerdrRuntime is unused for hubspoke enrollment. Glovecell Herdr uses
+// herdr-core over `agent-project-controller herdr-via` (docs/herdr.md), not
+// Orca-style ready JSON offers. Kept so Kind() stays reserved.
 type HerdrRuntime struct{}
 
 func (HerdrRuntime) Kind() string { return "herdr" }
