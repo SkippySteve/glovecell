@@ -112,6 +112,17 @@ func vendorTelemetryFromEnv() (bool, error) {
 	}
 }
 
+func auditAssignmentFeedFromEnv() (bool, error) {
+	switch env("AUDIT_ASSIGNMENT_FEED_ENABLED", "false") {
+	case "true":
+		return true, nil
+	case "false", "":
+		return false, nil
+	default:
+		return false, errors.New("AUDIT_ASSIGNMENT_FEED_ENABLED must be true or false")
+	}
+}
+
 func profile(prefix string) controller.ResourceProfile {
 	return controller.ResourceProfile{CPURequest: os.Getenv(prefix + "_CPU_REQUEST"), MemoryRequest: os.Getenv(prefix + "_MEMORY_REQUEST"), CPULimit: os.Getenv(prefix + "_CPU_LIMIT"), MemoryLimit: os.Getenv(prefix + "_MEMORY_LIMIT")}
 }
@@ -448,7 +459,11 @@ func run(ctx context.Context) error {
 		return errors.New("HERDR_CORE_ENABLED must be true or false")
 	}
 	herdrCore := os.Getenv("HERDR_CORE_ENABLED") == "true"
-	reconciler := &controller.Reconciler{LAN: lan, Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, GitHost: gitHost, ForgejoOrigin: origin, Owner: owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling, RegistrarNamespace: os.Getenv("REGISTRAR_NAMESPACE"), WorkerExecClusterRole: os.Getenv("WORKER_EXEC_CLUSTER_ROLE"), ProjectAccessClusterRole: os.Getenv("PROJECT_ACCESS_CLUSTER_ROLE"), ControllerServiceAccount: env("CONTROLLER_SERVICE_ACCOUNT", controller.DefaultControllerServiceAccount), OrcaHubSpoke: orcaHubSpoke, OrcaRuntimeImage: os.Getenv("ORCA_RUNTIME_IMAGE"), OrcaOrchestratorClass: env("HUBSPOKE_ORCHESTRATOR_CLASS", "orca"), OrcaSpokePublicDomain: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_DOMAIN")), OrcaSpokeGatewayName: env("HUBSPOKE_SPOKE_GATEWAY_NAME", "traefik-gateway"), OrcaSpokeGatewayNamespace: env("HUBSPOKE_SPOKE_GATEWAY_NAMESPACE", "traefik-system"), OrcaSpokeGatewaySection: env("HUBSPOKE_SPOKE_GATEWAY_SECTION", "websecure-cluster-aimingupward"), OrcaHubNamespace: env("HUBSPOKE_HUB_NAMESPACE", "agent-project-control-orca-hub"), HerdrCoreEnabled: herdrCore, HerdrOrchestratorClass: env("HERDR_ORCHESTRATOR_CLASS", "herdr")}}
+	auditAssignmentFeed, e := auditAssignmentFeedFromEnv()
+	if e != nil {
+		return e
+	}
+	reconciler := &controller.Reconciler{LAN: lan, Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, GitHost: gitHost, ForgejoOrigin: origin, Owner: owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling, RegistrarNamespace: os.Getenv("REGISTRAR_NAMESPACE"), WorkerExecClusterRole: os.Getenv("WORKER_EXEC_CLUSTER_ROLE"), ProjectAccessClusterRole: os.Getenv("PROJECT_ACCESS_CLUSTER_ROLE"), ControllerServiceAccount: env("CONTROLLER_SERVICE_ACCOUNT", controller.DefaultControllerServiceAccount), OrcaHubSpoke: orcaHubSpoke, OrcaRuntimeImage: os.Getenv("ORCA_RUNTIME_IMAGE"), OrcaOrchestratorClass: env("HUBSPOKE_ORCHESTRATOR_CLASS", "orca"), OrcaSpokePublicDomain: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_DOMAIN")), OrcaSpokeGatewayName: env("HUBSPOKE_SPOKE_GATEWAY_NAME", "traefik-gateway"), OrcaSpokeGatewayNamespace: env("HUBSPOKE_SPOKE_GATEWAY_NAMESPACE", "traefik-system"), OrcaSpokeGatewaySection: env("HUBSPOKE_SPOKE_GATEWAY_SECTION", "websecure-cluster-aimingupward"), OrcaHubNamespace: env("HUBSPOKE_HUB_NAMESPACE", "agent-project-control-orca-hub"), AuditAssignmentFeed: auditAssignmentFeed, AuditAssignmentFeedConfigMap: strings.TrimSpace(os.Getenv("AUDIT_ASSIGNMENT_FEED_CONFIGMAP")), HerdrCoreEnabled: herdrCore, HerdrOrchestratorClass: env("HERDR_ORCHESTRATOR_CLASS", "herdr")}}
 	if orcaHubSpoke && reconciler.Config.OrcaRuntimeImage == "" {
 		return errors.New("HUBSPOKE_ORCA_ENABLED=true requires ORCA_RUNTIME_IMAGE")
 	}

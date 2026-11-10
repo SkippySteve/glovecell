@@ -26,8 +26,8 @@ func (T3Enroller) Connect(context.Context, string) error { return ErrNotImplemen
 func (T3Enroller) RegisterProject(context.Context, string, string) error {
 	return ErrNotImplemented
 }
-func (T3Enroller) Revoke(context.Context, string) error       { return ErrNotImplemented }
-func (T3Enroller) List(context.Context) ([]Enrolled, error)   { return nil, ErrNotImplemented }
+func (T3Enroller) Revoke(context.Context, string) error     { return ErrNotImplemented }
+func (T3Enroller) List(context.Context) ([]Enrolled, error) { return nil, ErrNotImplemented }
 
 // HerdrRuntime is unused for hubspoke enrollment. Glovecell Herdr uses
 // herdr-core over `agent-project-controller herdr-via` (docs/herdr.md), not
