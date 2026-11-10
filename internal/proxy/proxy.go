@@ -7,6 +7,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -153,6 +154,7 @@ func GenerateCA() ([]byte, []byte, error) {
 }
 
 type Server struct {
+	health          *runtimeHealth
 	Config          Config
 	CA              *x509.Certificate
 	Key             any
@@ -333,6 +335,10 @@ func failureKind(err error) string {
 	return "transport"
 }
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !s.runtimeReady() {
+		http.Error(w, "proxy recovery required", 503)
+		return
+	}
 	if r.Method != "CONNECT" {
 		http.Error(w, "CONNECT required", 405)
 		return
@@ -370,7 +376,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if e != nil {
 		return
 	}
+	tunnelCtx, cancelTunnel := context.WithCancel(r.Context())
+	defer cancelTunnel()
+	if s.health != nil {
+		stop := context.AfterFunc(s.health.ctx, cancelTunnel)
+		defer stop()
+	}
+	r = r.WithContext(tunnelCtx)
 	defer raw.Close()
+	if s.health != nil {
+		if !s.health.track(raw) {
+			return
+		}
+		defer s.health.untrack(raw)
+	}
 	raw.SetDeadline(time.Now().Add(10 * time.Minute))
 	if _, e = rw.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n"); e != nil {
 		return
@@ -388,11 +407,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	reader := bufio.NewReaderSize(conn, 32<<10)
 	for {
+		if !s.runtimeReady() {
+			return
+		}
 		req, e := readRequest(reader)
 		if e != nil {
 			writeError(conn, 431, "invalid or oversized request headers")
 			return
 		}
+		req = req.WithContext(tunnelCtx)
 		// A one-time download grant is served on its own path: exact URL, fixed
 		// method and headers, no project credentials. A request that presents
 		// a grant token never falls through to the project's rules.
@@ -510,6 +533,10 @@ func (s *Server) serveHTTP2(ctx context.Context, conn net.Conn, host string) {
 		Context:    ctx,
 		BaseConfig: &http.Server{MaxHeaderBytes: 32 << 10, ReadHeaderTimeout: 10 * time.Second},
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			if !s.runtimeReady() {
+				http.Error(w, "proxy recovery required", 503)
+				return
+			}
 			if req.Header.Get(download.TokenHeader) != "" {
 				http.Error(w, "download grants are served over HTTP/1.1 only", http.StatusForbidden)
 				return
@@ -604,6 +631,8 @@ func writeError(w io.Writer, status int, message string) {
 	_ = res.Write(w)
 }
 func Run(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	raw, e := os.ReadFile("/policy/policy.json")
 	if e != nil {
 		return e
@@ -629,13 +658,57 @@ func Run(ctx context.Context) error {
 	s.BrokeredList = gatewayBrokeredProviders
 	s.GitHubPolicy = gatewayFile(GitHubPolicyKey)
 	s.GitHubAccess = gatewayFile(GitHubAccessKey)
+	guardMode := os.Getenv("APC_PROXY_RUNTIME_GUARD")
+	if guardMode != "" && guardMode != "false" && guardMode != "true" {
+		return errors.New("invalid proxy runtime guard setting")
+	}
+	if guardMode == "true" {
+		s.health, e = newRuntimeHealth("/policy", "/tls", os.Getenv("APC_PROXY_STATE_DIR"))
+		if e != nil {
+			return e
+		}
+	}
+	if s.health != nil {
+		s.health.pinned["/policy/policy.json"] = sha256.Sum256(raw)
+		s.health.pinned["/tls/ca.crt"] = sha256.Sum256(cert)
+		s.health.pinned["/tls/ca.key"] = sha256.Sum256(key)
+	}
 	server := &http.Server{Addr: ":3128", Handler: s, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 32 << 10}
 	control := &http.Server{Addr: ControlAddress, Handler: s.ControlHandler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, MaxHeaderBytes: 8 << 10}
-	go func() {
-		if err := control.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			slog.Warn("download grant control listener stopped; downloads are unavailable", "error", err.Error())
+	listener, err := net.Listen("tcp", ControlAddress)
+	if err != nil {
+		return errors.New("proxy control listener unavailable")
+	}
+	if s.health != nil {
+		s.health.startControl()
+		if !s.health.check() {
+			_ = listener.Close()
+			return errors.New("proxy recovery required")
 		}
+	}
+	go func() {
+		defer func() {
+			if s.health != nil {
+				s.health.stopControl()
+			}
+		}()
+		_ = control.Serve(listener)
 	}()
+	if s.health != nil {
+		go func() {
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					s.runtimeReady()
+				}
+			}
+		}()
+	}
+
 	go func() { <-ctx.Done(); _ = server.Close(); _ = control.Close() }()
 	e = server.ListenAndServe()
 	if errors.Is(e, http.ErrServerClosed) {

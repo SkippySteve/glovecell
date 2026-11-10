@@ -253,3 +253,7 @@ The [DNS and direct-IP qualification procedure](network-qualification.md) includ
 an executable probe matrix with independent positive controls. Passing its IPv4
 probes alone does not establish isolation: correlate denials with the dataplane
 and prove effective FQDN lease expiry before accepting APC #107.
+
+The [runtime health pilot](proxy-runtime-health.md) adds a disabled-by-default
+quarantine guard and loopback readiness endpoint. It does not activate new pod
+probes or complete the live runtime-failure qualification in APC #108.
