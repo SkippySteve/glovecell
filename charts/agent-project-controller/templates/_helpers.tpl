@@ -33,3 +33,8 @@ project's Secrets and for deleting the project namespace itself. */}}
 {{- define "apc.databaseSecret" -}}
 {{- if eq .Values.database.mode "external" }}{{ required "database.external.existingSecret is required" .Values.database.external.existingSecret }}{{ else }}{{ include "apc.databaseCluster" . }}-app{{ end }}
 {{- end -}}
+
+{{/* Namespace of the forge agent (forgeAgent.namespace, default <release namespace>-forge). */}}
+{{- define "apc.forgeAgentNamespace" -}}
+{{- default (printf "%s-forge" .Release.Namespace | trunc 63 | trimSuffix "-") .Values.forgeAgent.namespace -}}
+{{- end -}}

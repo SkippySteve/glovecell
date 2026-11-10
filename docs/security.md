@@ -6,6 +6,43 @@ The controller holds a Forgejo administrative credential and cross-namespace Kub
 
 Each workspace gets a unique non-admin Forgejo user and repository-scoped token. Only that token and username are mounted in the worker. Its administrative password stays in the control namespace. Inspection private keys are mounted in the trusted proxy, while workers receive only the public CA certificate. Agent containers have no Kubernetes token and use an operator-qualified runtime.
 
+### Forge agent
+
+With `forgeAgent.enabled` (chart) the Forgejo administrative token leaves the
+controller. A separate small pod, `forge-agent` in its own namespace
+(`forgeAgent.namespace`, default `<controller namespace>-forge`), is the only
+mount of it. It serves three calls to the controller's ServiceAccount only,
+checked by TokenReview with a projected token for audience
+`agent-project-controller-forge-agent`:
+
+- `POST /v1/discover`: the owner's repositories;
+- `POST /v1/grant` and `/v1/revoke`: for workspace identities only
+  (`apc-`/`apcp-` and 32 lowercase hex characters) and only the configured
+  owner's repositories, with the same main-protection and ownership checks as
+  before.
+
+A compromised controller can still grant and revoke its own workspace
+identities, but can no longer use Forgejo administration for anything else:
+no new administrators, no other users, no other owners' repositories, no site
+settings. The agent's ServiceAccount can only review tokens. A NetworkPolicy
+admits only the controller's pod. Pod-to-pod traffic is plain HTTP; run it on a
+network that encrypts node-to-node traffic (for example Cilium WireGuard) or
+keep both pods on one node.
+
+The controller can read every Secret in its own namespace (credential
+ledgers), so the token must not stay there. To move an installation:
+
+1. Create Secret `forge-agent` (key `forgejo-token`) in the agent namespace
+   with the same token, then set `forgeAgent.enabled: true`. The controller
+   restarts with `FORGE_AGENT_URL` and no `FORGEJO_TOKEN_FILE`; it refuses to
+   start with both. The default Forgejo ForgeClass is not rendered (a class
+   credential must be readable by the controller).
+2. Check that a workspace prepares and that `Revoke` still completes.
+3. Remove `forgejo-token` from the controller's Secret (`existingSecret`).
+   Until then the controller could still read it through the API.
+
+Undo: put the key back into `existingSecret` and set `forgeAgent.enabled: false`.
+
 ## Authorization
 
 OIDC login requires a verified token and an explicit operator allowlist. Operators share one administration boundary. Email addresses and proxy-injected identity headers do not confer authority. Group changes at the identity provider take effect on the next login; existing application sessions expire within 15 minutes. Local sign-out does not terminate the provider's own session. Login transaction and application sessions live in memory, so rolling multi-replica OIDC operation is unsupported.
