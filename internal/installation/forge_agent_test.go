@@ -72,13 +72,22 @@ func TestChartForgeAgentMovesTheAdminToken(t *testing.T) {
 		t.Fatal("agent namespace", dig(agent, "metadata", "namespace"))
 	}
 	crb := find(on, "ClusterRoleBinding", "test-control-qualification-forge-agent-review")
-	if crb == nil || dig(crb, "roleRef", "name") != "system:auth-delegator" {
+	if crb == nil || dig(crb, "roleRef", "name") != "test-control-qualification-forge-agent-review" {
 		t.Fatal("agent token review binding", crb)
+	}
+	// Only TokenReview create: not system:auth-delegator (which adds SubjectAccessReviews).
+	review := find(on, "ClusterRole", "test-control-qualification-forge-agent-review")
+	rules, _ := dig(review, "rules").([]any)
+	if len(rules) != 1 || dig(rules[0], "resources").([]any)[0] != "tokenreviews" || len(dig(rules[0], "verbs").([]any)) != 1 || dig(rules[0], "verbs").([]any)[0] != "create" {
+		t.Fatalf("agent review role %v", rules)
+	}
+	if find(on, "ValidatingAdmissionPolicy", "test-control-qualification-forge-agent-scope") == nil || find(on, "ValidatingAdmissionPolicyBinding", "test-control-qualification-forge-agent-scope") == nil {
+		t.Fatal("forge agent scope policy missing")
 	}
 	for _, o := range on {
 		if (o["kind"] == "RoleBinding" || o["kind"] == "ClusterRoleBinding") && o["subjects"] != nil {
 			for _, s := range o["subjects"].([]any) {
-				if dig(s, "name") == "forge-agent" && dig(o, "roleRef", "name") != "system:auth-delegator" {
+				if dig(s, "name") == "forge-agent" && dig(o, "roleRef", "name") != "test-control-qualification-forge-agent-review" {
 					t.Fatalf("forge agent bound to %v", dig(o, "roleRef", "name"))
 				}
 			}
@@ -109,6 +118,11 @@ func TestChartForgeAgentMovesTheAdminToken(t *testing.T) {
 	values["forgeAgent"] = map[string]any{"enabled": true, "namespace": "test-control"}
 	if _, _, err := renderChart(t, values); err == nil {
 		t.Fatal("agent allowed in the controller's namespace")
+	}
+	values["forgeAgent"] = map[string]any{"enabled": true}
+	values["admissionPolicies"] = map[string]any{"enabled": false}
+	if _, _, err := renderChart(t, values); err == nil || !strings.Contains(err.Error(), "requires admissionPolicies.enabled") {
+		t.Fatal("agent rendered without its admission policy", err)
 	}
 }
 

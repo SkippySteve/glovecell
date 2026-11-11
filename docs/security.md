@@ -24,8 +24,19 @@ checked by TokenReview with a projected token for audience
 A compromised controller can still grant and revoke its own workspace
 identities, but can no longer use Forgejo administration for anything else:
 no new administrators, no other users, no other owners' repositories, no site
-settings. The agent's ServiceAccount can only review tokens. A NetworkPolicy
-admits only the controller's pod. Pod-to-pod traffic is plain HTTP; run it on a
+settings. The agent's ServiceAccount can only create TokenReviews. A
+NetworkPolicy admits only the controller's pod.
+
+**The boundary depends on admission.** The controller's ClusterRole can write
+Deployments and RoleBindings (and bind the project access role) in any
+namespace, so without a policy it could patch the agent's Deployment to copy
+the token out, or bind a Secret-reading role in the agent's namespace. The
+chart therefore requires `admissionPolicies.enabled` with the forge agent and
+installs `<prefix>-forge-agent-scope` (Deny): the controller's
+ServiceAccount may not create, update, delete or connect to anything in the
+agent's namespace, nor change or delete that namespace. `internal/installation`
+proves this on a real API server with the controller given cluster-admin. An
+installation that removes this policy loses the boundary. Pod-to-pod traffic is plain HTTP; run it on a
 network that encrypts node-to-node traffic (for example Cilium WireGuard) or
 keep both pods on one node.
 

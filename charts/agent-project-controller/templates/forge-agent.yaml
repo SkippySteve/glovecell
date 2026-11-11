@@ -6,12 +6,20 @@
 {{- if eq $ns .Release.Namespace }}
 {{- fail "forgeAgent.namespace must differ from the controller's namespace (the controller can read Secrets there)" }}
 {{- end }}
+{{- if not .Values.admissionPolicies.enabled }}
+{{- fail "forgeAgent.enabled requires admissionPolicies.enabled: the controller's cluster-wide Deployment and RoleBinding writes could otherwise reach the agent's namespace and its token" }}
+{{- end }}
+{{- $controller := printf "system:serviceaccount:%s:controller" .Release.Namespace }}
 # Forge agent: the only pod that mounts the Forgejo administrative token. It
 # serves Discover/Grant/Revoke for workspace identities (apc-/apcp-<32 hex>)
 # of FORGEJO_OWNER's repositories to the controller's ServiceAccount only,
 # checked by TokenReview with its own audience. Its ServiceAccount can only
-# review tokens; it has no other Kubernetes access. It runs in its own
-# namespace, whose Secret the controller has no right to read.
+# create TokenReviews; it has no other Kubernetes access. It runs in its own
+# namespace. The controller has no RBAC to read Secrets there, but its
+# ClusterRole can write Deployments and RoleBindings in any namespace, so the
+# policy at the end of this file refuses the controller every write, exec and
+# namespace change in the agent's namespace. Without that policy the boundary
+# does not hold, hence the admissionPolicies.enabled requirement above.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -26,13 +34,22 @@ metadata:
   namespace: {{ $ns }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ printf "%s-%s-forge-agent-review" .Release.Namespace .Release.Name | trunc 63 | trimSuffix "-" }}
+rules:
+  - apiGroups: [authentication.k8s.io]
+    resources: [tokenreviews]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: {{ printf "%s-%s-forge-agent-review" .Release.Namespace .Release.Name | trunc 63 | trimSuffix "-" }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: system:auth-delegator
+  name: {{ printf "%s-%s-forge-agent-review" .Release.Namespace .Release.Name | trunc 63 | trimSuffix "-" }}
 subjects:
   - kind: ServiceAccount
     name: forge-agent
@@ -147,4 +164,34 @@ spec:
       ports:
         - protocol: TCP
           port: 8443
+---
+# The controller never writes, execs or changes anything in the agent's
+# namespace (Deployments, RoleBindings, ServiceAccount tokens, pods/exec, the
+# namespace object itself). Fails closed.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ printf "%s-forge-agent-scope" (include "apc.policyPrefix" .) }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["*"]
+        apiVersions: ["*"]
+        operations: [CREATE, UPDATE, DELETE, CONNECT]
+        resources: ["*/*"]
+  matchConditions:
+    - name: controller
+      expression: {{ printf "request.userInfo.username == '%s'" $controller | quote }}
+  validations:
+    - expression: {{ printf "request.namespace != '%s' && !(request.resource.resource == 'namespaces' && request.name == '%s')" $ns $ns | quote }}
+      message: {{ printf "The project controller may not change anything in the forge agent's namespace %s" $ns | quote }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ printf "%s-forge-agent-scope" (include "apc.policyPrefix" .) }}
+spec:
+  policyName: {{ printf "%s-forge-agent-scope" (include "apc.policyPrefix" .) }}
+  validationActions: [Deny]
 {{- end }}
