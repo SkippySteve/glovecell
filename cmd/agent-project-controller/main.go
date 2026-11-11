@@ -38,6 +38,7 @@ import (
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/t3"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/telemetry"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/web"
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -46,6 +47,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/events"
+	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -247,6 +249,13 @@ func positiveID(key string) (int64, error) {
 func openGitHost() (forge.Forge, string, string, string, error) {
 	switch env("GIT_HOST", "forgejo") {
 	case "forgejo":
+		if os.Getenv("FORGE_AGENT_URL") != "" {
+			client, err := forgeAgentHost()
+			if err != nil {
+				return nil, "", "", "", err
+			}
+			return client, "forgejo", client.Origin, client.Owner, nil
+		}
 		token, err := secret("FORGEJO_TOKEN_FILE")
 		if err != nil {
 			return nil, "", "", "", err
@@ -304,6 +313,7 @@ func run(ctx context.Context) error {
 			if err != nil {
 				return errors.New("trusted broker client unavailable")
 			}
+			defer telemetry.Start(ctx, "apc-provider-broker")()
 			return providerbroker.Run(ctx, c, config)
 		case "github-broker":
 			config, err := ctrl.GetConfig()
@@ -318,6 +328,7 @@ func run(ctx context.Context) error {
 			if err != nil {
 				return errors.New("trusted broker client unavailable")
 			}
+			defer telemetry.Start(ctx, "apc-github-broker")()
 			return githubbroker.Run(ctx, c, os.Args[2:])
 		case "register-projects":
 			return projects.Register(ctx)
@@ -356,6 +367,7 @@ func run(ctx context.Context) error {
 		case "proxy-ready":
 			return proxy.ReadyCLI(ctx)
 		case "proxy":
+			defer telemetry.Start(ctx, "apc-proxy")()
 			return proxy.Run(ctx)
 		case "fetch":
 			// Run by the controller inside a project worker for "Download into sandbox".
@@ -391,6 +403,9 @@ func run(ctx context.Context) error {
 			return registerCLI(ctx, os.Args[2:])
 		case "hubspoke":
 			return hubspokeCLI(ctx, os.Args[2:])
+		case "forge-agent":
+			defer telemetry.Start(ctx, "apc-forge-agent")()
+			return forgeAgentCLI(ctx)
 		case "controller":
 		default:
 			return errors.New("unknown command")
@@ -409,16 +424,7 @@ func run(ctx context.Context) error {
 	if e != nil {
 		return e
 	}
-	shutdown, e := telemetry.Setup(ctx, os.Getenv("OTEL_ENABLED") == "true")
-	if e != nil {
-		slog.Warn("optional telemetry unavailable; controller enforcement continues")
-		shutdown = func(context.Context) error { return nil }
-	}
-	defer func() {
-		c, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		_ = shutdown(c)
-	}()
+	defer telemetry.Start(ctx, "agent-project-controller")()
 	scheme := runtime.NewScheme()
 	if e = clientgoscheme.AddToScheme(scheme); e != nil {
 		return e
@@ -463,7 +469,7 @@ func run(ctx context.Context) error {
 	if e != nil {
 		return e
 	}
-	reconciler := &controller.Reconciler{LAN: lan, Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, GitHost: gitHost, ForgejoOrigin: origin, Owner: owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling, RegistrarNamespace: os.Getenv("REGISTRAR_NAMESPACE"), WorkerExecClusterRole: os.Getenv("WORKER_EXEC_CLUSTER_ROLE"), ProjectAccessClusterRole: os.Getenv("PROJECT_ACCESS_CLUSTER_ROLE"), ControllerServiceAccount: env("CONTROLLER_SERVICE_ACCOUNT", controller.DefaultControllerServiceAccount), OrcaHubSpoke: orcaHubSpoke, OrcaRuntimeImage: os.Getenv("ORCA_RUNTIME_IMAGE"), OrcaOrchestratorClass: env("HUBSPOKE_ORCHESTRATOR_CLASS", "orca"), OrcaSpokePublicDomain: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_DOMAIN")), OrcaSpokeGatewayName: env("HUBSPOKE_SPOKE_GATEWAY_NAME", "traefik-gateway"), OrcaSpokeGatewayNamespace: env("HUBSPOKE_SPOKE_GATEWAY_NAMESPACE", "traefik-system"), OrcaSpokeGatewaySection: env("HUBSPOKE_SPOKE_GATEWAY_SECTION", "websecure-cluster-aimingupward"), OrcaHubNamespace: env("HUBSPOKE_HUB_NAMESPACE", "agent-project-control-orca-hub"), AuditAssignmentFeed: auditAssignmentFeed, AuditAssignmentFeedConfigMap: strings.TrimSpace(os.Getenv("AUDIT_ASSIGNMENT_FEED_CONFIGMAP")), HerdrCoreEnabled: herdrCore, HerdrOrchestratorClass: env("HERDR_ORCHESTRATOR_CLASS", "herdr")}}
+	reconciler := &controller.Reconciler{LAN: lan, Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, GitHost: gitHost, ForgejoOrigin: origin, Owner: owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling, RegistrarNamespace: os.Getenv("REGISTRAR_NAMESPACE"), WorkerExecClusterRole: os.Getenv("WORKER_EXEC_CLUSTER_ROLE"), ProjectAccessClusterRole: os.Getenv("PROJECT_ACCESS_CLUSTER_ROLE"), ControllerServiceAccount: env("CONTROLLER_SERVICE_ACCOUNT", controller.DefaultControllerServiceAccount), OrcaHubSpoke: orcaHubSpoke, OrcaRuntimeImage: os.Getenv("ORCA_RUNTIME_IMAGE"), OrcaOrchestratorClass: env("HUBSPOKE_ORCHESTRATOR_CLASS", "orca"), OrcaSpokePublicDomain: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_DOMAIN")), OrcaSpokeGatewayName: env("HUBSPOKE_SPOKE_GATEWAY_NAME", "traefik-gateway"), OrcaSpokeGatewayNamespace: env("HUBSPOKE_SPOKE_GATEWAY_NAMESPACE", "traefik-system"), OrcaSpokeGatewaySection: env("HUBSPOKE_SPOKE_GATEWAY_SECTION", "websecure-cluster-aimingupward"), OrcaHubNamespace: env("HUBSPOKE_HUB_NAMESPACE", "agent-project-control-orca-hub"), HubLogsClusterRole: strings.TrimSpace(os.Getenv("HUBSPOKE_HUB_LOGS_CLUSTER_ROLE")), HubServiceAccount: strings.TrimSpace(os.Getenv("HUBSPOKE_HUB_SERVICE_ACCOUNT")), AuditAssignmentFeed: auditAssignmentFeed, AuditAssignmentFeedConfigMap: strings.TrimSpace(os.Getenv("AUDIT_ASSIGNMENT_FEED_CONFIGMAP")), HerdrCoreEnabled: herdrCore, HerdrOrchestratorClass: env("HERDR_ORCHESTRATOR_CLASS", "herdr")}}
 	if orcaHubSpoke && reconciler.Config.OrcaRuntimeImage == "" {
 		return errors.New("HUBSPOKE_ORCA_ENABLED=true requires ORCA_RUNTIME_IMAGE")
 	}
@@ -498,6 +504,12 @@ func run(ctx context.Context) error {
 	reconciler.MuseSubscriptionKeyFile = os.Getenv("MUSE_SUBSCRIPTION_KEY_FILE")
 	if reconciler.ProviderLeases, e = providerLeasesFromEnv(networkProvider); e != nil {
 		return e
+	}
+	if reconciler.Config.CellTokens, e = controller.ParseCellTokenProviders(os.Getenv("PROVIDER_CELL_TOKENS")); e != nil {
+		return e
+	}
+	if reconciler.Config.CellTokens != nil && reconciler.ProviderLeases == nil {
+		return errors.New("PROVIDER_CELL_TOKENS requires PROVIDER_LEASES_SECRET")
 	}
 	if reconciler.GitHubLease, e = githubLeaseFromEnv(networkProvider); e != nil {
 		return e
@@ -883,9 +895,20 @@ func connectCLI(ctx context.Context, workspace string, command []string) error {
 	return connect.Exec(ctx, config, pod.Namespace, pod.Name, command, os.Stdin, os.Stdout, os.Stderr, tty)
 }
 func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+	installLogger()
 	if e := run(ctrl.SetupSignalHandler()); e != nil {
 		slog.Error("process failed", "error", e)
 		os.Exit(1)
 	}
+}
+
+// installLogger makes every log line of this binary, including
+// controller-runtime and client-go (klog) output, JSON on stderr with
+// credentials redacted. LOG_LEVEL selects debug, info, warn or error.
+func installLogger() {
+	telemetry.Version = version
+	logger := telemetry.NewLogger(os.Stderr, telemetry.ParseLevel(os.Getenv("LOG_LEVEL")))
+	slog.SetDefault(logger)
+	ctrl.SetLogger(logr.FromSlogHandler(logger.Handler()))
+	klog.SetSlogLogger(logger)
 }

@@ -69,8 +69,15 @@ func (r *Reconciler) ensureWorkerExecAccess(ctx context.Context, w *api.ProjectW
 // another role is deleted and recreated; a binding not labelled for this
 // project is never adopted.
 func (r *Reconciler) ensureSelfBinding(ctx context.Context, w *api.ProjectWorkspace, name, role string) error {
+	return r.ensureProjectBinding(ctx, w, name, role, rbacv1.Subject{Kind: rbacv1.ServiceAccountKind, Name: r.controllerServiceAccount(), Namespace: r.Config.Namespace})
+}
+
+// ensureProjectBinding makes RoleBinding name in the project namespace grant
+// ClusterRole role to exactly one subject. Same ownership and immutable
+// roleRef handling as ensureSelfBinding.
+func (r *Reconciler) ensureProjectBinding(ctx context.Context, w *api.ProjectWorkspace, name, role string, subject rbacv1.Subject) error {
 	want := rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: role}
-	subjects := []rbacv1.Subject{{Kind: rbacv1.ServiceAccountKind, Name: r.controllerServiceAccount(), Namespace: r.Config.Namespace}}
+	subjects := []rbacv1.Subject{subject}
 	ns := namespace(w)
 	binding := &rbacv1.RoleBinding{}
 	err := r.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, binding)

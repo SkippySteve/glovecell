@@ -31,6 +31,16 @@ interfaces when their enrollment paths are verified.
   filesystems and holds no Kubernetes exec into them for day-to-day work
   (it only reads worker logs to obtain the one-time offer).
 - Pairing URLs are never written to ledgers, status, or logs.
+- **Log read only in cells.** With `hubspoke.hub.logsPerProject: true`
+  (`HUBSPOKE_HUB_LOGS_CLUSTER_ROLE`), the controller binds ClusterRole
+  `<release>-hub-logs` (get/list/watch pods, get pods/log) to the hub's
+  ServiceAccount with RoleBinding `orca-hub-logs` in each project namespace,
+  so the hub needs no cluster-wide log read. The hub already lists pods per
+  project namespace with an uncached client. To move an installation that
+  grants the hub cluster-wide read: turn the setting on, check that every
+  `apc-*` namespace has `orca-hub-logs`, then remove the cluster-wide binding.
+  The binding stays until the project namespace is deleted; turning the
+  setting off later does not remove existing bindings.
 - Prefer the hub for phones over asking each device to pair every spoke.
   Desktops keep using the FUSE registrar ([clients.md](clients.md)).
 
