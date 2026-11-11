@@ -79,8 +79,9 @@ config:
   # <namespace>/<secret> written by the provider broker in lease mode. Empty
   # turns spec.providers off. Requires NETWORK_PROVIDER=cilium.
   PROVIDER_LEASES_SECRET: ''
-  # Per-cell provider tokens: comma-separated grok and/or cursor. Workers get
-  # a token unique to their cell; only the cell's proxy holds the real one.
+  # Per-cell provider tokens: comma-separated grok, cursor and/or codex (Claude
+  # always uses one). Workers get a token unique to their cell; only the
+  # cell's proxy holds the real one.
   # Empty keeps the shared token. Set it only after every cell's proxy runs
   # an image with cell-token support (docs/brokered-providers.md).
   PROVIDER_CELL_TOKENS: ''

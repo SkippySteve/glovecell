@@ -29,7 +29,7 @@ import (
 )
 
 // Brokered providers (spec.providers) give a project's worker short-lived,
-// access-only leases for subscription CLIs such as Grok and Cursor.
+// access-only leases for subscription CLIs: Grok, Cursor, Codex and Claude.
 //
 // A trusted provider broker, outside every project, renews each provider's
 // login on an offline owner and writes one lease per provider to a single
@@ -53,10 +53,10 @@ const ProviderLeasesKey = "provider-access"
 // opts out of every provider; operator-created Secrets keep their other keys.
 const BrokeredModelAccessLabel = "projects.agentwork.dev/model-access"
 
-// MaxProviders bounds spec.providers.
-const MaxProviders = 2
+// MaxProviders bounds spec.providers (one entry per brokered provider).
+const MaxProviders = 4
 
-// brokeredGrant is the access-only grant shape for Grok and Cursor.
+// brokeredGrant is the access-only grant shape of a brokered provider.
 type brokeredGrant struct {
 	Enabled bool            `json:"enabled"`
 	Access  *brokeredAccess `json:"access,omitempty"`
@@ -65,6 +65,9 @@ type brokeredAccess struct {
 	Token   string  `json:"accessToken"`
 	Expires float64 `json:"expiresAt"`
 	Issuer  string  `json:"issuer,omitempty"`
+	// Account and Plan identify the ChatGPT account (Codex only).
+	Account string `json:"chatgptAccountId,omitempty"`
+	Plan    string `json:"chatgptPlanType,omitempty"`
 	// CellToken is set only in the proxy's copy (cell_tokens.go): the
 	// stand-in the worker sends, which the proxy swaps for Token.
 	CellToken string `json:"cellToken,omitempty"`
@@ -125,6 +128,13 @@ func (r *Reconciler) validateProviders(ctx context.Context, w *api.ProjectWorksp
 			return fmt.Errorf("unsupported or repeated brokered provider %q", p.Name)
 		}
 		seen[p.Name] = true
+		// The brokered provider owns its hosts. A fixed HTTPS rule for the
+		// same host would bypass the grant check (and the cell token swap).
+		for _, rule := range w.Spec.HTTPS {
+			if slices.Contains(proxy.BrokeredProviders[p.Name], rule.Host) {
+				return fmt.Errorf("brokered provider %q manages %s; remove that HTTPS rule", p.Name, rule.Host)
+			}
+		}
 		if len(p.AddedBy) > 512 {
 			return errors.New("brokered provider actor too long")
 		}
@@ -199,7 +209,7 @@ func (r *Reconciler) readLeases(ctx context.Context, key types.NamespacedName) (
 		if !ok || !g.Enabled || g.Access == nil || math.IsNaN(g.Access.Expires) || math.IsInf(g.Access.Expires, 0) {
 			continue
 		}
-		out[name] = brokeredGrant{Enabled: true, Access: &brokeredAccess{Token: g.Access.Token, Expires: g.Access.Expires, Issuer: g.Access.Issuer}}
+		out[name] = brokeredGrant{Enabled: true, Access: &brokeredAccess{Token: g.Access.Token, Expires: g.Access.Expires, Issuer: g.Access.Issuer, Account: g.Access.Account, Plan: g.Access.Plan}}
 	}
 	return out, nil
 }
@@ -218,7 +228,7 @@ func (r *Reconciler) applyProviders(ctx context.Context, w *api.ProjectWorkspace
 		entries := map[string]json.RawMessage{}
 		grants := r.classLeases(ctx, w, names)
 		var gateway map[string]brokeredGrant
-		if len(r.Config.CellTokens) > 0 {
+		if len(r.Config.CellTokens) > 0 || slices.Contains(names, "claude") {
 			grants, gateway = r.withCellTokens(ctx, w, grants)
 		}
 		for name, grant := range grants {
@@ -306,11 +316,11 @@ func (r *Reconciler) classLeases(ctx context.Context, w *api.ProjectWorkspace, n
 		if !ok {
 			continue
 		}
-		bounded, ok := class.Bound(providerbroker.Access{Token: grant.Access.Token, Expires: grant.Access.Expires, Issuer: grant.Access.Issuer}, now)
+		bounded, ok := class.Bound(providerbroker.Access{Token: grant.Access.Token, Expires: grant.Access.Expires, Issuer: grant.Access.Issuer, Account: grant.Access.Account, Plan: grant.Access.Plan}, now)
 		if !ok {
 			continue
 		}
-		out[name] = brokeredGrant{Enabled: true, Access: &brokeredAccess{Token: bounded.Token, Expires: bounded.Expires, Issuer: bounded.Issuer}}
+		out[name] = brokeredGrant{Enabled: true, Access: &brokeredAccess{Token: bounded.Token, Expires: bounded.Expires, Issuer: bounded.Issuer, Account: bounded.Account, Plan: bounded.Plan}}
 	}
 	return out
 }

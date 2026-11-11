@@ -3,8 +3,8 @@ import {api, type Project} from './api';
 import {useData} from './data';
 import {Button, Callout, Card, CardHeader, Tag} from './ui';
 
-const LABELS: Record<string, string> = {grok: 'Grok', cursor: 'Cursor'};
-const COMMANDS: Record<string, string> = {grok: 'grok', cursor: 'cursor-agent'};
+const LABELS: Record<string, string> = {grok: 'Grok', cursor: 'Cursor', codex: 'Codex', claude: 'Claude'};
+const COMMANDS: Record<string, string> = {grok: 'grok', cursor: 'cursor-agent', codex: 'codex', claude: 'claude'};
 const when = (iso?: string) => iso ? new Date(iso).toLocaleString([], {dateStyle: 'medium', timeStyle: 'short'}) : '';
 
 // Brokered subscription providers for one project sandbox. Each switch is a

@@ -33,7 +33,7 @@ spec:
 {{- end }}
 {{- $leases := index .Values.config "PROVIDER_LEASES_SECRET" | default "" | toString }}
 {{- if $leases }}
-{{- range $provider := list "grok" "cursor" }}
+{{- range $provider := list "grok" "cursor" "codex" "claude" }}
 ---
 # Default ProviderClass for bare spec.providers[] entries named {{ $provider }}:
 # the broker's lease Secret and the one-minute minimum, as before classes.

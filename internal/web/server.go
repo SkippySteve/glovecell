@@ -156,7 +156,7 @@ func (s *Server) Handler() (http.Handler, error) {
 			session["lanAllowed"] = s.LAN.Config.AllowedStrings()
 		}
 		if s.Providers != nil {
-			session["providers"] = []string{"grok", "cursor"}
+			session["providers"] = []string{"grok", "cursor", "codex", "claude"}
 		}
 		db := s.Database.status()
 		session["database"] = map[string]any{"configured": db.Configured, "ready": db.Ready, "reason": db.Reason}

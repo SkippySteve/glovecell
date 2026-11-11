@@ -140,7 +140,7 @@ spec:
                 providers:
                   description: Brokered subscription providers this project opts into. Off by default. Editable while running; removing an entry revokes that provider for this project. The controller needs a provider lease source.
                   type: array
-                  maxItems: 2
+                  maxItems: 4
                   x-kubernetes-list-type: map
                   x-kubernetes-list-map-keys: [name]
                   items:
@@ -149,7 +149,7 @@ spec:
                     properties:
                       name:
                         type: string
-                        enum: [grok, cursor]
+                        enum: [grok, cursor, codex, claude]
                       providerClassName:
                         description: Cluster-scoped ProviderClass that supplies this provider's lease. Empty resolves to the provider's default class.
                         type: string

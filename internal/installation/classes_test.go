@@ -134,7 +134,7 @@ func TestHelmDefaultClasses(t *testing.T) {
 		providers = append(providers, pc.Spec.Provider)
 	}
 	slices.Sort(providers)
-	if !slices.Equal(providers, []string{"cursor", "grok"}) {
+	if !slices.Equal(providers, []string{"claude", "codex", "cursor", "grok"}) {
 		t.Fatal("default ProviderClasses", providers)
 	}
 

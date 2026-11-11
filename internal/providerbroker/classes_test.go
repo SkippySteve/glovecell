@@ -66,7 +66,7 @@ func TestBareGrantResolvesToBuiltinDefault(t *testing.T) {
 	if _, err = legacy.Resolve(ctx, "grok", ""); err == nil {
 		t.Fatal("bare grant resolved without a lease source")
 	}
-	if _, err = classResolver(t).Resolve(ctx, "claude", ""); err == nil {
+	if _, err = classResolver(t).Resolve(ctx, "gemini", ""); err == nil {
 		t.Fatal("built-in class served a provider the broker does not renew")
 	}
 }
@@ -112,7 +112,7 @@ func TestClassResolutionFailsClosed(t *testing.T) {
 		"reserved openbao":  {[]client.Object{providerClass("c", "grok", func(pc *api.ProviderClass) { pc.Spec.Driver = "openbao-broker" })}, "grok", "c"},
 		"reserved api key":  {[]client.Object{providerClass("c", "grok", func(pc *api.ProviderClass) { pc.Spec.Driver = "api-key-secret" })}, "grok", "c"},
 		"unknown driver":    {[]client.Object{providerClass("c", "grok", func(pc *api.ProviderClass) { pc.Spec.Driver = "magic" })}, "grok", "c"},
-		"unserved provider": {[]client.Object{providerClass("c", "claude")}, "claude", "c"},
+		"unserved provider": {[]client.Object{providerClass("c", "gemini")}, "gemini", "c"},
 		"unknown parameter": {[]client.Object{providerClass("c", "grok", func(pc *api.ProviderClass) { pc.Spec.Parameters = map[string]string{"endpoint": "x"} })}, "grok", "c"},
 		"foreign leases": {[]client.Object{providerClass("c", "grok", func(pc *api.ProviderClass) {
 			pc.Spec.Parameters = map[string]string{ParameterLeasesSecret: "agent-project-controller/controller-secrets"}

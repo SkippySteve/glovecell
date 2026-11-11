@@ -32,7 +32,7 @@ type WorkspaceSpec struct {
 	// operator's LAN. Unlike HTTPS rules they change while the project runs.
 	LANHosts []LANHost `json:"lanHosts,omitempty"`
 	// Providers opts the project into brokered subscription providers (Grok,
-	// Cursor). Off by default. Like LAN hosts they change while the project
+	// Cursor, Codex, Claude). Off by default. Like LAN hosts they change while the project
 	// runs: removing an entry revokes that provider for this project only.
 	// The controller needs a configured provider lease source.
 	Providers []ProviderGrant `json:"providers,omitempty"`
