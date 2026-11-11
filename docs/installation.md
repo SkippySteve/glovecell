@@ -100,6 +100,9 @@ OIDC environment variables:
 - `OIDC_GROUPS_CLAIM`, default `groups`. Supply a top-level array claim through your provider's mapper.
 - `OIDC_SCOPES`, default `profile,groups`. Adjust scopes to the provider; `openid` is always included.
 - `PUBLIC_ORIGIN`, the exact HTTPS origin without a trailing slash or path.
+- With hub-and-spoke enabled: also set chart `hubspoke.hub.publicAddress` to the
+  hub’s public `wss://` origin (pairing). That value is independent of
+  `PUBLIC_ORIGIN`; see [hubspoke](hubspoke.md) and the chart README.
 
 For automation, optionally mount an additional authentication secret and set `API_SECRET_FILE` to its path. Requests use `Authorization: Bearer <secret>`. The secret must contain at least 32 bytes. Static browser login additionally requires `ALLOW_STATIC_LOGIN=true`; it is disabled in the sample.
 

@@ -1,149 +1,148 @@
-# Agent project controller
+# Glovecell
 
-A Go controller that gives selected Forgejo repositories isolated project environments on Kubernetes Agent Sandbox. Open a project from the dashboard, work on a dedicated branch, then pause it or revoke access and remove its environment.
+**One locked-down Kubernetes sandbox per project** — so coding agents can work
+on a real repository without owning your cluster, your Git admin credentials,
+or an open path to the internet.
 
-For the current console, factory reports, repository boundary, and pending
-consolidation, read [current source status](docs/current-status.md). The published
-alpha described below predates those changes.
+Glovecell sits on top of upstream
+[Kubernetes Agent Sandbox](https://github.com/kubernetes-sigs/agent-sandbox).
+Agent Sandbox runs the pod lifecycle. Glovecell owns everything that makes a
+sandbox *safe for agents on your code*: Git grants, branch protection, inspected
+egress, credential injection outside the cell, pause/revoke with verified
+cleanup, and a console operators actually use.
 
-## Published alpha
+Apache-2.0. Alpha quality — see [qualification](docs/qualification.md) and
+[security](docs/security.md). Adoption and swappable-deps plan:
+[roadmap](docs/roadmap.md).
 
-Release [0.1.0-alpha.1](https://github.com/SkippySteve/agent-project-controller/releases/tag/0.1.0-alpha.1) is the public starting point. The [quickstart](docs/quickstart.md) downloads its Linux amd64 CLI and Helm chart, checks `SHA256SUMS`, and installs the published images. The source archive does not contain container images.
+## What you get that other stacks don't
 
-These images were built from commit `6d754c47f223edbe5bfff399405fb1450abb0c4b` and can be pulled without a token:
+Most agent platforms give you a container (or a dense “actor” runtime) and leave
+Git, HTTPS, and file movement as exercises. Glovecell is built around **project
+cells**:
+
+| Capability | Why it matters |
+| --- | --- |
+| **One cell per repository** | Compromise or confusion stays inside that project's boundary. Agents that share a cell share its trust boundary — so we don't share by default. |
+| **Git host is part of the product** | Disposable, non-admin identities and repository-scoped tokens; main is protected (no direct push; reviewed merges). Admin Forgejo/GitHub credentials never enter the cell. |
+| **Fail-closed inspected egress** | Workers talk only to their project proxy (and DNS for that). Cilium blocks bypass. The proxy MITMs HTTPS and allows **exact host + method + path** rules — not “whatever the agent can curl”. |
+| **Secrets that never sit in the cell** | Some credentials (e.g. private GitHub read, Muse) stay in the control plane; the proxy injects them on the way out when the worker sends a placeholder. |
+| **Operator console for policy** | Locked / Ask / Standard / Open levels, per-project Internet rules, optional LAN grants, Files, history — without giving agents cluster RBAC. |
+| **Pause ≠ revoke ≠ delete** | Pause keeps data; removal revokes grants, stops the cell, and tracks cleanup until it is observed. Access revoked is not assumed equal to data gone. |
+| **Optional phone relay (hub-and-spoke)** | Pair a phone once with a hub; Ready cells enroll as spokes under gVisor. See [hubspoke](docs/hubspoke.md). |
+
+It **consumes** Agent Sandbox; it does not fork it. It is **not** a multi-tenant
+SaaS harness and **not** a replacement for Cilium, gVisor, or your identity
+provider — those are the floor Glovecell stands on.
+
+## Security model (short)
+
+```
+Operator (OIDC) ──► Controller + console ──► Git host admin API
+                         │
+                         ├── ProjectWorkspace CR (desired state)
+                         ├── Per-cell namespace: worker (gVisor) + inspecting proxy
+                         └── Audit / ledger (no secrets in logs)
+```
+
+- **Isolation:** qualified profile uses **gVisor** RuntimeClass + **Cilium**
+  network policy. Ordinary containers are not that profile.
+- **Control plane vs cell:** cluster-admin and Git-admin powers live only in the
+  controller namespace. Cells have **no ServiceAccount token** for the API.
+- **Egress:** default deny from the worker except to its proxy. Policy that
+  cannot be enforced is **rejected**, not silently widened. Certificate-pinned
+  and WebSocket clients stay blocked under inspection-required policy.
+- **Bodies:** allowed HTTPS requests can still carry source or secrets in the
+  body — path filters are not a confidentiality product. Treat telemetry and
+  model APIs as outbound channels you explicitly allow.
+- **LAN grants (optional):** one IPv4 `/32` + listed TCP ports, off by default,
+  never a path around the proxy to the public internet. Uninspected by design;
+  grant the narrowest port.
+
+Details and threat notes: [docs/security.md](docs/security.md).
+
+## How egress works
+
+1. The controller installs a **Cilium** policy so the worker can only reach its
+   project proxy (and the DNS needed for that name).
+2. The worker uses `HTTP(S)_PROXY` to that proxy. The proxy terminates CONNECT,
+   re-originates TLS to the real host (verifying upstream certs), and applies
+   the project's allow list: host, method, path prefix.
+3. Operators edit grants in the console **Internet** page (or API). Reference
+   rules can give every project read-only access to a fixed catalog of
+   upstream docs/repos without copying them into each cell.
+4. **Brokered credentials** (where configured) are swapped at the proxy so the
+   cell never holds the real token.
+
+Proxy env vars alone are not the boundary — Cilium is. See
+[console](docs/console.md) (Internet / LAN) and [installation](docs/installation.md).
+
+## How file transfers work
+
+Agents must not get a general “download anything” pipe. Transfers are
+**operator-gated** and run as the sandbox user under `/workspace`.
+
+**Into the cell (download)** — off until you enable downloads:
+
+1. In **Files**, enter an HTTPS URL (and destination under `~/`).
+2. Glovecell **checks the redirect chain** and shows every hop (query strings
+   hidden unless you opt in — signed URLs often put tokens there).
+3. On approve, a short-lived Cilium grant lets **only that project's proxy**
+   reach the exact host(s); the worker fetches through the proxy; the helper
+   writes atomically under `~/downloads/…` with size and SHA-256 checks.
+4. Grants expire quickly; history records URL, size, hash, outcome — not file
+   contents.
+
+**Into the cell (upload):** you download on your own machine, then **Upload
+from browser** into `~/uploads/…` (same path rules). Bytes ride the
+authenticated console path, not an open agent egress rule.
+
+**Out of the cell:** not a built-in “exfil API”. Ship artifacts the way you
+already trust (PR to Git, or your own approved outbound path). Do not rely on
+accidental proxy allows for bulk export.
+
+More: [security — downloads](docs/security.md#downloads-into-a-sandbox),
+[console — Files](docs/console.md).
+
+## Who benefits
+
+- **Homelab / platform operators** who want agents on private Forgejo (or
+  GitHub) without handing them kubeconfig or a flat “allow *” egress policy.
+- **Security-minded teams** that need inspectable HTTPS, per-project policy,
+  and auditable revoke — not a shared forever-on GPU box.
+- **People comparing Substrate / kagent / desktop harnesses** who still need
+  **Git lifecycle + cell egress + files** as one product, not three wiki pages.
+
+## Intended workflow
+
+1. Operator signs in (OIDC) and opens a repository in the console.
+2. Controller creates the cell, scoped Git identity, storage, clone, proxy.
+3. When Ready, work via console, `connect` / `exec`, or an optional orchestrator
+   (hub-and-spoke phone relay, T3, etc.).
+4. Pause to stop compute and keep data; **Remove** to revoke and clean up.
+
+## Install (alpha)
+
+Digest-pinned images and Helm: [quickstart](docs/quickstart.md),
+[installation](docs/installation.md), [examples](docs/examples/).
+
+The chart does **not** install Agent Sandbox, Cilium, gVisor, Forgejo, or your
+IdP. Qualified combination (pilot): Kubernetes 1.36.x, Agent Sandbox 1.0.4,
+Cilium 1.19.x, gVisor, Forgejo, OIDC (e.g. Authentik). Deploy digests, not
+floating tags.
+
+Published alpha images (rebuild from this tree for current features):
 
 - `ghcr.io/skippysteve/agent-project-controller@sha256:084fdfa09f04a279d6ea11bf168222e388f9f5230ddda38a62dcade5f9b9b9d3`
 - `ghcr.io/skippysteve/agent-project-workspace@sha256:caf59a3dac5b216aa670f02cc4db857cf7b214d346fc844722f7a7c602ba9892`
 
-Deploy those digests. The tags `0.1.0-alpha.1` and `6d754c47f223edbe5bfff399405fb1450abb0c4b` point at the same images. [docs/examples/alpha-values.yaml](docs/examples/alpha-values.yaml) is a Helm values file with those pins. Replace the Forgejo origin, owner, runtime class, storage class, public origin and OIDC client, and create the `controller-secrets` Secret yourself. The chart does not install Agent Sandbox, Cilium, gVisor, Forgejo or an identity provider.
-
-Current development source also contains workspace-image replacement, an experimental standard NetworkPolicy provider, and an optional GitHub project host. None of those behaviors are in the `0.1.0-alpha.1` images. Rebuild from the commit you intend to run before relying on it. The NetworkPolicy provider is opt-in and is not a qualified dataplane. GitHub replaces Forgejo as the place one controller stores projects; it is not part of the qualified profile, and one controller uses one host. The qualified profile remains Cilium, gVisor, and Forgejo.
-
-An alpha pilot has run on a live Cilium and gVisor cluster with upstream Agent Sandbox. The qualified combination is Kubernetes 1.36.2, Agent Sandbox 1.0.4, Cilium 1.19.5, gVisor, Forgejo 15.0.9 and Authentik 2026.5.6. See [installation](docs/installation.md), [security boundaries](docs/security.md), [API](docs/api.md) and [qualification](docs/qualification.md) for the evidence and the remaining limits. Deploy digest-pinned images. The moving `:pilot` tag is not the published release.
-
-The public source is https://github.com/SkippySteve/agent-project-controller. Older Forgejo issues are not copied here. Report vulnerabilities privately, as described in [SECURITY.md](SECURITY.md).
-
-## Relationship to Agent Sandbox
-
-This project consumes the upstream Kubernetes Agent Sandbox API. It does not fork its controller or replace its workload lifecycle machinery.
-
-Upstream: https://github.com/kubernetes-sigs/agent-sandbox
-
-Agent Sandbox manages the sandbox workloads and supported lifecycle operations. This project coordinates repository authorization, credentials, cloning, project readiness, revocation and cleanup. The configured runtime, such as gVisor or Kata, provides workload isolation.
-
-See [repository enrollment](docs/repository-enrollment.md) for additional
-checkouts in one sandbox, the scoped Forgejo CLI and private GitHub clone access.
-
-See [the combined console](docs/console.md) for preparation diagnostics, project
-egress controls and integration of existing shared/provider sandboxes.
-
-## Intended workflow
-
-1. An authorized user selects a repository and requests a project environment through the combined project and sandbox console.
-2. The controller grants repository access and provisions narrowly scoped credentials.
-3. It requests a Sandbox, prepares storage and clones the project.
-4. A dashboard or API client receives readiness. A Ready workspace is entered with `kubectl exec` into the `workspace` container, `agent-project-controller connect`, or `agent-project-controller exec <name> -- <command>`.
-5. Removal revokes credentials and repository grants, stops the environment, removes storage according to policy and verifies cleanup.
-
-Pause preserves project data. Removal has an explicit retention policy. A failed cleanup must remain visible and retryable; access revoked is not equivalent to data removed.
-
-## Backend design
-
-- Implement the control backend in Go using Kubernetes controller conventions.
-- The ProjectWorkspace custom resource records repository, paused-editable HTTPS policy and desired lifecycle. This is this project's API, not an upstream Agent Sandbox resource.
-- Start with core Sandbox resources. Add optional upstream templates, claims or warm pools only when needed.
-- Build a documented HTTP API with a small dashboard as one client.
-- Forgejo and GitHub share one Git-host interface. A controller process selects one of them. GitHub is optional and is not the qualified profile.
-- Reconcile interrupted operations safely and record auditable status without logging secrets.
-
-## Security boundaries
-
-- Use a separate environment per project by default. Agents sharing an environment share its trust boundary.
-- Keep Git-host administrative credentials in the trusted control plane, outside project environments.
-- Deliver credentials whose effective access is limited to the authorized project. Credentials inside an environment are available to processes there.
-- Use Git-host branch protections to protect main and require reviewed pull requests. Validate the permissions against the supported Forgejo version.
-- Keep network policy, resource limits, provider identity delivery and storage retention explicit.
-- Track the environment's storage and credentials so deletion can be verified. Backups and external resources need their own retention policies.
-- Treat repository and agent execution as untrusted. Project workloads must not administer the controller or cluster.
-
-## Outbound HTTPS policy
-
-Project-scoped outbound policy uses separate interfaces for network enforcement and HTTPS inspection. Cilium is the implemented network provider and is required by the initial deployment profile. Other providers need an implementation and qualification.
-
-A network provider must prevent direct outbound connections that bypass the inspecting proxy. The inspecting proxy can enforce permitted HTTPS hosts, methods and paths when clients trust its inspection certificate authority. Request-body controls are a separate capability and must not be assumed from path filtering.
-
-Providers must report their enforcement capabilities. Reject requested policies that the selected providers cannot enforce; do not silently replace inspected access with unrestricted encrypted connections. Unsupported or certificate-pinned clients remain blocked under an inspection-required policy.
-
-Keep inspection keys outside agent environments, install only the necessary public trust certificates, and redact credentials and sensitive payloads from telemetry. Proxy environment variables alone are not a security boundary.
-
-Optional LAN host grants are the one direct exception: an operator can let one project's worker open TCP to a single IPv4 host and listed ports on the home network, while the project runs. They are off by default. See [LAN hosts](docs/console.md#lan-hosts).
-
-### Reference rules
-
-An operator can give every project read-only access to a fixed list of sources, such as the repositories and official documentation of the open-source projects a deployment runs, without adding them to each project. Set `REFERENCE_RULES_FILE` (Helm: `referenceRules.configMap`) to a JSON document:
-
-```json
-{"version": 1, "digest": "0123456789ab", "projects": [
-  {"name": "cilium", "source": "git:reference-sources.yaml#cilium",
-   "repos": [{"github": "cilium/cilium"}, {"host": "codeberg.org", "path": "owner/repo"}],
-   "docs": [{"domain": "cilium.io", "wildcard": true}, {"domain": "cilium.readthedocs.io", "wildcard": false}]}]}
-```
-
-- Each project's rules are ordinary HTTPS rules in the project's proxy policy, after the project's own rules, labelled with `source`. The console shows them, read only, under **From Git** on each project's Internet page, and `GET /api/v1/reference-rules` lists them.
-- They are read only: `docs` allow GET and HEAD on every path of the domain, and with `wildcard` of every name one label below it (`*.cilium.io`, as Cilium's `matchPattern` does). A wildcard is refused over a public suffix or shared hosting (the Public Suffix List, private section included). A GitHub repository allows what clone, fetch, API reads, raw files, archives, Git LFS and release downloads use; another Git host allows GET and HEAD under the repository's path. POST is allowed only to `git-upload-pack` (fetch); `git-receive-pack` (push) and every other method are refused. Nothing in the document can ask for more.
-- They do not count toward a project's 64 rules (the list has its own bound of 2,048 rules) and a project's own rules cannot carry a `source`.
-- The controller reads the file at startup; an invalid file stops it rather than run with part of the list. A changed list applies to running projects without a pause: only the labelled rules change in the proxy policy and network policy, and the proxy restarts so open connections end under the new list. Each change is an audit record (`reference-rules-<digest>`).
-- GET-only access still lets an agent put data into a URL it requests, so list only sources the deployment would let any project read.
-
-The initial release should document a qualified Cilium plus inspecting-proxy combination. Additional network or proxy providers require the same bypass, revocation and failure-mode qualification.
-
-## Optional agent integrations
-
-OpenRig, Orca and other tools can operate within prepared project environments. They are optional and must not hold cluster or Git-host administrative credentials.
-
-OpenRig can provide agent roles, queues, messaging and session coordination. Its Node/TypeScript runtime would be a separate optional component inside the environment; this project's backend remains Go. Integration has not been implemented or qualified.
-
-## Optional observability
-
-Instrument the Go control backend with OpenTelemetry. Optional OTLP export should cover lifecycle traces, operation latency, failures, active environments and pending revocations or cleanup. Correlate structured logs with operation IDs and trace IDs. Keep metric dimensions bounded; project IDs belong in access-controlled logs and traces rather than unbounded metric labels.
-
-Export to an operator-selected OTLP endpoint, directly or through an OpenTelemetry Collector. No specific observability backend, Collector, Hubble or OpenTelemetry Operator is required for core operation. Disable export by default and use bounded buffering and timeouts so an unavailable telemetry service cannot block revocation or cleanup.
-
-Persistent access audit records and lifecycle status are core features even when telemetry export is disabled. Exported telemetry is not the authoritative access ledger or proof of enforcement. Protect audit records in the trusted control plane and report failures to persist security decisions.
-
-Do not capture tokens, authorization headers, source code, prompts, responses or inspected request bodies by default. Treat repository names and URLs as sensitive metadata. Agent and project-application instrumentation is a separate opt-in capability, not automatic collection of agent conversations. Any workspace telemetry endpoint needs explicit network authorization, authentication, tenant separation and volume limits; it is another potential outbound data channel.
-
-## Initial adoption requirements
-
-The initial deployment profile requires:
-
-- A Kubernetes cluster with a qualified upstream Agent Sandbox controller and core Sandbox CRD. Optional template, claim and warm-pool extensions are unnecessary initially.
-- Cilium as the initially qualified network enforcement provider, plus a separately deployed inspecting proxy when HTTPS method or path filtering is requested. Cilium alone does not establish the complete inspection workflow.
-- A qualified isolation runtime such as gVisor or Kata. Ordinary containers may be useful for development but are not equivalent to the supported agent isolation profile.
-- A Forgejo instance with qualified repository grants, credential revocation and branch protections, and an operator credential held outside project environments.
-- Persistent volume provisioning with a documented retention and deletion policy. Snapshot and backup cleanup must be specified separately.
-- Installation permissions for this controller's CRDs and RBAC, authenticated dashboard/API access, and a secure configuration path for control-plane credentials.
-
-The core design permits other qualified network and Git-host providers, but those are not supported merely because an interface exists. Publish exact supported versions and end-to-end qualification results before release. T3 is included in the alpha release scope. OpenRig, native Orca registration, OTel export and remote mirrors are optional. See [T3](docs/t3.md) and [release criteria](docs/release.md).
-
-## Portability and release
-
-Keep cluster addresses, storage classes, authentication settings and provider configuration outside reusable code. Do not copy private deployment secrets into this repository.
-
-The public source and the `0.1.0-alpha.1` release are on GitHub. Forgejo remains a private development remote and does not provide the public issue tracker. Copying Git history to another host does not copy issues, pull requests or host settings.
-
-Code is licensed under Apache-2.0. The published alpha records one Cilium and gVisor qualification. Another cluster still needs its own runtime isolation, bypass prevention, volume deletion, client trust and identity-provider checks. Passing that pilot does not establish those properties elsewhere.
-
-## OIDC login
-
-OIDC discovery and authorization-code login with PKCE are implemented. Configure an issuer, confidential client and an explicit operator group or subject allowlist. Identity tokens are verified for signature, issuer, audience, expiry and nonce. The included deployment uses OIDC and disables static browser login.
-
-Sessions use secure, HTTP-only cookies and expire after at most 15 minutes. A controller restart invalidates sessions. The first release uses one replica because session and login-transaction state are local to that process. Sign-out invalidates the application session; it does not log the user out of the identity provider.
-
-Authentik and Keycloak can supply the standard protocol and mapped group claims, but their deployment-specific configurations still require qualification. The backend does not trust unsigned identity headers from a reverse proxy.
+(Release `0.1.0-alpha.1` predated the Glovecell name; current `main` is ahead
+of that tag.)
 
 ## Development
 
 Use Go 1.27.4 or later, Git and kubectl for manifest rendering. Run `make test vet build render`. Install the published CLI from the release rather than `go install` of this module. Contribution rules are in [CONTRIBUTING.md](CONTRIBUTING.md). Optional local Kubernetes API and disposable Forgejo qualification are described in [qualification](docs/qualification.md).
 
-The container image includes the Go controller, inspecting proxy, clone bootstrap and Git credential helper. No frontend build server or Node runtime is required. Optional OpenRig would run separately within a project environment.
+## License
+
+[Apache-2.0](LICENSE).

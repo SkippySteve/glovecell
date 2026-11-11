@@ -2,6 +2,10 @@ Install Agent Sandbox and the qualified Cilium/runtime/storage profile before re
 This alpha package serves the dashboard and API from the same controller process.
 Expose Service controller port 8080 through your existing HTTPS ingress or Gateway.
 Configure the OIDC callback as {{ .Values.config.PUBLIC_ORIGIN }}/auth/callback.
+{{- if or .Values.hubspoke.orca.enabled .Values.hubspoke.hub.enabled }}
+Hub-and-spoke is on. Pairing uses hubspoke.hub.publicAddress={{ .Values.hubspoke.hub.publicAddress }} (WSS). That is separate from PUBLIC_ORIGIN; set DNS/TLS/routes for both.
+{{- end }}
+
 {{- $gitHost := default "forgejo" (index .Values.config "GIT_HOST" | toString) }}
 {{- if eq $gitHost "github" }}
 The existing Secret {{ .Values.existingSecret }} requires github-app-private-key and oidc-client-secret. GitHub is an optional project host, not the qualified profile.

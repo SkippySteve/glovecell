@@ -96,6 +96,7 @@ config:
   SANDBOX_CONTROL_URL: ''
   SANDBOX_CONTROL_ORIGIN: ''
   SANDBOX_CONTROL_OPERATOR: ''
+  # Dashboard HTTPS origin (OIDC callback). Independent of hubspoke.hub.publicAddress.
   PUBLIC_ORIGIN: ''
   OIDC_ISSUER: ''
   OIDC_CLIENT_ID: ''
@@ -272,6 +273,14 @@ t3Connect:
 # workers run orcad from orcaRuntimeImage and Ready waits for the hub process
 # (`agent-project-controller hubspoke --watch`) to enroll each spoke. The hub
 # Deployment below is also off until a digest-pinned hub image is set.
+#
+# Two public endpoints, both required when hubspoke is on — set them separately:
+#   config.PUBLIC_ORIGIN          → console HTTPS (OIDC), e.g. https://projects.example
+#   hubspoke.hub.publicAddress    → hub WebSocket for phone/desktop pairing,
+#                                   e.g. wss://orca-hub.example
+# Do not derive one from the other. Console reachability does not imply hub
+# reachability (different DNS, route, and backend). Pairing offers use
+# publicAddress only (APC #113 / docs/design/hub-console-pairing.md).
 hubspoke:
   orca:
     enabled: false
@@ -295,7 +304,9 @@ hubspoke:
     # removes its cluster-wide grant (docs/hubspoke.md).
     logsPerProject: false
     # Hub WSS clients dial after pairing the hub itself (phone/desktop to hub).
-    # Independent of config.PUBLIC_ORIGIN and of spoke.publicDomain.
+    # Required (wss://host[:port], no path) when hubspoke.orca.enabled or
+    # hubspoke.hub.enabled. Independent of config.PUBLIC_ORIGIN and of
+    # spoke.publicDomain.
     publicAddress: ''
   # Per-project spoke dial for desktops: wss://<project>.<publicDomain>
   # (docs/hubspoke.md, APC #113 follow-up). Requires Gateway listener + DNS.
