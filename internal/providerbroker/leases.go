@@ -150,6 +150,7 @@ func (b *Broker) TickLeases(ctx context.Context) error {
 			err = b.pinAccount(ctx, codexAccountKey, "Codex", access.Account)
 		}
 		if err != nil || !validAccess(access) || access.Expires <= float64(now.Add(time.Minute).Unix()) {
+			recordRenewal(ctx, name, false)
 			failures = append(failures, errors.New(name+" credential owner renewal unavailable"))
 			if g, ok := previous[name]; ok && g.Access.Expires > float64(now.Unix()) {
 				next[name] = g
@@ -158,9 +159,11 @@ func (b *Broker) TickLeases(ctx context.Context) error {
 			}
 			continue
 		}
+		recordRenewal(ctx, name, true)
 		lease := Access{Token: access.Token, Expires: math.Min(access.Expires, float64(now.Add(5*time.Minute).Unix())), Issuer: access.Issuer, Account: access.Account, Plan: access.Plan}
 		next[name] = Grant{Enabled: true, Access: &lease}
 	}
+	recordLeases(ctx, next, now)
 	raw, _ := json.Marshal(next)
 	if !bytes.Equal(raw, leases.Data[LeasesKey]) {
 		latest, err := b.boundSecret(ctx, b.Config.Leases)
