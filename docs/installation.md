@@ -228,8 +228,10 @@ Each long-running process sets the same switch and exports traces and metrics wi
 | provider broker | `apc-provider-broker` | `apc.loop.*` (`component`, `status`), `apc.provider.renewals` (`name`, `status`), `apc.provider.lease.active` (`name`) |
 | GitHub broker | `apc-github-broker` | `apc.loop.*`, `apc.github.lease.status` (`status`) |
 | forge agent | `apc-forge-agent` | `apc.http.*` (`type` = endpoint, `code`) |
-| cell proxy | `apc-proxy` | `apc.proxy.requests` (`reason`, `code`); exported only when the proxy pod has `OTEL_ENABLED=true` and a network path to the collector, which the controller does not add yet |
+| cell proxy | `apc-proxy` | `apc.proxy.requests` (`reason`, `code`); recorded but not exported yet. Nothing in a cell pushes telemetry: the collector will scrape the proxy's `/metrics`, and a separate telemetry relay container in the proxy pod will take the worker's OTLP and reduce it to fixed counters (see below) |
 | voice | `glovecell-voice` | traces; its metrics stay on the Prometheus `/metrics` endpoint |
+
+Cell telemetry is pulled, never pushed. A worker reaches only its proxy, so it gets no path to a shared collector, and a sender can't name itself. Planned: the worker's coding agents send OTLP to a relay container in the proxy pod. The relay keeps only allowlisted counters (tokens, requests, tool calls, errors, cost), labelled from its own configuration, never from the worker's resource attributes. It drops spans and log records, caps size, rate and series per cell, and serves `/metrics`. Only the cluster collector may scrape it, with `GET /metrics` alone. The relay is a separate process, so a parser bug can't stop egress enforcement.
 
 Metric attributes are a fixed set (component, name, status, reason, code, type, phase). They never carry hosts, paths, identities, owners or tokens. Spans carry workspace UIDs, never actors.
 

@@ -366,7 +366,8 @@ func run(ctx context.Context) error {
 		case "proxy-ready":
 			return proxy.ReadyCLI(ctx)
 		case "proxy":
-			defer telemetry.Start(ctx, "apc-proxy")()
+			// No OTLP push from inside a cell (decision GT A): the collector
+			// will scrape the proxy and its telemetry relay instead.
 			return proxy.Run(ctx)
 		case "fetch":
 			// Run by the controller inside a project worker for "Download into sandbox".
