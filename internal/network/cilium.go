@@ -39,9 +39,15 @@ type Cilium struct {
 	ClusterDomain, DNSNamespace, DNSService string
 	Gateway                                 *Gateway
 	DirectDNS                               bool
+	// Telemetry, when set, opens worker -> proxy pod 4318 (relay intake) and
+	// scraper -> proxy pod 9464 GET /metrics only (decision GT A).
+	Telemetry *Scraper
 }
 
 func (c Cilium) Validate() error {
+	if err := c.Telemetry.Validate(); err != nil {
+		return err
+	}
 	if c.Gateway == nil {
 		return nil
 	}
@@ -145,6 +151,21 @@ func (c Cilium) Objects(ns, uid string, hosts []string) []*unstructured.Unstruct
 			"toEndpoints": []any{map[string]any{"matchLabels": labels}},
 			"toPorts":     []any{ports},
 		})
+	}
+	if c.Telemetry != nil {
+		cell := func(role string) map[string]any {
+			return map[string]any{"matchLabels": map[string]any{"k8s:io.kubernetes.pod.namespace": ns, "projects.agentwork.dev/role": role, api.OwnerLabel: uid}}
+		}
+		scraper := map[string]any{"k8s:io.kubernetes.pod.namespace": c.Telemetry.Namespace}
+		for k, v := range c.Telemetry.Selector {
+			scraper["k8s:"+k] = v
+		}
+		wspec := worker.Object["spec"].(map[string]any)
+		wspec["egress"] = append(wspec["egress"].([]any), map[string]any{"toEndpoints": []any{cell("proxy")}, "toPorts": []any{map[string]any{"ports": []any{port(TelemetryIntakePort)}}}})
+		pspec := proxy.Object["spec"].(map[string]any)
+		pspec["ingress"] = append(pspec["ingress"].([]any),
+			map[string]any{"fromEndpoints": []any{cell("worker")}, "toPorts": []any{map[string]any{"ports": []any{port(TelemetryIntakePort)}}}},
+			map[string]any{"fromEndpoints": []any{map[string]any{"matchLabels": scraper}}, "toPorts": []any{map[string]any{"ports": []any{port(TelemetryMetricsPort)}, "rules": map[string]any{"http": []any{map[string]any{"method": "GET", "path": "^/metrics$"}}}}}})
 	}
 	return []*unstructured.Unstructured{worker, proxy}
 }
