@@ -8,6 +8,17 @@
 {{- printf "%s-%s" .Release.Namespace .Release.Name | trunc 51 | trimSuffix "-" }}-worker-exec
 {{- end -}}
 
+{{/* ClusterRole the controller binds to the Orca hub per project namespace:
+read worker pods and their logs (pairing offers) in cells only. */}}
+{{- define "apc.hubLogsRole" -}}
+{{- printf "%s-%s" .Release.Namespace .Release.Name | trunc 54 | trimSuffix "-" }}-hub-logs
+{{- end -}}
+
+{{/* True when the controller binds the hub's log read per project. */}}
+{{- define "apc.hubLogs" -}}
+{{- if and .Values.hubspoke.orca.enabled .Values.hubspoke.hub.logsPerProject }}true{{ end }}
+{{- end -}}
+
 {{/* ClusterRole the controller binds per project namespace for that
 project's Secrets and for deleting the project namespace itself. */}}
 {{- define "apc.projectAccessRole" -}}
@@ -32,4 +43,9 @@ project's Secrets and for deleting the project namespace itself. */}}
 {{/* Secret with the database URI, and the key. */}}
 {{- define "apc.databaseSecret" -}}
 {{- if eq .Values.database.mode "external" }}{{ required "database.external.existingSecret is required" .Values.database.external.existingSecret }}{{ else }}{{ include "apc.databaseCluster" . }}-app{{ end }}
+{{- end -}}
+
+{{/* Namespace of the forge agent (forgeAgent.namespace, default <release namespace>-forge). */}}
+{{- define "apc.forgeAgentNamespace" -}}
+{{- default (printf "%s-forge" .Release.Namespace | trunc 63 | trimSuffix "-") .Values.forgeAgent.namespace -}}
 {{- end -}}
