@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/telemetry"
 	"io"
 	"log/slog"
 	"math"
@@ -321,8 +322,10 @@ func (b *Broker) Tick(ctx context.Context) error {
 		}
 		if err != nil || !validAccess(access) || access.Expires <= float64(b.now().Add(time.Minute).Unix()) {
 			failures = append(failures, errors.New(name+" credential owner renewal unavailable"))
+			recordRenewal(ctx, name, false)
 			continue
 		}
+		recordRenewal(ctx, name, true)
 		access.Expires = math.Min(access.Expires, float64(b.now().Add(5*time.Minute).Unix()))
 		grants[name] = Grant{Enabled: true, Access: &access}
 	}
@@ -433,7 +436,7 @@ func Run(ctx context.Context, c client.Client, config *rest.Config) error {
 		return tick(ctx)
 	}
 	for {
-		if err := tick(ctx); err != nil {
+		if err := telemetry.Tick(ctx, "provider-broker", tick); err != nil {
 			slog.Warn("provider broker renewal unavailable", "status", err.Error())
 		} else {
 			slog.Info("provider broker access leases renewed", "lease_seconds", strconv.Itoa(300))
