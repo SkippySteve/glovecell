@@ -50,7 +50,7 @@ func TestProxyDeploymentAddedFieldsAreDrift(t *testing.T) {
 			d.Spec.Template.Spec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: "x"}}
 		}},
 		{"runtime class", func(d *appsv1.Deployment) { rc := "runc-unconfined"; d.Spec.Template.Spec.RuntimeClassName = &rc }},
-		{"node name", func(d *appsv1.Deployment) { d.Spec.Template.Spec.NodeName = "kube-node-01" }},
+		{"node name", func(d *appsv1.Deployment) { d.Spec.Template.Spec.NodeName = "worker-b" }},
 		{"pod run as root", func(d *appsv1.Deployment) { root := int64(0); d.Spec.Template.Spec.SecurityContext.RunAsUser = &root }},
 		{"apparmor annotation", func(d *appsv1.Deployment) {
 			d.Spec.Template.Annotations = map[string]string{"container.apparmor.security.beta.kubernetes.io/proxy": "unconfined"}
