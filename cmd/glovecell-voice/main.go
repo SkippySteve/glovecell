@@ -32,6 +32,7 @@ import (
 
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/approvalgate"
 	apcstore "git.cluster.aimingupward.com/steve/agent-project-controller/internal/store"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/telemetry"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/voice/matrix"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/voice/notify"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/voice/service"
@@ -46,11 +47,10 @@ var (
 )
 
 func main() {
-	level := slog.LevelInfo
-	if os.Getenv(envLogLevel) == "debug" {
-		level = slog.LevelDebug
-	}
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
+	// Every line is JSON with credentials (Matrix access tokens, notify
+	// tokens, database URLs) redacted before it reaches stderr.
+	telemetry.Version = version
+	slog.SetDefault(telemetry.NewLogger(os.Stderr, telemetry.ParseLevel(os.Getenv(envLogLevel))))
 	cmd := "serve"
 	if len(os.Args) > 1 {
 		cmd = os.Args[1]
@@ -107,6 +107,7 @@ func newMetrics(reg *prometheus.Registry) *metrics {
 func serve() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	defer telemetry.Start(ctx, "glovecell-voice")()
 	if !matrix.Enabled {
 		return matrix.ErrNoE2EE
 	}

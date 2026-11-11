@@ -7,6 +7,7 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/telemetry"
 	"io"
 	"io/fs"
 	"net/http"
@@ -250,7 +251,9 @@ func (s *Server) Handler() (http.Handler, error) {
 	if s.OIDC != nil {
 		mux.HandleFunc("POST /auth/logout", s.OIDC.Logout)
 	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Route patterns come from the mux itself: a fixed set, never raw paths.
+	route := func(r *http.Request) string { _, pattern := mux.Handler(r); return pattern }
+	return telemetry.HTTP("console", route, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
@@ -335,7 +338,7 @@ func (s *Server) Handler() (http.Handler, error) {
 		ctx, cancel := context.WithTimeout(context.WithValue(context.WithValue(context.WithValue(r.Context(), actorKey{}, subject), authKey{}, method), approverKey{}, approver), timeout)
 		defer cancel()
 		mux.ServeHTTP(w, r.WithContext(ctx))
-	}), nil
+	})), nil
 }
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")

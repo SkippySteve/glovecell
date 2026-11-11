@@ -306,7 +306,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ct
 			outcome = "retry"
 			span.SetStatus(codes.Error, "reconciliation will retry")
 		}
-		opts := metric.WithAttributes(attribute.String("outcome", outcome))
+		opts := metric.WithAttributes(attribute.String("status", outcome))
 		duration.Record(ctx, time.Since(started).Seconds(), opts)
 		attempts.Add(ctx, 1, opts)
 		span.End()

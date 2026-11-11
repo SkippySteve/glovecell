@@ -208,3 +208,13 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
+
+// Route names the forge agent's fixed endpoints for telemetry; anything else
+// is "" (recorded as unmatched), so a probe cannot add series.
+func Route(r *http.Request) string {
+	switch r.URL.Path {
+	case "/healthz", "/v1/discover", "/v1/grant", "/v1/revoke":
+		return r.URL.Path
+	}
+	return ""
+}
