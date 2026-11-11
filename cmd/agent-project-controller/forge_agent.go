@@ -11,6 +11,7 @@ import (
 
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/forgeagent"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/forgejo"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/telemetry"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
@@ -38,7 +39,7 @@ func forgeAgentCLI(ctx context.Context) error {
 	}
 	server := &http.Server{
 		Addr:              env("LISTEN_ADDR", ":8443"),
-		Handler:           &forgeagent.Server{Host: host, Owner: host.Owner, Caller: caller, Reviewer: forgeagent.TokenReviewer{Client: kube, Audience: forgeagent.Audience}},
+		Handler:           telemetry.HTTP("forge-agent", forgeagent.Route, &forgeagent.Server{Host: host, Owner: host.Owner, Caller: caller, Reviewer: forgeagent.TokenReviewer{Client: kube, Audience: forgeagent.Audience}}),
 		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 90 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10,
 	}
 	go func() {

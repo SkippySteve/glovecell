@@ -101,6 +101,14 @@ spec:
               value: {{ printf "system:serviceaccount:%s:controller" .Release.Namespace | quote }}
             - name: LISTEN_ADDR
               value: ":8443"
+            # Traces and metrics follow the controller's switch and endpoint
+            # (config.OTEL_*); logs are redacted JSON on stderr either way.
+            {{- range $key := list "OTEL_ENABLED" "OTEL_EXPORTER_OTLP_ENDPOINT" }}
+            {{- with index $.Values.config $key }}
+            - name: {{ $key }}
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
           ports:
             - containerPort: 8443
               name: http

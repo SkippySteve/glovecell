@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/telemetry"
 	"io"
 	"log/slog"
 	"math"
@@ -186,10 +187,14 @@ func (b *Broker) publish(ctx context.Context, lease *proxy.GitHubLease, status s
 		lease = &proxy.GitHubLease{Enabled: false}
 	}
 	raw, _ := json.Marshal(lease)
-	return b.patch(ctx, b.Config.Lease, func(d map[string][]byte) {
+	err := b.patch(ctx, b.Config.Lease, func(d map[string][]byte) {
 		d[LeaseKey] = raw
 		d[StatusKey] = []byte(status)
 	})
+	if err == nil {
+		recordLeaseStatus(ctx, status)
+	}
+	return err
 }
 
 // Tick renews the authorization if needed and publishes a lease.
@@ -555,7 +560,7 @@ func Run(ctx context.Context, c client.Client, args []string) error {
 		return errors.New("usage: github-broker [authorize|revoke|once]")
 	}
 	for {
-		if err := b.Tick(ctx); err != nil {
+		if err := telemetry.Tick(ctx, "github-broker", b.Tick); err != nil {
 			slog.WarnContext(ctx, "GitHub broker tick", "status", err.Error())
 		}
 		if err := b.sleep(ctx, 30*time.Second); err != nil {
