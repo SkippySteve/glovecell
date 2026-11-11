@@ -232,6 +232,17 @@ func TestNetworkPolicyAPIDefaults(t *testing.T) {
 	if err = ciliumReconciler.ensure(ctx, ciliumWorkspace); err != nil {
 		t.Fatal(err)
 	}
+	// Cell telemetry against API-server defaults: switching on migrates the
+	// cell, and the defaulted relay container and policies are not drift.
+	telemetryReconciler := reconciler(provider{network.Cilium{Telemetry: &network.Scraper{Namespace: "openobserve-collector", Selector: map[string]string{"app.kubernetes.io/instance": "gw"}}}})
+	for i := 0; i < 3; i++ {
+		if err = telemetryReconciler.ensure(ctx, ciliumWorkspace); err != nil {
+			t.Fatalf("cell telemetry reconcile %d with API defaults: %v", i, err)
+		}
+	}
+	if err = ciliumReconciler.ensure(ctx, ciliumWorkspace); err != nil {
+		t.Fatalf("switching cell telemetry off with API defaults: %v", err)
+	}
 	native := reconciler(serviceProxy{})
 	native.Client = c
 	if err = native.ensure(ctx, ciliumWorkspace); err == nil || !strings.Contains(err.Error(), "proxy service drift") {

@@ -22,6 +22,7 @@ import (
 type NetworkPolicy struct {
 	Resolver                DNSResolver
 	Gateway                 *Gateway
+	Telemetry               *Scraper
 	ClusterCIDRs            []string
 	EnforcementAcknowledged bool
 }
@@ -45,6 +46,11 @@ func (p NetworkPolicy) Validate() error {
 		if err != nil || prefix.Bits() == 0 || prefix != prefix.Masked() || prefix.Addr().Is4In6() {
 			return errors.New("invalid NetworkPolicy cluster CIDR")
 		}
+	}
+	if p.Telemetry != nil {
+		// Its proxy Service is a one-port ClusterIP the worker is pinned to;
+		// cell telemetry needs the Cilium provider's headless proxy name.
+		return errors.New("cell telemetry requires the Cilium network provider")
 	}
 	if err := (Cilium{Gateway: p.Gateway}).Validate(); err != nil {
 		return err
