@@ -65,6 +65,9 @@ type brokeredAccess struct {
 	Token   string  `json:"accessToken"`
 	Expires float64 `json:"expiresAt"`
 	Issuer  string  `json:"issuer,omitempty"`
+	// CellToken is set only in the proxy's copy (cell_tokens.go): the
+	// stand-in the worker sends, which the proxy swaps for Token.
+	CellToken string `json:"cellToken,omitempty"`
 }
 
 // brokeredState is what one reconciliation decided for a project. objects()
@@ -75,6 +78,9 @@ type brokeredState struct {
 	// doc is the project's whole provider-access document after the change
 	// (other providers' entries, such as an operator Codex grant, included).
 	doc []byte
+	// gatewayDoc is the proxy's copy when it differs from doc (cell tokens);
+	// nil means the proxy gets doc.
+	gatewayDoc []byte
 	// github is the project's GitHub keys (github.go); nil when off.
 	github *githubState
 }
@@ -210,7 +216,12 @@ func (r *Reconciler) applyProviders(ctx context.Context, w *api.ProjectWorkspace
 	narrowedKeys := false
 	if r.ProviderLeases != nil {
 		entries := map[string]json.RawMessage{}
-		for name, grant := range r.classLeases(ctx, w, names) {
+		grants := r.classLeases(ctx, w, names)
+		var gateway map[string]brokeredGrant
+		if len(r.Config.CellTokens) > 0 {
+			grants, gateway = r.withCellTokens(ctx, w, grants)
+		}
+		for name, grant := range grants {
 			entries[name], _ = json.Marshal(grant)
 		}
 		doc, err := r.syncModelAccess(ctx, w, entries)
@@ -218,6 +229,11 @@ func (r *Reconciler) applyProviders(ctx context.Context, w *api.ProjectWorkspace
 			return nil, err
 		}
 		state = &brokeredState{managed: true, names: names, doc: doc}
+		if gateway != nil {
+			if state.gatewayDoc, err = gatewayDoc(doc, gateway); err != nil {
+				return nil, err
+			}
+		}
 		if narrowedKeys, err = r.syncProxyProviders(ctx, w, state); err != nil {
 			return nil, err
 		}
@@ -363,6 +379,9 @@ func proxyProviderData(state *brokeredState, legacy bool, legacyDoc []byte) map[
 	if state != nil && state.managed {
 		if (legacy || len(state.names) > 0) && len(state.doc) > 0 {
 			out["provider-access"] = state.doc
+			if state.gatewayDoc != nil {
+				out["provider-access"] = state.gatewayDoc
+			}
 		}
 		if len(state.names) > 0 {
 			out[proxy.BrokeredProviderKey] = []byte(strings.Join(state.names, ","))
