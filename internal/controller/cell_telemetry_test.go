@@ -3,8 +3,13 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
+
+	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/network"
 	appsv1 "k8s.io/api/apps/v1"
@@ -90,6 +95,17 @@ func TestNewCellGetsRelayRulesAndWorkerSettings(t *testing.T) {
 	}
 }
 
+func runningWorker(t *testing.T, r *Reconciler, w *api.ProjectWorkspace) *corev1.Pod {
+	t.Helper()
+	// The cell's resolver, so the DNS migration does not restart it.
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "project", Namespace: namespace(w), Labels: map[string]string{api.OwnerLabel: string(w.UID), "projects.agentwork.dev/role": "worker"}},
+		Spec: corev1.PodSpec{DNSConfig: &corev1.PodDNSConfig{Nameservers: []string{"10.96.0.10"}}}}
+	if err := r.Create(context.Background(), pod); err != nil {
+		t.Fatal(err)
+	}
+	return pod
+}
+
 func TestSwitchingTelemetryMigratesExistingCellsWithoutWorkerRestart(t *testing.T) {
 	ctx := context.Background()
 	r, w, _ := fixture(t)
@@ -98,6 +114,7 @@ func TestSwitchingTelemetryMigratesExistingCellsWithoutWorkerRestart(t *testing.
 	}
 	ns := namespace(w)
 	envBefore := workerEnvJSON(t, r, ns)
+	worker := runningWorker(t, r, w)
 
 	r.Network = provider{network.Cilium{Telemetry: testScraper}}
 	if err := r.ensure(ctx, w); err != nil {
@@ -112,7 +129,18 @@ func TestSwitchingTelemetryMigratesExistingCellsWithoutWorkerRestart(t *testing.
 	if err := r.ensure(ctx, w); err != nil {
 		t.Fatalf("second reconcile after migration: %v", err)
 	}
+	// Pause: the worker stops, and the settings arrive without an image change.
+	if err := r.Delete(ctx, worker); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ensure(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	if env := workerEnvJSON(t, r, ns); !strings.Contains(env, "OTEL_EXPORTER_OTLP_ENDPOINT") {
+		t.Fatalf("telemetry settings not applied while the worker was stopped: %s", env)
+	}
 
+	worker = runningWorker(t, r, w)
 	r.Network = provider{}
 	if err := r.ensure(ctx, w); err != nil {
 		t.Fatalf("switching off failed: %v", err)
@@ -125,6 +153,116 @@ func TestSwitchingTelemetryMigratesExistingCellsWithoutWorkerRestart(t *testing.
 		for _, e := range c.Env {
 			if e.Name == "APC_PROXY_METRICS_ADDR" {
 				t.Fatal("proxy metrics listener left on")
+			}
+		}
+	}
+	if !strings.Contains(workerEnvJSON(t, r, ns), "OTEL_") {
+		t.Fatal("switching off rewrote a running worker's template")
+	}
+	_ = r.Delete(ctx, worker)
+	if err := r.ensure(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	if workerEnvJSON(t, r, ns) != envBefore {
+		t.Fatal("telemetry settings not removed while the worker was stopped")
+	}
+}
+
+func TestTamperedWorkerTelemetrySettingsAreDrift(t *testing.T) {
+	ctx := context.Background()
+	r, w, _ := fixture(t)
+	r.Network = provider{network.Cilium{Telemetry: testScraper}}
+	if err := r.ensure(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	sandbox := &unstructured.Unstructured{}
+	sandbox.SetGroupVersionKind(sandboxGVK)
+	if err := r.Get(ctx, types.NamespacedName{Namespace: namespace(w), Name: "project"}, sandbox); err != nil {
+		t.Fatal(err)
+	}
+	containers, _, _ := unstructured.NestedSlice(sandbox.Object, "spec", "podTemplate", "spec", "containers")
+	c := containers[0].(map[string]any)
+	for _, e := range c["env"].([]any) {
+		if m := e.(map[string]any); m["name"] == "OTEL_EXPORTER_OTLP_ENDPOINT" {
+			m["value"] = "http://evil.example:4318"
+		}
+	}
+	_ = unstructured.SetNestedSlice(sandbox.Object, containers, "spec", "podTemplate", "spec", "containers")
+	if err := r.Update(ctx, sandbox); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ensure(ctx, w); err == nil || !strings.Contains(err.Error(), "telemetry settings drift") {
+		t.Fatalf("tampered worker telemetry settings accepted: %v", err)
+	}
+}
+
+func TestRelayAndMetricsAddressTampering(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name   string
+		mutate func(*appsv1.Deployment)
+		repair bool // true: restored; false: refused as drift
+	}{
+		{"args", func(d *appsv1.Deployment) { relay(d).Args = []string{"proxy"} }, false},
+		{"added command", func(d *appsv1.Deployment) { relay(d).Command = []string{"/bin/sh", "-c", "id"} }, false},
+		{"added env", func(d *appsv1.Deployment) {
+			relay(d).Env = append(relay(d).Env, corev1.EnvVar{Name: "CELL_TELEMETRY_PROXY_METRICS", Value: "off"})
+		}, false},
+		{"added mount", func(d *appsv1.Deployment) {
+			relay(d).VolumeMounts = append(relay(d).VolumeMounts, corev1.VolumeMount{Name: "tls", MountPath: "/tls"})
+		}, false},
+		{"image only", func(d *appsv1.Deployment) { relay(d).Image = "evil.example/relay@sha256:" + strings.Repeat("b", 64) }, true},
+		{"metrics address emptied", func(d *appsv1.Deployment) { setProxyEnv(d, "APC_PROXY_METRICS_ADDR", "") }, true},
+		{"metrics address on the control port", func(d *appsv1.Deployment) { setProxyEnv(d, "APC_PROXY_METRICS_ADDR", "127.0.0.1:3129") }, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, w, _ := fixture(t)
+			r.Network = provider{network.Cilium{Telemetry: testScraper}}
+			if err := r.ensure(ctx, w); err != nil {
+				t.Fatal(err)
+			}
+			want := proxyDeployment(t, r, namespace(w))
+			d := want.DeepCopy()
+			tc.mutate(d)
+			if err := r.Update(ctx, d); err != nil {
+				t.Fatal(err)
+			}
+			err := r.ensure(ctx, w)
+			if !tc.repair {
+				if err == nil || !strings.Contains(err.Error(), "proxy deployment drift") {
+					t.Fatalf("tampering accepted: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := proxyDeployment(t, r, namespace(w))
+			if !reflect.DeepEqual(got.Spec.Template.Spec.Containers, want.Spec.Template.Spec.Containers) {
+				t.Fatalf("not restored:\n got %+v\nwant %+v", got.Spec.Template.Spec.Containers, want.Spec.Template.Spec.Containers)
+			}
+		})
+	}
+}
+
+func relay(d *appsv1.Deployment) *corev1.Container {
+	for i := range d.Spec.Template.Spec.Containers {
+		if d.Spec.Template.Spec.Containers[i].Name == relayContainer {
+			return &d.Spec.Template.Spec.Containers[i]
+		}
+	}
+	panic("no relay")
+}
+
+func setProxyEnv(d *appsv1.Deployment, name, value string) {
+	for i := range d.Spec.Template.Spec.Containers {
+		c := &d.Spec.Template.Spec.Containers[i]
+		if c.Name != "proxy" {
+			continue
+		}
+		for j := range c.Env {
+			if c.Env[j].Name == name {
+				c.Env[j].Value = value
 			}
 		}
 	}

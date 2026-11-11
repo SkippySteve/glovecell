@@ -855,6 +855,9 @@ func (r *Reconciler) apply(ctx context.Context, w *api.ProjectWorkspace, obj cli
 			if !contains(gotCopy, wantCopy) {
 				return r.replaceWorkspaceImage(ctx, w, current, got, want)
 			}
+			if e := r.reconcileTelemetryEnv(ctx, w, current, got, want); e != nil {
+				return e
+			}
 			gotNS, _, e := unstructured.NestedStringSlice(got, "podTemplate", "spec", "dnsConfig", "nameservers")
 			if e != nil {
 				return e
@@ -962,7 +965,7 @@ func (r *Reconciler) apply(ctx context.Context, w *api.ProjectWorkspace, obj cli
 			return errors.New("proxy deployment drift detected")
 		}
 		dnsChanged := !reflect.DeepEqual(current.Spec.Template.Spec.DNSConfig.Nameservers, expected.Spec.Template.Spec.DNSConfig.Nameservers)
-		imageChanged := gotImage != wantImage
+		imageChanged := gotImage != wantImage || relayImageDiffers(current.Spec.Template, wantImage)
 		replicasChanged := !reflect.DeepEqual(current.Spec.Replicas, expected.Spec.Replicas)
 		// Cell telemetry switched on or off: everything else already matched,
 		// so take the expected containers and pod annotations whole.

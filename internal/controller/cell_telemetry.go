@@ -1,7 +1,13 @@
 package controller
 
 import (
+	"context"
+	"errors"
 	"strconv"
+
+	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/cellrelay"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/network"
@@ -130,15 +136,20 @@ func stripTelemetryEnv(spec map[string]any) {
 // telemetryPartsEqual compares only the telemetry parts of two proxy pod
 // templates: the relay container, the proxy's metrics env and the annotations.
 func telemetryPartsEqual(got, want corev1.PodTemplateSpec) bool {
-	part := func(t corev1.PodTemplateSpec) (bool, bool, map[string]string) {
-		relay, metrics := false, false
+	part := func(t corev1.PodTemplateSpec) (bool, string, map[string]string) {
+		relay, metrics := false, "absent"
 		for _, c := range t.Spec.Containers {
 			if c.Name == relayContainer {
 				relay = true
 			}
 			for _, e := range c.Env {
 				if c.Name == "proxy" && e.Name == proxy.MetricsAddressEnv {
-					metrics = true
+					// The value matters: an empty or colliding address
+					// (the download-control port) must be repaired.
+					metrics = e.Value
+					if e.ValueFrom != nil {
+						metrics = "valueFrom"
+					}
 				}
 			}
 		}
@@ -164,24 +175,54 @@ func telemetryPartsEqual(got, want corev1.PodTemplateSpec) bool {
 }
 
 // relayMatches reports whether the relay container, when both templates have
-// one, differs at most in its image (which follows the proxy image). Any
-// other change to it is drift, as for the proxy container.
+// one, is exactly what the controller expects apart from its image (which
+// relayImageDiffers repairs) and fields the API server defaults. Any added or
+// changed command, args, env, mounts, devices, lifecycle, working directory,
+// security context or port is drift, as is a missing probe or resource.
 func relayMatches(got, want corev1.PodTemplateSpec) bool {
-	find := func(t corev1.PodTemplateSpec) *corev1.Container {
-		for i := range t.Spec.Containers {
-			if t.Spec.Containers[i].Name == relayContainer {
-				c := t.Spec.Containers[i].DeepCopy()
-				c.Image = "normalized"
-				return c
-			}
-		}
-		return nil
-	}
-	g, w := find(got), find(want)
+	g, w := findRelay(got), findRelay(want)
 	if g == nil || w == nil {
 		return true
 	}
-	return contains(*g, *w)
+	strict := func(c *corev1.Container) corev1.Container {
+		return corev1.Container{Name: c.Name, Command: c.Command, Args: c.Args, Env: c.Env, EnvFrom: c.EnvFrom, VolumeMounts: c.VolumeMounts,
+			VolumeDevices: c.VolumeDevices, WorkingDir: c.WorkingDir, Lifecycle: c.Lifecycle, Stdin: c.Stdin, StdinOnce: c.StdinOnce, TTY: c.TTY,
+			SecurityContext: c.SecurityContext, RestartPolicy: c.RestartPolicy, ResizePolicy: c.ResizePolicy}
+	}
+	if !same(strict(g), strict(w)) {
+		return false
+	}
+	ports := func(c *corev1.Container) map[string]int32 {
+		out := map[string]int32{}
+		for _, p := range c.Ports {
+			if p.HostPort != 0 || p.HostIP != "" {
+				out["host"] = 1
+			}
+			out[p.Name] = p.ContainerPort
+		}
+		return out
+	}
+	if !same(ports(g), ports(w)) {
+		return false
+	}
+	// Defaulted fields (probe timings, resource formats) are compared one way.
+	return contains(g.Resources, w.Resources) && contains(g.ReadinessProbe, w.ReadinessProbe) && g.LivenessProbe == nil && g.StartupProbe == nil
+}
+
+func findRelay(t corev1.PodTemplateSpec) *corev1.Container {
+	for i := range t.Spec.Containers {
+		if t.Spec.Containers[i].Name == relayContainer {
+			return &t.Spec.Containers[i]
+		}
+	}
+	return nil
+}
+
+// relayImageDiffers reports whether a relay container runs another image
+// than the proxy should; the image repair then sets both.
+func relayImageDiffers(t corev1.PodTemplateSpec, want string) bool {
+	c := findRelay(t)
+	return c != nil && c.Image != want
 }
 
 // withScrapeAnnotations returns current's annotations with only the scrape
@@ -202,4 +243,84 @@ func withScrapeAnnotations(current, want map[string]string) map[string]string {
 		return nil
 	}
 	return out
+}
+
+// telemetryEnvState classifies a Sandbox workspace container's telemetry
+// settings: none of them, exactly the expected set, or anything else.
+func telemetryEnvState(spec map[string]any) string {
+	pod, _ := spec["podTemplate"].(map[string]any)
+	body, _ := pod["spec"].(map[string]any)
+	items, _ := body["containers"].([]any)
+	found := map[string]string{}
+	for _, raw := range items {
+		c, _ := raw.(map[string]any)
+		if c == nil || c["name"] != "workspace" {
+			continue
+		}
+		env, _ := c["env"].([]any)
+		for _, e := range env {
+			m, _ := e.(map[string]any)
+			name, _ := m["name"].(string)
+			if !isTelemetryEnv(name) {
+				continue
+			}
+			value, ok := m["value"].(string)
+			if _, dup := found[name]; dup || !ok || m["valueFrom"] != nil {
+				return "other"
+			}
+			found[name] = value
+		}
+	}
+	if len(found) == 0 {
+		return "absent"
+	}
+	if len(found) != len(telemetryEnv) {
+		return "other"
+	}
+	for _, e := range telemetryEnv {
+		if found[e.Name] != e.Value {
+			return "other"
+		}
+	}
+	return "expected"
+}
+
+// reconcileTelemetryEnv brings a Sandbox's worker telemetry settings to the
+// expected state. Only "absent" and the exact expected set are valid; any
+// other value is drift. A change is applied only while no worker pod runs,
+// so switching cell telemetry never restarts a worker: a running cell picks
+// it up after its next pause and resume.
+func (r *Reconciler) reconcileTelemetryEnv(ctx context.Context, w *api.ProjectWorkspace, current *unstructured.Unstructured, got, want map[string]any) error {
+	have, need := telemetryEnvState(got), telemetryEnvState(want)
+	if have == "other" || need == "other" {
+		return errors.New("Sandbox telemetry settings drift detected")
+	}
+	if have == need {
+		return nil
+	}
+	gone, err := r.workerGone(ctx, w)
+	if err != nil || !gone {
+		return err
+	}
+	wantWorkspace, ok := workspaceContainer(want)
+	wantEnv, envOK := wantWorkspace["env"].([]any)
+	if !ok || !envOK {
+		return errors.New("Sandbox telemetry settings unavailable")
+	}
+	before := current.DeepCopy()
+	items, _, err := unstructured.NestedSlice(current.Object, "spec", "podTemplate", "spec", "containers")
+	if err != nil {
+		return err
+	}
+	for i, raw := range items {
+		c, _ := raw.(map[string]any)
+		if c != nil && c["name"] == "workspace" {
+			c["env"] = wantEnv
+			items[i] = c
+		}
+	}
+	if err := unstructured.SetNestedSlice(current.Object, items, "spec", "podTemplate", "spec", "containers"); err != nil {
+		return err
+	}
+	return r.Patch(ctx, current, client.MergeFrom(before))
 }

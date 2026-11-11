@@ -36,8 +36,8 @@ func countRequest(_ context.Context, reason string, code int) {
 func serveMetrics(ctx context.Context, addr string) error {
 	host, _, err := net.SplitHostPort(addr)
 	ip := net.ParseIP(host)
-	if err != nil || ip == nil || !ip.IsLoopback() {
-		return errors.New("proxy metrics address must be loopback")
+	if err != nil || ip == nil || !ip.IsLoopback() || addr == ControlAddress {
+		return errors.New("proxy metrics address must be loopback and not the control address")
 	}
 	mux := http.NewServeMux()
 	mux.Handle("GET /metrics", promhttp.HandlerFor(metricsRegistry, promhttp.HandlerOpts{}))

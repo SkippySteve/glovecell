@@ -5,8 +5,10 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -16,7 +18,6 @@ import (
 	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
 	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
-	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -40,6 +41,17 @@ func point(v float64, attrs ...*common.KeyValue) *metricspb.NumberDataPoint {
 }
 
 const delta = metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_DELTA
+
+// feed sends a request through the same reducer the intake uses, bypassing
+// the rate limit so tests can send many.
+func feed(t *testing.T, r *Relay, m proto.Message) error {
+	t.Helper()
+	switch m.(type) {
+	case *collogs.ExportLogsServiceRequest:
+		return r.reduceLogs(protobuf(t, m))
+	}
+	return r.reduceMetrics(protobuf(t, m))
+}
 
 func scrape(t *testing.T, r *Relay) string {
 	t.Helper()
@@ -78,7 +90,9 @@ func TestKnownMetricsAreReducedToBoundedLabels(t *testing.T) {
 		point(120, str("type", "input"), str("model", "claude-sonnet-4-5"), str("session.id", "secret-session"), str("user.account_uuid", "acct-1")),
 		point(30, str("type", "output"), str("model", "claude-sonnet-4-5")),
 		point(5, str("type", "prompt text pretending to be a type"), str("model", "claude-sonnet-4-5")),
-		point(7, str("type", "input"), str("model", "/home/steve/private path with spaces")))
+		point(7, str("type", "input"), str("model", "/home/steve/private path with spaces")),
+		point(9, str("type", "input"), str("model", "secret-session-123")),
+		point(11, str("type", "input"), str("model", "claude-sonnet-4-5-ghp_abcdefABCDEF0123456789")))
 	if rec := post(t, r, "/v1/metrics", "application/x-protobuf", protobuf(t, req)); rec.Code != 200 {
 		t.Fatalf("status %d", rec.Code)
 	}
@@ -86,14 +100,14 @@ func TestKnownMetricsAreReducedToBoundedLabels(t *testing.T) {
 	for _, want := range []string{
 		`glovecell_cell_agent_tokens_total{component="claude_code",name="claude-sonnet-4-5",status="",type="input"} 120`,
 		`glovecell_cell_agent_tokens_total{component="claude_code",name="claude-sonnet-4-5",status="",type="output"} 30`,
-		`glovecell_cell_agent_tokens_total{component="claude_code",name="other",status="",type="input"} 7`,
+		`glovecell_cell_agent_tokens_total{component="claude_code",name="other",status="",type="input"} 27`,
 		`glovecell_cell_relay_dropped_total{reason="invalid"} 1`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %s in\n%s", want, out)
 		}
 	}
-	for _, leak := range []string{"secret-session", "acct-1", "steve@example.invalid", "agent-project-controller", "private path", "prompt text"} {
+	for _, leak := range []string{"secret-session", "ghp_", "acct-1", "steve@example.invalid", "agent-project-controller", "private path", "prompt text"} {
 		if strings.Contains(out, leak) {
 			t.Errorf("%q leaked into /metrics", leak)
 		}
@@ -102,9 +116,15 @@ func TestKnownMetricsAreReducedToBoundedLabels(t *testing.T) {
 
 func TestUnknownAndCumulativeMetricsAreDropped(t *testing.T) {
 	r := New()
-	r.Metrics(sum("claude_code.token.usage", metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE, point(99, str("type", "input"), str("model", "m"))))
-	r.Metrics(sum("worker.exfiltration.bytes", delta, point(1, str("data", "anything"))))
-	r.Metrics(sum("evil.token.usage", delta, point(1, str("type", "input"))))
+	for _, m := range []proto.Message{
+		sum("claude_code.token.usage", metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE, point(99, str("type", "input"), str("model", "m"))),
+		sum("worker.exfiltration.bytes", delta, point(1, str("data", "anything"))),
+		sum("evil.token.usage", delta, point(1, str("type", "input"))),
+	} {
+		if err := feed(t, r, m); err != nil {
+			t.Fatal(err)
+		}
+	}
 	out := scrape(t, r)
 	if strings.Contains(out, "glovecell_cell_agent_tokens_total{") || strings.Contains(out, "exfiltration") {
 		t.Fatalf("dropped metric was kept:\n%s", out)
@@ -127,12 +147,11 @@ func TestEventsAreCountedWithoutBodiesOrAttributes(t *testing.T) {
 			{EventName: "not_an_agent.api_request"},
 		}}},
 	}}}
-	raw, err := protojson.Marshal(logs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rec := post(t, r, "/v1/logs", "application/json", raw); rec.Code != 200 || rec.Body.String() != "{}" {
+	if rec := post(t, r, "/v1/logs", "application/x-protobuf", protobuf(t, logs)); rec.Code != 200 {
 		t.Fatalf("status %d body %q", rec.Code, rec.Body.String())
+	}
+	if rec := post(t, r, "/v1/logs", "application/json", []byte(`{"resourceLogs":[]}`)); rec.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("JSON accepted: %d", rec.Code)
 	}
 	out := scrape(t, r)
 	for _, want := range []string{
@@ -211,7 +230,9 @@ func TestRateLimit(t *testing.T) {
 func TestSeriesAreCapped(t *testing.T) {
 	r := New()
 	for i := 0; i < MaxSeries+50; i++ {
-		r.Metrics(sum("claude_code.token.usage", delta, point(1, str("type", "input"), str("model", fmt.Sprintf("model-%d", i)))))
+		if err := feed(t, r, sum("claude_code.token.usage", delta, point(1, str("type", "input"), str("model", fmt.Sprintf("claude-sonnet-4-5-2025%04d", i))))); err != nil {
+			t.Fatal(err)
+		}
 	}
 	out := scrape(t, r)
 	if n := strings.Count(out, "glovecell_cell_agent_tokens_total{"); n > MaxSeries {
@@ -240,4 +261,104 @@ func TestProxyMetricsAreMergedByPrefixOnly(t *testing.T) {
 	if out := scrape(t, r); !strings.Contains(out, "glovecell_cell_relay_requests_total") && !strings.Contains(out, "glovecell_cell_relay_dropped_total") {
 		t.Fatalf("relay series missing when the proxy is down:\n%s", out)
 	}
+}
+
+func TestDecodeDoesNotAmplifyMemory(t *testing.T) {
+	// ~1 MiB of empty log records: 2 bytes each on the wire, hundreds of
+	// bytes each if unmarshalled into generated structs.
+	var records []byte
+	for len(records) < MaxBody-64 {
+		records = append(records, 0x12, 0x00) // scope_logs.log_records (field 2), empty
+	}
+	scope := append([]byte{0x12}, varint(len(records))...)
+	scope = append(scope, records...)
+	body := append([]byte{0x0a}, varint(len(scope))...)
+	body = append(body, scope...)
+	r := New()
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	rec := post(t, r, "/v1/logs", "application/x-protobuf", body)
+	runtime.ReadMemStats(&after)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("record flood not refused: %d", rec.Code)
+	}
+	if grown := after.TotalAlloc - before.TotalAlloc; grown > 16<<20 {
+		t.Fatalf("decoding allocated %d MiB for a 1 MiB request", grown>>20)
+	}
+}
+
+func varint(n int) []byte {
+	out := []byte{}
+	for n >= 0x80 {
+		out = append(out, byte(n)|0x80)
+		n >>= 7
+	}
+	return append(out, byte(n))
+}
+
+func TestNonFiniteAndNegativeSamplesAreRefused(t *testing.T) {
+	r := New()
+	for _, v := range []float64{math.NaN(), math.Inf(1), math.Inf(-1), -3, 1e15} {
+		if err := feed(t, r, sum("claude_code.session.count", delta, point(v))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := feed(t, r, sum("claude_code.session.count", delta, point(2))); err != nil {
+		t.Fatal(err)
+	}
+	out := scrape(t, r)
+	if !strings.Contains(out, `glovecell_cell_agent_sessions_total{component="claude_code",name="",status="",type=""} 2`) || !strings.Contains(out, `glovecell_cell_relay_dropped_total{reason="invalid"} 5`) {
+		t.Fatalf("bad samples not refused or counter poisoned:\n%s", out)
+	}
+}
+
+func TestToolNamesAreFinite(t *testing.T) {
+	r := New()
+	if err := feed(t, r, sum("claude_code.code_edit_tool.decision", delta,
+		point(1, str("tool_name", "Edit"), str("decision", "accept")),
+		point(1, str("tool_name", "Bash-cat-secret"), str("decision", "reject")))); err != nil {
+		t.Fatal(err)
+	}
+	out := scrape(t, r)
+	if !strings.Contains(out, `name="Edit",status="accept"`) || !strings.Contains(out, `name="other",status="reject"`) || strings.Contains(out, "secret") {
+		t.Fatalf("tool names not reduced to a finite set:\n%s", out)
+	}
+}
+
+func TestConcurrentIntakeIsBounded(t *testing.T) {
+	r := New()
+	h := r.Intake()
+	release := make(chan struct{})
+	started := make(chan struct{}, MaxConcurrent)
+	slow := func() {
+		req := httptest.NewRequest("POST", "/v1/metrics", &blockingReader{started: started, release: release})
+		req.Header.Set("Content-Type", "application/x-protobuf")
+		h.ServeHTTP(httptest.NewRecorder(), req)
+	}
+	for i := 0; i < MaxConcurrent; i++ {
+		go slow()
+	}
+	for i := 0; i < MaxConcurrent; i++ {
+		<-started
+	}
+	if rec := post(t, r, "/v1/metrics", "application/x-protobuf", nil); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("request beyond the concurrency cap accepted: %d", rec.Code)
+	}
+	close(release)
+}
+
+type blockingReader struct {
+	started chan struct{}
+	release chan struct{}
+	once    bool
+}
+
+func (b *blockingReader) Read(p []byte) (int, error) {
+	if !b.once {
+		b.once = true
+		b.started <- struct{}{}
+		<-b.release
+	}
+	return 0, io.EOF
 }
