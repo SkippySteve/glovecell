@@ -246,6 +246,13 @@ func positiveID(key string) (int64, error) {
 func openGitHost() (forge.Forge, string, string, string, error) {
 	switch env("GIT_HOST", "forgejo") {
 	case "forgejo":
+		if os.Getenv("FORGE_AGENT_URL") != "" {
+			client, err := forgeAgentHost()
+			if err != nil {
+				return nil, "", "", "", err
+			}
+			return client, "forgejo", client.Origin, client.Owner, nil
+		}
 		token, err := secret("FORGEJO_TOKEN_FILE")
 		if err != nil {
 			return nil, "", "", "", err
@@ -387,6 +394,8 @@ func run(ctx context.Context) error {
 			return registerCLI(ctx, os.Args[2:])
 		case "hubspoke":
 			return hubspokeCLI(ctx, os.Args[2:])
+		case "forge-agent":
+			return forgeAgentCLI(ctx)
 		case "controller":
 		default:
 			return errors.New("unknown command")

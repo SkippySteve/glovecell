@@ -13,6 +13,25 @@ additionalGitHub:
   tokenKey: token
 automationAPI:
   enabled: false
+# Forge agent (docs/security.md, "Forge agent"): a separate small pod holds the
+# Forgejo administrative token and serves only workspace grants to the
+# controller, so the controller holds no Forgejo admin credential. Off by
+# default. Turning it on moves forgejo-token out of the controller's mounts.
+forgeAgent:
+  enabled: false
+  # Its own namespace, so the controller (which may read every Secret in its
+  # own namespace) cannot read the token. The chart creates it.
+  namespace: ''
+  # Secret in forgeAgent.namespace with key forgejo-token, created by the
+  # operator. Then remove forgejo-token from existingSecret.
+  existingSecret: forge-agent
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 200m
+      memory: 64Mi
 # The default AccessProfiles (locked, ask, standard, open, custom; docs/access-levels.md).
 # locked is the cluster default for new cells. Set false to manage profiles yourself.
 accessProfiles:
