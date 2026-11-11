@@ -141,9 +141,7 @@ of that tag.)
 
 ## Development
 
-Go 1.27+, Git, kubectl. `make test vet build render`. See
-[CONTRIBUTING.md](CONTRIBUTING.md). Report vulnerabilities privately per
-[SECURITY.md](SECURITY.md) — never in a public issue with tokens or PoCs.
+Use Go 1.27.4 or later, Git and kubectl for manifest rendering. Run `make test vet build render`. Install the published CLI from the release rather than `go install` of this module. Contribution rules are in [CONTRIBUTING.md](CONTRIBUTING.md). Optional local Kubernetes API and disposable Forgejo qualification are described in [qualification](docs/qualification.md).
 
 ## License
 

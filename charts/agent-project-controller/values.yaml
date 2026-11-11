@@ -13,6 +13,25 @@ additionalGitHub:
   tokenKey: token
 automationAPI:
   enabled: false
+# Forge agent (docs/security.md, "Forge agent"): a separate small pod holds the
+# Forgejo administrative token and serves only workspace grants to the
+# controller, so the controller holds no Forgejo admin credential. Off by
+# default. Turning it on moves forgejo-token out of the controller's mounts.
+forgeAgent:
+  enabled: false
+  # Its own namespace, so the controller (which may read every Secret in its
+  # own namespace) cannot read the token. The chart creates it.
+  namespace: ''
+  # Secret in forgeAgent.namespace with key forgejo-token, created by the
+  # operator. Then remove forgejo-token from existingSecret.
+  existingSecret: forge-agent
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 200m
+      memory: 64Mi
 # The default AccessProfiles (locked, ask, standard, open, custom; docs/access-levels.md).
 # locked is the cluster default for new cells. Set false to manage profiles yourself.
 accessProfiles:
@@ -60,6 +79,11 @@ config:
   # <namespace>/<secret> written by the provider broker in lease mode. Empty
   # turns spec.providers off. Requires NETWORK_PROVIDER=cilium.
   PROVIDER_LEASES_SECRET: ''
+  # Per-cell provider tokens: comma-separated grok and/or cursor. Workers get
+  # a token unique to their cell; only the cell's proxy holds the real one.
+  # Empty keeps the shared token. Set it only after every cell's proxy runs
+  # an image with cell-token support (docs/brokered-providers.md).
+  PROVIDER_CELL_TOKENS: ''
   WORKSPACE_CPU_REQUEST: 500m
   WORKSPACE_MEMORY_REQUEST: 512Mi
   WORKSPACE_CPU_LIMIT: '4'
@@ -87,6 +111,10 @@ config:
   OIDC_APPROVER_GROUPS_CLAIM: ''
   ALLOW_STATIC_LOGIN: 'false'
   OTEL_ENABLED: 'false'
+  # Cell telemetry (docs/installation.md, "Cell telemetry"): JSON
+  # {"namespace": ..., "selector": {...}} naming the collector pods allowed to
+  # scrape each cell's relay. Empty = off. Cilium provider only.
+  CELL_TELEMETRY_SCRAPER_JSON: ''
   # Publish apc-*/project host audit assignments into ConfigMap
   # glovecell-audit-assignments (inert until true). Host sync/RBAC stay off
   # until a separate one-way enable in the deployment repository (#217).
@@ -267,9 +295,18 @@ hubspoke:
     enabled: false
     image: ''
     namespace: agent-project-control-orca-hub
-    # Public WSS origin clients dial after pairing the hub (no path; wss://host[:port]).
-    # Required when hubspoke.orca.enabled or hubspoke.hub.enabled. Independent
-    # of config.PUBLIC_ORIGIN and of spoke.publicDomain.
+    # The hub's ServiceAccount in hub.namespace.
+    serviceAccount: orca-hub
+    # Bind the hub's pod and log read per project namespace (RoleBinding
+    # orca-hub-logs to ClusterRole <release>-hub-logs) instead of granting it
+    # cluster-wide. Off by default: an installation that already grants the
+    # hub cluster-wide read turns this on, waits for the bindings, then
+    # removes its cluster-wide grant (docs/hubspoke.md).
+    logsPerProject: false
+    # Hub WSS clients dial after pairing the hub itself (phone/desktop to hub).
+    # Required (wss://host[:port], no path) when hubspoke.orca.enabled or
+    # hubspoke.hub.enabled. Independent of config.PUBLIC_ORIGIN and of
+    # spoke.publicDomain.
     publicAddress: ''
   # Per-project spoke dial for desktops: wss://<project>.<publicDomain>
   # (docs/hubspoke.md, APC #113 follow-up). Requires Gateway listener + DNS.

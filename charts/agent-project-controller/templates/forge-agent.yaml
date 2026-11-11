@@ -1,0 +1,205 @@
+{{- if .Values.forgeAgent.enabled }}
+{{- if eq (default "forgejo" (index .Values.config "GIT_HOST" | toString)) "github" }}
+{{- fail "forgeAgent.enabled applies to GIT_HOST=forgejo only" }}
+{{- end }}
+{{- $ns := include "apc.forgeAgentNamespace" . }}
+{{- if eq $ns .Release.Namespace }}
+{{- fail "forgeAgent.namespace must differ from the controller's namespace (the controller can read Secrets there)" }}
+{{- end }}
+{{- if not .Values.admissionPolicies.enabled }}
+{{- fail "forgeAgent.enabled requires admissionPolicies.enabled: the controller's cluster-wide Deployment and RoleBinding writes could otherwise reach the agent's namespace and its token" }}
+{{- end }}
+{{- $controller := printf "system:serviceaccount:%s:controller" .Release.Namespace }}
+# Forge agent: the only pod that mounts the Forgejo administrative token. It
+# serves Discover/Grant/Revoke for workspace identities (apc-/apcp-<32 hex>)
+# of FORGEJO_OWNER's repositories to the controller's ServiceAccount only,
+# checked by TokenReview with its own audience. Its ServiceAccount can only
+# create TokenReviews; it has no other Kubernetes access. It runs in its own
+# namespace. The controller has no RBAC to read Secrets there, but its
+# ClusterRole can write Deployments and RoleBindings in any namespace, so the
+# policy at the end of this file refuses the controller every write, exec and
+# namespace change in the agent's namespace. Without that policy the boundary
+# does not hold, hence the admissionPolicies.enabled requirement above.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $ns }}
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: forge-agent
+  namespace: {{ $ns }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ printf "%s-%s-forge-agent-review" .Release.Namespace .Release.Name | trunc 63 | trimSuffix "-" }}
+rules:
+  - apiGroups: [authentication.k8s.io]
+    resources: [tokenreviews]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ printf "%s-%s-forge-agent-review" .Release.Namespace .Release.Name | trunc 63 | trimSuffix "-" }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ printf "%s-%s-forge-agent-review" .Release.Namespace .Release.Name | trunc 63 | trimSuffix "-" }}
+subjects:
+  - kind: ServiceAccount
+    name: forge-agent
+    namespace: {{ $ns }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: forge-agent
+  namespace: {{ $ns }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: forge-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: forge-agent
+    spec:
+      serviceAccountName: forge-agent
+      enableServiceLinks: false
+{{- with .Values.controllerScheduling.nodeSelector }}
+      nodeSelector:
+{{ toYaml . | indent 8 }}
+{{- end }}
+{{- with .Values.controllerImagePullSecrets }}
+      imagePullSecrets:
+{{ toYaml . | indent 8 }}
+{{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: forge-agent
+          image: {{ required "controllerImage must be a digest-pinned image" .Values.controllerImage | quote }}
+          args: [forge-agent]
+          env:
+            - name: FORGEJO_ORIGIN
+              value: {{ required "config.FORGEJO_ORIGIN is required" (index .Values.config "FORGEJO_ORIGIN") | quote }}
+            - name: FORGEJO_OWNER
+              value: {{ required "config.FORGEJO_OWNER is required" (index .Values.config "FORGEJO_OWNER") | quote }}
+            - name: FORGEJO_TOKEN_FILE
+              value: /forgejo/forgejo-token
+            - name: FORGE_AGENT_CALLER
+              value: {{ printf "system:serviceaccount:%s:controller" .Release.Namespace | quote }}
+            - name: LISTEN_ADDR
+              value: ":8443"
+            # Traces and metrics follow the controller's switch and endpoint
+            # (config.OTEL_*); logs are redacted JSON on stderr either way.
+            {{- range $key := list "OTEL_ENABLED" "OTEL_EXPORTER_OTLP_ENDPOINT" }}
+            {{- with index $.Values.config $key }}
+            - name: {{ $key }}
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
+          ports:
+            - containerPort: 8443
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+{{ toYaml .Values.forgeAgent.resources | indent 12 }}
+          volumeMounts:
+            - name: forgejo-token
+              mountPath: /forgejo
+              readOnly: true
+      volumes:
+        - name: forgejo-token
+          secret:
+            secretName: {{ .Values.forgeAgent.existingSecret | quote }}
+            defaultMode: 0440
+            items:
+              - key: forgejo-token
+                path: forgejo-token
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: forge-agent
+  namespace: {{ $ns }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: forge-agent
+  ports:
+    - name: http
+      port: 8443
+      targetPort: http
+---
+# Only the controller's pod reaches the agent.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: forge-agent-ingress
+  namespace: {{ $ns }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: forge-agent
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agent-project-controller
+      ports:
+        - protocol: TCP
+          port: 8443
+---
+# The controller never writes, execs or changes anything in the agent's
+# namespace (Deployments, RoleBindings, ServiceAccount tokens, pods/exec, the
+# namespace object itself). Fails closed.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ printf "%s-forge-agent-scope" (include "apc.policyPrefix" .) }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["*"]
+        apiVersions: ["*"]
+        operations: [CREATE, UPDATE, DELETE, CONNECT]
+        resources: ["*/*"]
+  matchConditions:
+    - name: controller
+      expression: {{ printf "request.userInfo.username == '%s'" $controller | quote }}
+  validations:
+    - expression: {{ printf "request.namespace != '%s' && !(request.resource.resource == 'namespaces' && request.name == '%s')" $ns $ns | quote }}
+      message: {{ printf "The project controller may not change anything in the forge agent's namespace %s" $ns | quote }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ printf "%s-forge-agent-scope" (include "apc.policyPrefix" .) }}
+spec:
+  policyName: {{ printf "%s-forge-agent-scope" (include "apc.policyPrefix" .) }}
+  validationActions: [Deny]
+{{- end }}

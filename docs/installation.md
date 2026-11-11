@@ -221,7 +221,36 @@ Add other HTTPS destinations through the dashboard, API or custom resource at pr
 
 ## Optional telemetry
 
-Set `OTEL_ENABLED=true` and `OTEL_EXPORTER_OTLP_ENDPOINT` to a trusted endpoint. Standard OTLP HTTP exporter environment variables configure authentication and TLS. No Collector, OpenTelemetry Operator or particular monitoring vendor is required. The control backend exports reconciliation traces and metrics. Structured process logs go to stderr; direct OTLP log export is not implemented.
+Set `OTEL_ENABLED=true` and `OTEL_EXPORTER_OTLP_ENDPOINT` to a trusted endpoint. Standard OTLP HTTP exporter environment variables configure authentication and TLS, and `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES` and `OTEL_TRACES_SAMPLER` override the defaults (10% of root traces). No Collector, OpenTelemetry Operator or particular monitoring vendor is required. The chart passes the controller's `OTEL_ENABLED` and `OTEL_EXPORTER_OTLP_ENDPOINT` to the forge agent.
+
+Each long-running process sets the same switch and exports traces and metrics with `service.namespace=glovecell`:
+
+| Process | `service.name` | Metrics |
+|---|---|---|
+| controller | `agent-project-controller` | `workspace.reconcile.*` (`status`), `workspace.environments` (`phase`), `apc.access.decisions` (`type`, `status`), `apc.database.up`, `apc.http.requests` and `apc.http.request.duration` for the console (`type` = route pattern, `code`) |
+| provider broker | `apc-provider-broker` | `apc.loop.*` (`component`, `status`), `apc.provider.renewals` (`name`, `status`), `apc.provider.lease.active` (`name`) |
+| GitHub broker | `apc-github-broker` | `apc.loop.*`, `apc.github.lease.status` (`status`) |
+| forge agent | `apc-forge-agent` | `apc.http.*` (`type` = endpoint, `code`) |
+| cell proxy | `apc-proxy` | `apc.proxy.requests` (`reason`, `code`); recorded but not exported yet. Nothing in a cell pushes telemetry: the collector will scrape the proxy's `/metrics`, and a separate telemetry relay container in the proxy pod will take the worker's OTLP and reduce it to fixed counters (see below) |
+| voice | `glovecell-voice` | traces; its metrics stay on the Prometheus `/metrics` endpoint |
+
+### Cell telemetry
+
+Cell telemetry is pulled, never pushed. A worker reaches only its proxy, so it gets no path to a shared collector, and a sender can't name itself. Set `CELL_TELEMETRY_SCRAPER_JSON` to `{"namespace": "<collector namespace>", "selector": {<collector pod labels>}}` to switch it on; empty (the default) is off. It needs the Cilium provider.
+
+When on, each cell's proxy pod gets a second container, `telemetry-relay` (same image, `agent-project-controller telemetry-relay`):
+
+- **Intake, port 4318.** OTLP/HTTP protobuf (gzip allowed) from the cell's worker only. JSON is refused (415). The relay walks the protobuf wire format and reads only the fields it keeps, so a request can't make it allocate per element. The worker's workspace container gets `OTEL_EXPORTER_OTLP_ENDPOINT=http://proxy:4318`, metrics and logs exporters, delta temporality, traces off, `CLAUDE_CODE_ENABLE_TELEMETRY=1` and `NO_PROXY=proxy`.
+- **Reduction.** Only known agent counters are kept: tokens, cost, sessions, lines, commits, pull requests, edit decisions and active time. Known events are counted by name and success (API request and error, tool result and decision, user prompt). Labels are `component`, `type`, `name` and `status`, from finite sets: model names must match known model families (Claude, GPT, o-series, Grok), and tools must be Edit, Write, MultiEdit or NotebookEdit. Anything else becomes `other` or is dropped, so a worker can't put an ID or secret into a label. Values must be finite, positive and at most 10^12. The relay never keeps spans, log bodies, prompts, tool arguments, session or account IDs, or the sender's resource attributes.
+- **Limits.** 1 MiB per decompressed request, 4096 records per request, 2 requests decoded at once, 20 requests/s (burst 40), at most 256 series. Every drop is counted in `glovecell_cell_relay_dropped_total{reason}`.
+- **Metrics, port 9464, `GET /metrics` only.** Relay series (`glovecell_cell_agent_*`, `glovecell_cell_relay_*`) plus the proxy's `glovecell_cell_proxy_requests_total{reason,code}`. The proxy serves its counter on `127.0.0.1:9465` (loopback only, `APC_PROXY_METRICS_ADDR`), and the relay merges only families with that prefix. Pod annotations `prometheus.io/scrape|port|path` let the collector discover it. The cell's identity is the scrape target's namespace and pod.
+- **Network.** The worker policy gains egress to its own proxy pod on 4318. The proxy policy gains ingress from the worker on 4318, and from the configured collector pods on 9464 with an L7 `GET ^/metrics$` rule. The proxy gains no egress. The worker cannot reach 9464.
+
+Switching it on or off migrates existing cells. The controller patches the proxy Deployment and the worker and proxy policies only when the difference is exactly the telemetry parts; any other difference is still drift. A running worker is never restarted for it: the controller applies or removes the worker's telemetry settings only while no worker pod runs, for example after a pause. Worker telemetry settings other than "none" or exactly the expected set are drift. A relay container changed in anything but its image is drift; a changed relay image, or a changed or emptied proxy metrics address, is restored.
+
+Metric attributes are a fixed set (component, name, status, reason, code, type, phase). They never carry hosts, paths, identities, owners or tokens. Spans carry workspace UIDs, never actors.
+
+Structured process logs are JSON on stderr; direct OTLP log export is not implemented. Every process, including controller-runtime and client-go output, writes through a redacting handler (`internal/telemetry/redact.go`): attributes named like credentials (password, secret, token, authorization, cookie, API/private/access key, credential, session ID, refresh, DSN) are replaced, and URL userinfo, Bearer/Basic values, JWTs, known token formats (GitHub, GitLab, Slack, OpenAI-style, AWS, Google, Tailscale, OpenBao, Matrix, age), private keys, secret query parameters and long opaque blobs are removed from messages and string values. `LOG_LEVEL` (`VOICE_LOG_LEVEL` for voice) selects debug, info, warn or error.
 
 Telemetry outages do not authorize access or prevent revocation. Workspace applications are not instrumented automatically. An optional workspace exporter needs a separate authorized network path and data policy.
 
