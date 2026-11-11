@@ -231,7 +231,19 @@ Each long-running process sets the same switch and exports traces and metrics wi
 | cell proxy | `apc-proxy` | `apc.proxy.requests` (`reason`, `code`); recorded but not exported yet. Nothing in a cell pushes telemetry: the collector will scrape the proxy's `/metrics`, and a separate telemetry relay container in the proxy pod will take the worker's OTLP and reduce it to fixed counters (see below) |
 | voice | `glovecell-voice` | traces; its metrics stay on the Prometheus `/metrics` endpoint |
 
-Cell telemetry is pulled, never pushed. A worker reaches only its proxy, so it gets no path to a shared collector, and a sender can't name itself. Planned: the worker's coding agents send OTLP to a relay container in the proxy pod. The relay keeps only allowlisted counters (tokens, requests, tool calls, errors, cost), labelled from its own configuration, never from the worker's resource attributes. It drops spans and log records, caps size, rate and series per cell, and serves `/metrics`. Only the cluster collector may scrape it, with `GET /metrics` alone. The relay is a separate process, so a parser bug can't stop egress enforcement.
+### Cell telemetry
+
+Cell telemetry is pulled, never pushed. A worker reaches only its proxy, so it gets no path to a shared collector, and a sender can't name itself. Set `CELL_TELEMETRY_SCRAPER_JSON` to `{"namespace": "<collector namespace>", "selector": {<collector pod labels>}}` to switch it on; empty (the default) is off. It needs the Cilium provider.
+
+When on, each cell's proxy pod gets a second container, `telemetry-relay` (same image, `agent-project-controller telemetry-relay`):
+
+- **Intake, port 4318.** OTLP/HTTP (protobuf or JSON, gzip allowed) from the cell's worker only. The worker's workspace container gets `OTEL_EXPORTER_OTLP_ENDPOINT=http://proxy:4318`, metrics and logs exporters, delta temporality, traces off, `CLAUDE_CODE_ENABLE_TELEMETRY=1` and `NO_PROXY=proxy`.
+- **Reduction.** Only known agent counters are kept: tokens, cost, sessions, lines, commits, pull requests, edit decisions and active time. Known events are counted by name and success (API request and error, tool result and decision, user prompt). Labels are `component`, `type`, `name` and `status`, with bounded values; anything else becomes `other` or is dropped. The relay never keeps spans, log bodies, prompts, tool arguments, session or account IDs, or the sender's resource attributes.
+- **Limits.** 1 MiB per decompressed request, 20 requests/s (burst 40), at most 256 series. Every drop is counted in `glovecell_cell_relay_dropped_total{reason}`.
+- **Metrics, port 9464, `GET /metrics` only.** Relay series (`glovecell_cell_agent_*`, `glovecell_cell_relay_*`) plus the proxy's `glovecell_cell_proxy_requests_total{reason,code}`. The proxy serves its counter on `127.0.0.1:9465` (loopback only, `APC_PROXY_METRICS_ADDR`), and the relay merges only families with that prefix. Pod annotations `prometheus.io/scrape|port|path` let the collector discover it. The cell's identity is the scrape target's namespace and pod.
+- **Network.** The worker policy gains egress to its own proxy pod on 4318. The proxy policy gains ingress from the worker on 4318, and from the configured collector pods on 9464 with an L7 `GET ^/metrics$` rule. The proxy gains no egress. The worker cannot reach 9464.
+
+Switching it on or off migrates existing cells. The controller patches the proxy Deployment and the worker and proxy policies only when the difference is exactly the telemetry parts; any other difference is still drift. A running worker is never restarted for it: its settings arrive with its next replacement (for example a paused image update). A relay container changed in anything but its image is drift.
 
 Metric attributes are a fixed set (component, name, status, reason, code, type, phase). They never carry hosts, paths, identities, owners or tokens. Spans carry workspace UIDs, never actors.
 

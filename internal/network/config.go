@@ -26,12 +26,20 @@ func FromEnvironment() (Provider, error) {
 		}
 		gateway = &value
 	}
+	var telemetry *Scraper
+	if raw := os.Getenv("CELL_TELEMETRY_SCRAPER_JSON"); raw != "" {
+		var value Scraper
+		if err := decodeConfiguration(raw, &value); err != nil || value.Validate() != nil {
+			return nil, errors.New("invalid cell telemetry scraper configuration")
+		}
+		telemetry = &value
+	}
 	switch get("NETWORK_PROVIDER", "cilium") {
 	case "cilium":
-		p := Cilium{ClusterDomain: resolver.ClusterDomain, DNSNamespace: resolver.DNSNamespace, DNSService: resolver.DNSService, DirectDNS: resolver.DirectDNS, Gateway: gateway}
+		p := Cilium{ClusterDomain: resolver.ClusterDomain, DNSNamespace: resolver.DNSNamespace, DNSService: resolver.DNSService, DirectDNS: resolver.DirectDNS, Gateway: gateway, Telemetry: telemetry}
 		return p, p.Validate()
 	case "network-policy":
-		p := NetworkPolicy{Resolver: resolver, Gateway: gateway, EnforcementAcknowledged: os.Getenv("NETWORK_POLICY_ENFORCEMENT_ACKNOWLEDGED") == "true"}
+		p := NetworkPolicy{Resolver: resolver, Gateway: gateway, Telemetry: telemetry, EnforcementAcknowledged: os.Getenv("NETWORK_POLICY_ENFORCEMENT_ACKNOWLEDGED") == "true"}
 		if err := decodeConfiguration(os.Getenv("NETWORK_POLICY_CLUSTER_CIDRS_JSON"), &p.ClusterCIDRs); err != nil {
 			return nil, errors.New("invalid NetworkPolicy cluster CIDRs")
 		}

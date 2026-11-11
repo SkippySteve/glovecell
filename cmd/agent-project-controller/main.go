@@ -17,6 +17,7 @@ import (
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/auditlog"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/bootstrap"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/cellrelay"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/connect"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/controller"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/download"
@@ -363,6 +364,9 @@ func run(ctx context.Context) error {
 			return bootstrap.Credential()
 		case "reader":
 			return reader.Run(ctx)
+		case "telemetry-relay":
+			// Second container of each cell's proxy pod (decision GT A).
+			return cellrelay.Run(ctx)
 		case "proxy-ready":
 			return proxy.ReadyCLI(ctx)
 		case "proxy":
