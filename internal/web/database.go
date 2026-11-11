@@ -250,7 +250,7 @@ func (s *Server) decide(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		outcome = "refused"
 	}
-	decisions.Add(ctx, 1, metric.WithAttributes(attribute.String("decision", body.Decision), attribute.String("outcome", outcome)))
+	decisions.Add(ctx, 1, metric.WithAttributes(attribute.String("type", body.Decision), attribute.String("status", outcome)))
 	if err != nil {
 		slog.WarnContext(ctx, "access decision not recorded", "workspace_uid", string(obj.UID), "request", id, "decision", body.Decision, "actor", actor, "error", err.Error())
 		storeError(w, err)
@@ -325,14 +325,15 @@ func (s *Server) revokeApproval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx, span := otel.Tracer("agent-project-controller").Start(r.Context(), "access.revoke", trace.WithAttributes(
-		attribute.String("workspace_uid", string(obj.UID)), attribute.Int64("approval_id", id), attribute.String("actor", actor), attribute.String("approver_group", group)))
+		attribute.String("workspace_uid", string(obj.UID)), attribute.Int64("approval_id", id)))
+	// Actor and group stay in the audit record, not in traces that agents can read.
 	defer span.End()
 	a, err := s.Database.Store.RevokeApproval(ctx, store.Revocation{WorkspaceUID: string(obj.UID), ApprovalID: id, Actor: actor, Group: group, Reason: body.Reason})
 	outcome := "recorded"
 	if err != nil {
 		outcome = "refused"
 	}
-	decisions.Add(ctx, 1, metric.WithAttributes(attribute.String("decision", "revoke"), attribute.String("outcome", outcome)))
+	decisions.Add(ctx, 1, metric.WithAttributes(attribute.String("type", "revoke"), attribute.String("status", outcome)))
 	if err != nil {
 		storeError(w, err)
 		return

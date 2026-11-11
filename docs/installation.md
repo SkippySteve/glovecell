@@ -218,7 +218,22 @@ Add other HTTPS destinations through the dashboard, API or custom resource at pr
 
 ## Optional telemetry
 
-Set `OTEL_ENABLED=true` and `OTEL_EXPORTER_OTLP_ENDPOINT` to a trusted endpoint. Standard OTLP HTTP exporter environment variables configure authentication and TLS. No Collector, OpenTelemetry Operator or particular monitoring vendor is required. The control backend exports reconciliation traces and metrics. Structured process logs go to stderr; direct OTLP log export is not implemented.
+Set `OTEL_ENABLED=true` and `OTEL_EXPORTER_OTLP_ENDPOINT` to a trusted endpoint. Standard OTLP HTTP exporter environment variables configure authentication and TLS, and `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES` and `OTEL_TRACES_SAMPLER` override the defaults (10% of root traces). No Collector, OpenTelemetry Operator or particular monitoring vendor is required. The chart passes the controller's `OTEL_ENABLED` and `OTEL_EXPORTER_OTLP_ENDPOINT` to the forge agent.
+
+Each long-running process sets the same switch and exports traces and metrics with `service.namespace=glovecell`:
+
+| Process | `service.name` | Metrics |
+|---|---|---|
+| controller | `agent-project-controller` | `workspace.reconcile.*` (`status`), `workspace.environments` (`phase`), `apc.access.decisions` (`type`, `status`), `apc.database.up`, `apc.http.requests` and `apc.http.request.duration` for the console (`type` = route pattern, `code`) |
+| provider broker | `apc-provider-broker` | `apc.loop.*` (`component`, `status`), `apc.provider.renewals` (`name`, `status`), `apc.provider.lease.active` (`name`) |
+| GitHub broker | `apc-github-broker` | `apc.loop.*`, `apc.github.lease.status` (`status`) |
+| forge agent | `apc-forge-agent` | `apc.http.*` (`type` = endpoint, `code`) |
+| cell proxy | `apc-proxy` | `apc.proxy.requests` (`reason`, `code`); exported only when the proxy pod has `OTEL_ENABLED=true` and a network path to the collector, which the controller does not add yet |
+| voice | `glovecell-voice` | traces; its metrics stay on the Prometheus `/metrics` endpoint |
+
+Metric attributes are a fixed set (component, name, status, reason, code, type, phase). They never carry hosts, paths, identities, owners or tokens. Spans carry workspace UIDs, never actors.
+
+Structured process logs are JSON on stderr; direct OTLP log export is not implemented. Every process, including controller-runtime and client-go output, writes through a redacting handler (`internal/telemetry/redact.go`): attributes named like credentials (password, secret, token, authorization, cookie, API/private/access key, credential, session ID, refresh, DSN) are replaced, and URL userinfo, Bearer/Basic values, JWTs, known token formats (GitHub, GitLab, Slack, OpenAI-style, AWS, Google, Tailscale, OpenBao, Matrix, age), private keys, secret query parameters and long opaque blobs are removed from messages and string values. `LOG_LEVEL` (`VOICE_LOG_LEVEL` for voice) selects debug, info, warn or error.
 
 Telemetry outages do not authorize access or prevent revocation. Workspace applications are not instrumented automatically. An optional workspace exporter needs a separate authorized network path and data policy.
 
