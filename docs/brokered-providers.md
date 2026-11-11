@@ -108,7 +108,8 @@ out. Pausing or removing the project stops the worker.
   and its proxy cannot reach Cursor's hosts.
 - **Refresh material never leaves the owner and broker.** The controller,
   proxy and launcher reject any grant with refresh fields.
-- **The access token is shared.** All opted-in projects receive the same
+- **The access token is shared, unless cell tokens are on.** Without
+  `PROVIDER_CELL_TOKENS`, all opted-in projects receive the same
   provider access token, because there is one login per provider. A worker that
   copies the token can use it until it expires (Grok: its lease, within minutes
   of the owner's renewal; Cursor: the access JWT's own lifetime, which can be
@@ -116,7 +117,23 @@ out. Pausing or removing the project stops the worker.
   checks the current grant on every request; outside, it is only as contained as
   the project's other egress. Grant providers only to projects whose other
   HTTPS rules you would trust with that token. Rotating the owner's login (a
-  new sign-in) invalidates a copied Cursor token.
+  new sign-in) invalidates a copied Cursor token. Cell tokens (below) remove
+  the real token from workers.
+- **Cell tokens (`PROVIDER_CELL_TOKENS=grok,cursor`, off by default).** The
+  worker's `provider-access` then carries a token unique to its cell: an HMAC
+  of the provider and the real token, keyed from the cell's own inspection CA
+  key. A Cursor JWT keeps its header and claims and gets a new signature; Grok
+  gets an opaque `apc-cell-…` token. Only the cell's proxy holds the real
+  token (`proxy-ca/provider-access`, with `cellToken`); it accepts only that
+  cell's token, refuses the real one from inside, and forwards the real token
+  upstream. A copied cell token is useless at the provider and in any other
+  cell, and changes with every real token. A cell whose key cannot be read
+  gets the provider disabled, never the shared token. Turn it on only after
+  every cell's proxy runs an image that knows `cellToken` (an older proxy
+  refuses the unknown field, so the provider stops working in that cell
+  until its proxy restarts on the new image), and qualify each provider's CLI
+  with it on one disposable cell first: a CLI that verifies its token locally
+  would refuse the stand-in.
 - **The broker can run commands in the owner pods.** Scope its `pods/exec` to
   exactly those pods by name and add an admission policy that refuses its exec
   anywhere else (the reference deployment does both).
