@@ -105,6 +105,13 @@ type Config struct {
 	OrcaSpokeGatewaySection   string
 	// OrcaHubNamespace is the hub's pod namespace (Traefik CNP peer + docs).
 	OrcaHubNamespace string
+	// HubLogsClusterRole, when set with OrcaHubSpoke, is bound to the hub's
+	// ServiceAccount (HubServiceAccount in OrcaHubNamespace) in each project
+	// namespace, so the hub reads worker logs only in cells instead of
+	// through a cluster-wide grant. Empty leaves project RBAC unchanged.
+	HubLogsClusterRole string
+	// HubServiceAccount is the hub's ServiceAccount name (default orca-hub).
+	HubServiceAccount string
 
 	// AuditAssignmentFeed publishes per-cell host audit assignments into
 	// ConfigMap AuditAssignmentFeedConfigMap in Namespace (default
@@ -138,6 +145,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := validateProjectAccess(c.ProjectAccessClusterRole, c.ControllerServiceAccount); err != nil {
+		return err
+	}
+	if err := validateHubLogs(c.HubLogsClusterRole, c.HubServiceAccount, c.OrcaHubSpoke); err != nil {
 		return err
 	}
 	if q, e := resource.ParseQuantity(c.StorageSize); e != nil || q.Sign() <= 0 {
@@ -646,6 +656,9 @@ func (r *Reconciler) ensure(ctx context.Context, w *api.ProjectWorkspace) error 
 		return e
 	}
 	if e = r.ensureRegistrarAccess(ctx, w); e != nil {
+		return e
+	}
+	if e = r.ensureHubLogsAccess(ctx, w); e != nil {
 		return e
 	}
 	// LAN grants apply before the rest of the project objects, so removing one

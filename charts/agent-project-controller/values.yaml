@@ -263,6 +263,14 @@ hubspoke:
     enabled: false
     image: ''
     namespace: agent-project-control-orca-hub
+    # The hub's ServiceAccount in hub.namespace.
+    serviceAccount: orca-hub
+    # Bind the hub's pod and log read per project namespace (RoleBinding
+    # orca-hub-logs to ClusterRole <release>-hub-logs) instead of granting it
+    # cluster-wide. Off by default: an installation that already grants the
+    # hub cluster-wide read turns this on, waits for the bindings, then
+    # removes its cluster-wide grant (docs/hubspoke.md).
+    logsPerProject: false
     # Hub WSS clients dial after pairing the hub itself (phone/desktop to hub).
     # Independent of config.PUBLIC_ORIGIN and of spoke.publicDomain.
     publicAddress: ''
