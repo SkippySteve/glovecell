@@ -79,6 +79,41 @@ func TestProvisioningWithAPIDefaults(t *testing.T) {
 	if e = r.ensure(ctx, w); e != nil {
 		t.Fatal("provisioning retry with API defaults", e)
 	}
+	// The proxy Deployment is compared in both directions after API defaults
+	// are cleared. Prove the stored object really carries defaults, that a
+	// rollout restart is accepted, and that an added field is drift.
+	var proxyDeploy appsv1.Deployment
+	proxyKey := types.NamespacedName{Namespace: namespace(w), Name: "proxy"}
+	if e = c.Get(ctx, proxyKey, &proxyDeploy); e != nil {
+		t.Fatal(e)
+	}
+	if proxyDeploy.Spec.RevisionHistoryLimit == nil || proxyDeploy.Spec.Template.Spec.SchedulerName == "" || proxyDeploy.Spec.Template.Spec.Containers[0].TerminationMessagePath == "" {
+		t.Fatal("API server did not default the proxy Deployment; the test proves nothing")
+	}
+	proxyDeploy.Spec.Template.Annotations = map[string]string{restartAnnotation: "2026-11-11T00:00:00Z"}
+	if e = c.Update(ctx, &proxyDeploy); e != nil {
+		t.Fatal(e)
+	}
+	if e = r.ensure(ctx, w); e != nil {
+		t.Fatal("rollout restart treated as drift", e)
+	}
+	if e = c.Get(ctx, proxyKey, &proxyDeploy); e != nil {
+		t.Fatal(e)
+	}
+	proxyDeploy.Spec.Template.Spec.Containers[0].Env = []corev1.EnvVar{{Name: "APC_TRACE_PROXY_ROUTES", Value: "1"}}
+	if e = c.Update(ctx, &proxyDeploy); e != nil {
+		t.Fatal(e)
+	}
+	if e = r.ensure(ctx, w); e == nil || !strings.Contains(e.Error(), "proxy deployment drift") {
+		t.Fatalf("added proxy env accepted against API defaults: %v", e)
+	}
+	proxyDeploy.Spec.Template.Spec.Containers[0].Env = nil
+	if e = c.Update(ctx, &proxyDeploy); e != nil {
+		t.Fatal(e)
+	}
+	if e = r.ensure(ctx, w); e != nil {
+		t.Fatal("restored proxy still drift", e)
+	}
 	// The real upstream CRD must preserve fields that establish our isolation and readiness.
 	u := &unstructured.Unstructured{}
 	u.SetGroupVersionKind(sandboxGVK)

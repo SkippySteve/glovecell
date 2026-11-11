@@ -956,7 +956,10 @@ func (r *Reconciler) apply(ctx context.Context, w *api.ProjectWorkspace, obj cli
 		wantSpec := expected.Spec.DeepCopy()
 		normalizeProxyDrift(gotSpec)
 		normalizeProxyDrift(wantSpec)
-		if !contains(*gotSpec, *wantSpec) || current.Spec.Template.Spec.DNSConfig == nil || expected.Spec.Template.Spec.DNSConfig == nil {
+		// Both directions: a field the controller never sets (an added env,
+		// command, probe, init container, host alias or annotation) is drift,
+		// not just a changed one. API-server defaults are cleared first.
+		if !same(*gotSpec, *wantSpec) || current.Spec.Template.Spec.DNSConfig == nil || expected.Spec.Template.Spec.DNSConfig == nil {
 			return errors.New("proxy deployment drift detected")
 		}
 		wantImage, ok := proxyContainerImage(expected.Spec)
@@ -1214,6 +1217,7 @@ func normalizeSandboxWorkloadImages(spec map[string]any) {
 }
 func normalizeProxyDrift(spec *appsv1.DeploymentSpec) {
 	stripCellTelemetry(spec)
+	clearAPIDefaults(spec)
 	spec.Replicas = nil
 	if spec.Template.Spec.DNSConfig != nil {
 		spec.Template.Spec.DNSConfig.Nameservers = []string{"normalized"}
