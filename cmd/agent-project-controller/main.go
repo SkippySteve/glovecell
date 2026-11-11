@@ -464,7 +464,7 @@ func run(ctx context.Context) error {
 	if e != nil {
 		return e
 	}
-	reconciler := &controller.Reconciler{LAN: lan, Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, GitHost: gitHost, ForgejoOrigin: origin, Owner: owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling, RegistrarNamespace: os.Getenv("REGISTRAR_NAMESPACE"), WorkerExecClusterRole: os.Getenv("WORKER_EXEC_CLUSTER_ROLE"), ProjectAccessClusterRole: os.Getenv("PROJECT_ACCESS_CLUSTER_ROLE"), ControllerServiceAccount: env("CONTROLLER_SERVICE_ACCOUNT", controller.DefaultControllerServiceAccount), OrcaHubSpoke: orcaHubSpoke, OrcaRuntimeImage: os.Getenv("ORCA_RUNTIME_IMAGE"), OrcaOrchestratorClass: env("HUBSPOKE_ORCHESTRATOR_CLASS", "orca"), OrcaSpokePublicDomain: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_DOMAIN")), OrcaSpokeGatewayName: env("HUBSPOKE_SPOKE_GATEWAY_NAME", "traefik-gateway"), OrcaSpokeGatewayNamespace: env("HUBSPOKE_SPOKE_GATEWAY_NAMESPACE", "traefik-system"), OrcaSpokeGatewaySection: env("HUBSPOKE_SPOKE_GATEWAY_SECTION", "websecure-cluster-aimingupward"), OrcaHubNamespace: env("HUBSPOKE_HUB_NAMESPACE", "agent-project-control-orca-hub"), AuditAssignmentFeed: auditAssignmentFeed, AuditAssignmentFeedConfigMap: strings.TrimSpace(os.Getenv("AUDIT_ASSIGNMENT_FEED_CONFIGMAP"))}}
+	reconciler := &controller.Reconciler{LAN: lan, Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, GitHost: gitHost, ForgejoOrigin: origin, Owner: owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling, RegistrarNamespace: os.Getenv("REGISTRAR_NAMESPACE"), WorkerExecClusterRole: os.Getenv("WORKER_EXEC_CLUSTER_ROLE"), ProjectAccessClusterRole: os.Getenv("PROJECT_ACCESS_CLUSTER_ROLE"), ControllerServiceAccount: env("CONTROLLER_SERVICE_ACCOUNT", controller.DefaultControllerServiceAccount), OrcaHubSpoke: orcaHubSpoke, OrcaRuntimeImage: os.Getenv("ORCA_RUNTIME_IMAGE"), OrcaOrchestratorClass: env("HUBSPOKE_ORCHESTRATOR_CLASS", "orca"), OrcaSpokePublicDomain: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_DOMAIN")), OrcaSpokeGatewayName: env("HUBSPOKE_SPOKE_GATEWAY_NAME", "traefik-gateway"), OrcaSpokeGatewayNamespace: env("HUBSPOKE_SPOKE_GATEWAY_NAMESPACE", "traefik-system"), OrcaSpokeGatewaySection: env("HUBSPOKE_SPOKE_GATEWAY_SECTION", "websecure-cluster-aimingupward"), OrcaHubNamespace: env("HUBSPOKE_HUB_NAMESPACE", "agent-project-control-orca-hub"), HubLogsClusterRole: strings.TrimSpace(os.Getenv("HUBSPOKE_HUB_LOGS_CLUSTER_ROLE")), HubServiceAccount: strings.TrimSpace(os.Getenv("HUBSPOKE_HUB_SERVICE_ACCOUNT")), AuditAssignmentFeed: auditAssignmentFeed, AuditAssignmentFeedConfigMap: strings.TrimSpace(os.Getenv("AUDIT_ASSIGNMENT_FEED_CONFIGMAP"))}}
 	if orcaHubSpoke && reconciler.Config.OrcaRuntimeImage == "" {
 		return errors.New("HUBSPOKE_ORCA_ENABLED=true requires ORCA_RUNTIME_IMAGE")
 	}
@@ -499,6 +499,12 @@ func run(ctx context.Context) error {
 	reconciler.MuseSubscriptionKeyFile = os.Getenv("MUSE_SUBSCRIPTION_KEY_FILE")
 	if reconciler.ProviderLeases, e = providerLeasesFromEnv(networkProvider); e != nil {
 		return e
+	}
+	if reconciler.Config.CellTokens, e = controller.ParseCellTokenProviders(os.Getenv("PROVIDER_CELL_TOKENS")); e != nil {
+		return e
+	}
+	if reconciler.Config.CellTokens != nil && reconciler.ProviderLeases == nil {
+		return errors.New("PROVIDER_CELL_TOKENS requires PROVIDER_LEASES_SECRET")
 	}
 	if reconciler.GitHubLease, e = githubLeaseFromEnv(networkProvider); e != nil {
 		return e
