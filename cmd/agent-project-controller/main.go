@@ -491,6 +491,12 @@ func run(ctx context.Context) error {
 	if reconciler.ProviderLeases, e = providerLeasesFromEnv(networkProvider); e != nil {
 		return e
 	}
+	if reconciler.Config.CellTokens, e = controller.ParseCellTokenProviders(os.Getenv("PROVIDER_CELL_TOKENS")); e != nil {
+		return e
+	}
+	if reconciler.Config.CellTokens != nil && reconciler.ProviderLeases == nil {
+		return errors.New("PROVIDER_CELL_TOKENS requires PROVIDER_LEASES_SECRET")
+	}
 	if reconciler.GitHubLease, e = githubLeaseFromEnv(networkProvider); e != nil {
 		return e
 	}
