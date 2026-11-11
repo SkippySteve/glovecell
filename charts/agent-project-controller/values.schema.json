@@ -574,6 +574,10 @@
           "type": "string",
           "pattern": "^([a-z0-9]([-a-z0-9]*[a-z0-9])?/[a-z0-9]([-a-z0-9.]*[a-z0-9])?)?$"
         },
+        "PROVIDER_CELL_TOKENS": {
+          "type": "string",
+          "pattern": "^((grok|cursor)(,(grok|cursor))?)?$"
+        },
         "GITHUB_OWNER": {
           "type": "string",
           "minLength": 1

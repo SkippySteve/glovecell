@@ -105,6 +105,28 @@ type Config struct {
 	OrcaSpokeGatewaySection   string
 	// OrcaHubNamespace is the hub's pod namespace (Traefik CNP peer + docs).
 	OrcaHubNamespace string
+	// HubLogsClusterRole, when set with OrcaHubSpoke, is bound to the hub's
+	// ServiceAccount (HubServiceAccount in OrcaHubNamespace) in each project
+	// namespace, so the hub reads worker logs only in cells instead of
+	// through a cluster-wide grant. Empty leaves project RBAC unchanged.
+	HubLogsClusterRole string
+	// HubServiceAccount is the hub's ServiceAccount name (default orca-hub).
+	HubServiceAccount string
+
+	// AuditAssignmentFeed publishes per-cell host audit assignments into
+	// ConfigMap AuditAssignmentFeedConfigMap in Namespace (default
+	// glovecell-audit-assignments). Off by default; enabling it is the
+	// controller half of the inert host feed in the deployment repo (#217).
+	AuditAssignmentFeed bool
+	// AuditAssignmentFeedConfigMap overrides the ConfigMap name. Empty uses
+	// glovecell-audit-assignments.
+	AuditAssignmentFeedConfigMap string
+
+	// CellTokens lists brokered providers whose workers receive a per-cell
+	// stand-in instead of the real access token (PROVIDER_CELL_TOKENS,
+	// cell_tokens.go). Turn on only once every cell's proxy runs an image that
+	// understands cellToken: an older proxy refuses the field (fails closed).
+	CellTokens map[string]bool
 }
 
 func (c Config) Validate() error {
@@ -123,6 +145,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := validateProjectAccess(c.ProjectAccessClusterRole, c.ControllerServiceAccount); err != nil {
+		return err
+	}
+	if err := validateHubLogs(c.HubLogsClusterRole, c.HubServiceAccount, c.OrcaHubSpoke); err != nil {
 		return err
 	}
 	if q, e := resource.ParseQuantity(c.StorageSize); e != nil || q.Sign() <= 0 {
@@ -281,7 +306,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ct
 			outcome = "retry"
 			span.SetStatus(codes.Error, "reconciliation will retry")
 		}
-		opts := metric.WithAttributes(attribute.String("outcome", outcome))
+		opts := metric.WithAttributes(attribute.String("status", outcome))
 		duration.Record(ctx, time.Since(started).Seconds(), opts)
 		attempts.Add(ctx, 1, opts)
 		span.End()
@@ -633,6 +658,9 @@ func (r *Reconciler) ensure(ctx context.Context, w *api.ProjectWorkspace) error 
 	if e = r.ensureRegistrarAccess(ctx, w); e != nil {
 		return e
 	}
+	if e = r.ensureHubLogsAccess(ctx, w); e != nil {
+		return e
+	}
 	// LAN grants apply before the rest of the project objects, so removing one
 	// takes effect even while another preparation step is failing.
 	if e = r.applyLANHosts(ctx, w); e != nil {
@@ -675,6 +703,10 @@ func (r *Reconciler) ensure(ctx context.Context, w *api.ProjectWorkspace) error 
 	}
 	if !bytes.Equal(beforeCA, s.Data["ca.crt"]) {
 		return r.restartInspection(ctx, w)
+	}
+	// Host audit assignment for apc-*/project. No-op while the feed flag is off.
+	if e = r.syncAuditAssignmentFeed(ctx, w, true); e != nil {
+		return e
 	}
 	return nil
 }
@@ -1258,6 +1290,8 @@ func (r *Reconciler) remove(ctx context.Context, w *api.ProjectWorkspace) error 
 	if e := r.audit(ctx, w, "remove-requested"); e != nil {
 		return e
 	}
+	// Feed failure must not prevent stopping work or revoking external access.
+	feedErr := r.syncAuditAssignmentFeed(ctx, w, false)
 	stopErr := r.stop(ctx, w)
 	var accessErr error
 	if w.Spec.OrchestratorClassName != "" {
@@ -1300,7 +1334,7 @@ func (r *Reconciler) remove(ctx context.Context, w *api.ProjectWorkspace) error 
 			return errors.New("credential ledger missing; operator recovery required")
 		}
 	}
-	if e := errors.Join(stopErr, accessErr); e != nil {
+	if e := errors.Join(feedErr, stopErr, accessErr); e != nil {
 		return e
 	}
 	if e = r.audit(ctx, w, "access-revoked"); e != nil {

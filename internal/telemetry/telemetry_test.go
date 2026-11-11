@@ -16,7 +16,7 @@ func TestUnavailableCollectorDoesNotBlockOperations(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", server.URL+"/v1/traces")
 	t.Setenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", server.URL+"/v1/metrics")
 	t.Setenv("OTEL_EXPORTER_OTLP_HEADERS", "")
-	shutdown, err := Setup(context.Background(), true)
+	shutdown, err := Setup(context.Background(), "qualification", true)
 	if err != nil {
 		t.Fatal(err)
 	}
