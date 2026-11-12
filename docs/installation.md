@@ -245,7 +245,7 @@ telemetry:
 | Setting | What it does |
 | --- | --- |
 | `otlp.endpoint` | The controller, forge agent, voice and (when installed) the brokers push traces and metrics there over OTLP/HTTP. Empty: no push |
-| `otlp.headersSecret` | A Secret in the release namespace whose `headers` key holds `OTEL_EXPORTER_OTLP_HEADERS`, e.g. `Authorization=Basic …`. Create it from a file: `kubectl -n <namespace> create secret generic otlp-auth --from-file=headers=/secure/path/otlp-headers`. Components in their own namespace (the forge agent) use a copy with the same name there when one exists |
+| `otlp.headersSecret` | A Secret in the release namespace whose `headers` key holds `OTEL_EXPORTER_OTLP_HEADERS`, e.g. `Authorization=Basic …`. Create it from a file: `kubectl -n <namespace> create secret generic otlp-auth --from-file=headers=/secure/path/otlp-headers`. Components in their own namespace (the forge agent, the provider broker) use a copy with the same name there when one exists |
 | `collector` | Lets those pods scrape voice and each cell, and lets voice push to them. Leave empty for a collector outside the cluster (then add voice's egress with `voice.networkPolicy.egress`) |
 | `cells.enabled` | Each sandbox's proxy serves fixed agent counters (tokens, cost, sessions, lines, commits; never prompts, IDs or hosts) on `:9464` for `collector` to scrape ("Cell telemetry" below). Needs `collector` and Cilium |
 | `prometheus.podMonitors` | PodMonitors for cells, voice and the CloudNativePG database |
@@ -341,7 +341,7 @@ prometheus.remote_write "default" {
 
 ### Process telemetry details
 
-Set `OTEL_ENABLED=true` and `OTEL_EXPORTER_OTLP_ENDPOINT` to a trusted endpoint (the `telemetry` section does this). Standard OTLP HTTP exporter environment variables configure authentication and TLS, and `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES` and `OTEL_TRACES_SAMPLER` override the defaults (10% of root traces). No Collector, OpenTelemetry Operator or particular monitoring vendor is required. The chart passes the controller's `OTEL_ENABLED` and `OTEL_EXPORTER_OTLP_ENDPOINT` to the forge agent.
+Set `OTEL_ENABLED=true` and `OTEL_EXPORTER_OTLP_ENDPOINT` to a trusted endpoint (the `telemetry` section does this). Standard OTLP HTTP exporter environment variables configure authentication and TLS, and `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES` and `OTEL_TRACES_SAMPLER` override the defaults (10% of root traces). No Collector, OpenTelemetry Operator or particular monitoring vendor is required. The chart passes the controller's `OTEL_ENABLED` and `OTEL_EXPORTER_OTLP_ENDPOINT` to the forge agent and the chart's provider broker (`providerBroker`), and with `telemetry.collector` set it also opens the broker's network policy to that collector.
 
 Each long-running process sets the same switch and exports traces and metrics with `service.namespace=glovecell`:
 
