@@ -88,6 +88,14 @@ spec:
 {{- end }}
             - name: OIDC_CLIENT_SECRET_FILE
               value: /control-secrets/oidc-client-secret
+{{- if and (include "apc.otlpPush" .) .Values.telemetry.otlp.headersSecret }}
+            # Collector auth (telemetry.otlp.headersSecret).
+            - name: OTEL_EXPORTER_OTLP_HEADERS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.telemetry.otlp.headersSecret | quote }}
+                  key: {{ .Values.telemetry.otlp.headersKey | quote }}
+{{- end }}
             # Controller database (docs/database.md): verify-full TLS.
             - name: DATABASE_URL_FILE
               value: /var/run/apc/database/uri

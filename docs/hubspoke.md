@@ -73,12 +73,14 @@ Controller:
 
 ```yaml
 HUBSPOKE_ORCA_ENABLED: "true"
-ORCA_RUNTIME_IMAGE: git.cluster.aimingupward.com/image-publisher/orca-pilot@sha256:…
+ORCA_RUNTIME_IMAGE: registry.example.com/orca-runtime@sha256:…
 HUBSPOKE_ORCHESTRATOR_CLASS: orca   # optional; default orca
 HUBSPOKE_SPOKE_DOMAIN: orca.cluster.example          # desktop dial suffix
-HUBSPOKE_SPOKE_GATEWAY_NAME: traefik-gateway
-HUBSPOKE_SPOKE_GATEWAY_NAMESPACE: traefik-system
-HUBSPOKE_SPOKE_GATEWAY_SECTION: websecure-cluster-aimingupward
+# Your Gateway listener for the spoke hostnames. No defaults: all three are
+# required when HUBSPOKE_SPOKE_DOMAIN is set.
+HUBSPOKE_SPOKE_GATEWAY_NAME: my-gateway
+HUBSPOKE_SPOKE_GATEWAY_NAMESPACE: gateway-system
+HUBSPOKE_SPOKE_GATEWAY_SECTION: websecure
 ```
 
 Hub process (same network as the spokes, with the Orca desktop CLI that can

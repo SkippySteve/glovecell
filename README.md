@@ -126,8 +126,10 @@ More: [security — downloads](docs/security.md#downloads-into-a-sandbox),
 Digest-pinned images and Helm: [quickstart](docs/quickstart.md),
 [installation](docs/installation.md), [examples](docs/examples/).
 
-The chart does **not** install Agent Sandbox, Cilium, gVisor, Forgejo, or your
-IdP. Qualified combination (pilot): Kubernetes 1.36.x, Agent Sandbox 1.0.4,
+The chart does **not** install Agent Sandbox, Cilium, gVisor, Forgejo, your
+IdP, or the [CloudNativePG](https://cloudnative-pg.io/) operator that runs its
+database (or set `database.mode: external` to use a PostgreSQL you already
+have). Qualified combination (pilot): Kubernetes 1.36.x, Agent Sandbox 1.0.4,
 Cilium 1.19.x, gVisor, Forgejo, OIDC (e.g. Authentik). Deploy digests, not
 floating tags.
 
