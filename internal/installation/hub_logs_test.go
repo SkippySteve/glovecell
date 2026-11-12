@@ -25,7 +25,8 @@ func TestChartHubLogsPerProject(t *testing.T) {
 	values := databaseValues()
 	values["hubspoke"] = map[string]any{
 		"orca": map[string]any{"enabled": true, "runtimeImage": "registry.example.com/orca@sha256:" + strings.Repeat("c", 64)},
-		"hub":  map[string]any{"logsPerProject": true},
+		// The chart requires a wss:// hub address whenever hubspoke is on (APC #131).
+		"hub": map[string]any{"logsPerProject": true, "publicAddress": "wss://orca-hub.example"},
 	}
 	_, on, err := renderChart(t, values)
 	if err != nil {
