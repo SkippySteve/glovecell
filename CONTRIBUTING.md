@@ -6,7 +6,7 @@ Do not include tokens, pairing URLs, private hostnames, credentials, or contents
 
 ## Install and build
 
-Operators install the published Linux amd64 CLI and Helm chart from the [0.1.0-alpha.1 release](https://github.com/SkippySteve/agent-project-controller/releases/tag/0.1.0-alpha.1). The [quickstart](docs/quickstart.md) is that path. `go install` of this module is not a public install method. Clone this repository and build inside the clone:
+Operators install the Linux amd64 CLI and Helm chart of the [0.1.0-alpha.1 release](https://github.com/SkippySteve/glovecell/releases/tag/0.1.0-alpha.1). The [quickstart](docs/quickstart.md) is that path; its release files are not attached on GitHub at the moment, so the quickstart says how to build them from the tag. `go install` of this module is not a public install method. Clone this repository and build inside the clone:
 
 ```sh
 go test -race -count=1 ./...

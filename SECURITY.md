@@ -1,6 +1,6 @@
 # Security policy
 
-Report a vulnerability privately to steve@aimingupward.com. Do not open a public issue for an unfixed vulnerability, and do not include credentials, tokens or a copy of a private repository. The source mirror is https://github.com/SkippySteve/agent-project-controller. Private vulnerability reporting there is optional; the email above is the contact. The mirror does not carry Forgejo issues or pull requests.
+Report a vulnerability privately to steve@aimingupward.com. Do not open a public issue for an unfixed vulnerability, and do not include credentials, tokens or a copy of a private repository. The source mirror is https://github.com/SkippySteve/glovecell (Forgejo `main` is pushed there on every commit). Private vulnerability reporting there is optional; the email above is the contact. The mirror does not carry Forgejo issues or pull requests.
 
 The supported shape is one Forgejo owner, one operator group and one controller replica. Inspection is HTTP CONNECT on port 443, then inspected HTTP/2 or HTTP/1.1. WebSocket and certificate-pinned clients remain blocked.
 
