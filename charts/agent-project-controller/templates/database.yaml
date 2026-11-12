@@ -66,7 +66,7 @@ spec:
 {{ toYaml . | indent 4 }}
 {{- end }}
   monitoring:
-    enablePodMonitor: {{ $c.monitoring.enablePodMonitor }}
+    enablePodMonitor: {{ include "apc.databasePodMonitor" . | eq "true" }}
 {{- if and $c.backup.enabled (eq $c.backup.method "plugin") }}
   plugins:
     - name: {{ $c.backup.plugin.name | quote }}
@@ -146,7 +146,7 @@ spec:
           port: 5432
         - protocol: TCP
           port: 8000
-{{- if $c.monitoring.enablePodMonitor }}
+{{- if include "apc.databasePodMonitor" . | eq "true" }}
     - ports:
         - protocol: TCP
           port: 9187

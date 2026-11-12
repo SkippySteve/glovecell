@@ -212,6 +212,19 @@ spec:
         - ports:
             - port: "443"
               protocol: TCP
+{{- if and (include "apc.otlpPush" .) .Values.telemetry.collector.namespace }}
+    # OTLP push to the telemetry collector (telemetry.otlp, telemetry.collector).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ .Values.telemetry.collector.namespace | quote }}
+{{- range $k, $v := .Values.telemetry.collector.podLabels }}
+            {{ $k }}: {{ $v | quote }}
+{{- end }}
+      toPorts:
+        - ports:
+            - port: {{ include "apc.otlpPort" . | quote }}
+              protocol: TCP
+{{- end }}
 {{- with $pb.extraEgress }}
 {{ toYaml . | indent 4 }}
 {{- end }}
@@ -343,14 +356,10 @@ spec:
             - name: CURSOR_OAUTH_CLIENT_ID
               value: {{ $pb.cursorOAuthClientID | quote }}
 {{- end }}
-            # Traces and metrics follow the controller's switch and endpoint
-            # (config.OTEL_*); allow the endpoint with providerBroker.extraEgress.
-            {{- range $key := list "OTEL_ENABLED" "OTEL_EXPORTER_OTLP_ENDPOINT" }}
-            {{- with index $.Values.config $key }}
-            - name: {{ $key }}
-              value: {{ . | quote }}
-            {{- end }}
-            {{- end }}
+            # Traces and metrics follow the controller's (telemetry.otlp, or the
+            # legacy config.OTEL_*). With telemetry.collector set the egress
+            # rule above is added; otherwise allow it with providerBroker.extraEgress.
+{{- include "apc.otelEnv" (dict "root" $ "optionalHeaders" true) | nindent 12 }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

@@ -27,6 +27,10 @@ backend). Pairing offers use `publicAddress` only
 
 `providerBroker.enabled: true` with `providerBroker.providers: [grok, cursor]` (either or both) installs the provider broker and one offline credential owner pod in their own namespace (`<release namespace>-providers`), and points the controller at the broker's leases. Projects still opt in per provider in the console. Sign each provider in once: `helm upgrade --set providerBroker.login=grok`, run the command the install notes print, approve in your browser, then upgrade again with `login` back to `''`. Requires `NETWORK_PROVIDER=cilium` and `admissionPolicies.enabled`. Details: [brokered providers](../../docs/brokered-providers.md#deployment).
 
+## Telemetry (optional)
+
+Off by default. `telemetry.enabled: true` plus your collector's OTLP address (`telemetry.otlp.endpoint`), an optional auth Secret, the collector's namespace and pod labels, and three switches: per-sandbox counters (`cells`), Prometheus Operator PodMonitors and the Grafana dashboard. The chart sets every component's settings and network rules. Recipes for the OpenTelemetry Collector, Grafana Alloy and OpenObserve: [installation](../../docs/installation.md#telemetry).
+
 ## Database
 
 PostgreSQL is required. It holds exact approvals, access requests, history and per-request proxy summaries ([database](../../docs/database.md)). `database.mode` selects where it comes from:

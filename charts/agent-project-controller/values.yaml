@@ -81,9 +81,49 @@ providerBroker:
     nodeSelector: {}
     tolerations: []
     affinity: {}
-  # Extra Cilium egress rules for the broker, e.g. your OTLP collector when
-  # config.OTEL_ENABLED is true.
+  # Extra Cilium egress rules for the broker. The telemetry collector is
+  # added by the chart when telemetry.collector is set.
   extraEgress: []
+
+# Telemetry (docs/installation.md, "Telemetry"). Off by default; when off,
+# nothing is sent or scraped. On, set where your collector is and the chart
+# wires every Glovecell component to it and opens the network paths itself.
+telemetry:
+  enabled: false
+  otlp:
+    # OTLP/HTTP endpoint the controller, forge agent and voice push traces and
+    # metrics to, e.g. http://otel-collector.monitoring.svc:4318. Empty: no push.
+    endpoint: ''
+    # Optional Secret (in the release namespace) holding collector auth as
+    # OTEL_EXPORTER_OTLP_HEADERS, e.g. "Authorization=Basic dXNlcjpwYXNz".
+    # Components in their own namespace (forge agent) read a copy of the same
+    # name there when it exists.
+    headersSecret: ''
+    headersKey: headers
+  # Where your collector or Prometheus pods run. The chart uses this to let
+  # them reach Glovecell (voice /metrics, each cell's /metrics) and to let
+  # voice push to them. Leave empty for a collector outside the cluster.
+  collector:
+    namespace: ''
+    podLabels: {}
+  cells:
+    # Each sandbox's proxy serves fixed agent counters (tokens, cost, sessions;
+    # never prompts or IDs) on :9464 for the collector above to scrape.
+    # Needs collector.namespace and collector.podLabels and Cilium.
+    enabled: false
+  prometheus:
+    # PodMonitors for the Prometheus Operator: cells (when cells.enabled),
+    # voice (when voice.enabled) and the CloudNativePG database.
+    podMonitors: false
+    # Labels your Prometheus selects PodMonitors by, e.g. {release: kube-prometheus-stack}.
+    labels: {}
+  dashboards:
+    # The Glovecell Grafana dashboard as a ConfigMap for Grafana's dashboard
+    # sidecar (kube-prometheus-stack and the Grafana chart use this label).
+    enabled: false
+    namespace: ''
+    labels:
+      grafana_dashboard: '1'
 # The default AccessProfiles (locked, ask, standard, open, custom; docs/access-levels.md).
 # locked is the cluster default for new cells. Set false to manage profiles yourself.
 accessProfiles:
@@ -162,6 +202,9 @@ config:
   OIDC_APPROVER_GROUPS: agent-project-approvers
   OIDC_APPROVER_GROUPS_CLAIM: ''
   ALLOW_STATIC_LOGIN: 'false'
+  # Prefer the telemetry: section above; these two keys and
+  # CELL_TELEMETRY_SCRAPER_JSON are kept for existing installs and must stay
+  # at their defaults when telemetry.enabled is true.
   OTEL_ENABLED: 'false'
   # Cell telemetry (docs/installation.md, "Cell telemetry"): JSON
   # {"namespace": ..., "selector": {...}} naming the collector pods allowed to
