@@ -106,3 +106,31 @@ func TestCurrentLeasesKeepsOnlyCodexAccount(t *testing.T) {
 		t.Fatal("codex lease without an account carried forward")
 	}
 }
+
+// One owner Pod may hold every provider's login, each on its own volume at the
+// path the broker reads: all four owners may name the same namespace, pod and
+// container (the reference deployment does).
+func TestLeaseModeOneOwnerPodForAllProviders(t *testing.T) {
+	env := map[string]string{"PROVIDER_BROKER_CONTROL_NAMESPACE": "broker", "PROVIDER_BROKER_JOURNAL": "journal", "PROVIDER_BROKER_LEASES": "provider-leases", "PROVIDER_BROKER_PROVIDERS": "grok,cursor,codex,claude", "CODEX_OAUTH_CLIENT_ID": "codex-client", "CURSOR_OAUTH_CLIENT_ID": "cursor-client"}
+	for _, name := range []string{"GROK", "CURSOR", "CODEX", "CLAUDE"} {
+		env[name+"_OWNER_NAMESPACE"], env[name+"_OWNER_POD"], env[name+"_OWNER_CONTAINER"] = "owners", "owners", "owner"
+	}
+	for _, key := range []string{"PROVIDER_BROKER_WORKSPACE", "PROVIDER_BROKER_WORKSPACE_UID"} {
+		t.Setenv(key, "")
+	}
+	for key, value := range env {
+		t.Setenv(key, value)
+	}
+	cfg, err := configFromEnv()
+	if err != nil || len(cfg.Owners) != 4 {
+		t.Fatal("one owner pod for four providers", cfg, err)
+	}
+	for name, owner := range cfg.Owners {
+		if owner != (Owner{Namespace: "owners", Pod: "owners", Container: "owner"}) {
+			t.Errorf("%s owner %+v", name, owner)
+		}
+	}
+	if cfg.OAuthClientIDs["codex"] != "codex-client" || cfg.OAuthClientIDs["cursor"] != "cursor-client" || len(cfg.OAuthClientIDs) != 2 {
+		t.Errorf("OAuth client IDs %v", cfg.OAuthClientIDs)
+	}
+}

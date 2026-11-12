@@ -26,10 +26,13 @@ controller ---> per opted-in project, in its own namespace:
                   CiliumNetworkPolicy providers  -> proxy may reach the hosts
 ```
 
-- **Owner pod.** One per provider. It runs `sleep`, mounts the provider's
-  login on a volume, has no service account token and a deny-all network
-  policy. Sign-in happens once, by the operator, in a temporary login pod that
-  mounts the same volume. Grok, Cursor and Codex use the CLI's own login
+- **Owner pod.** It runs `sleep`, mounts each provider's login on that
+  provider's own volume, has no service account token and a deny-all network
+  policy. One pod may hold every provider's login (the
+  `<PROVIDER>_OWNER_NAMESPACE`/`_POD`/`_CONTAINER` settings may all name the
+  same container), or each provider may have its own. Sign-in happens once per
+  provider, by the operator, in a temporary login pod that mounts only that
+  provider's volume. Grok, Cursor and Codex use the CLI's own login
   (`~/.grok/auth.json`, `~/.config/cursor/auth.json`, `~/.codex/auth.json`).
   Claude uses `claude setup-token`, whose long-lived subscription token the
   operator saves with its expiry as `~/.claude/apc-subscription-token.json`
