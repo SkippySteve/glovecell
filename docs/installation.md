@@ -219,9 +219,128 @@ Model credentials stay out of the image. Create a Secret named `model-access` in
 
 Add other HTTPS destinations through the dashboard, API or custom resource at project creation, or through a paused access update afterward. Extra host access is never inferred from package files. Package registries often redirect to additional hosts, which must be explicitly authorized. See [the combined console workflow](console.md) for editing access and including existing sandboxes.
 
-## Optional telemetry
+## Telemetry
 
-Set `OTEL_ENABLED=true` and `OTEL_EXPORTER_OTLP_ENDPOINT` to a trusted endpoint. Standard OTLP HTTP exporter environment variables configure authentication and TLS, and `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES` and `OTEL_TRACES_SAMPLER` override the defaults (10% of root traces). No Collector, OpenTelemetry Operator or particular monitoring vendor is required. The chart passes the controller's `OTEL_ENABLED` and `OTEL_EXPORTER_OTLP_ENDPOINT` to the forge agent.
+Telemetry is off by default; off means nothing is sent or scraped. Turning it on is one section of Helm values. Point it at the collector you already run and the chart wires every Glovecell process to it and opens the network paths itself:
+
+```yaml
+telemetry:
+  enabled: true
+  otlp:
+    endpoint: http://otel-collector.monitoring.svc:4318   # OTLP/HTTP
+    headersSecret: otlp-auth        # optional collector auth
+  collector:                        # where the collector/Prometheus pods run
+    namespace: monitoring
+    podLabels: {app.kubernetes.io/name: opentelemetry-collector}
+  cells:
+    enabled: true                   # per-sandbox agent counters (scraped)
+  prometheus:
+    podMonitors: false              # true with the Prometheus Operator
+    labels: {}                      # e.g. {release: kube-prometheus-stack}
+  dashboards:
+    enabled: true                   # ConfigMap for Grafana's dashboard sidecar
+```
+
+| Setting | What it does |
+| --- | --- |
+| `otlp.endpoint` | The controller, forge agent, voice and (when installed) the brokers push traces and metrics there over OTLP/HTTP. Empty: no push |
+| `otlp.headersSecret` | A Secret in the release namespace whose `headers` key holds `OTEL_EXPORTER_OTLP_HEADERS`, e.g. `Authorization=Basic …`. Create it from a file: `kubectl -n <namespace> create secret generic otlp-auth --from-file=headers=/secure/path/otlp-headers`. Components in their own namespace (the forge agent) use a copy with the same name there when one exists |
+| `collector` | Lets those pods scrape voice and each cell, and lets voice push to them. Leave empty for a collector outside the cluster (then add voice's egress with `voice.networkPolicy.egress`) |
+| `cells.enabled` | Each sandbox's proxy serves fixed agent counters (tokens, cost, sessions, lines, commits; never prompts, IDs or hosts) on `:9464` for `collector` to scrape ("Cell telemetry" below). Needs `collector` and Cilium |
+| `prometheus.podMonitors` | PodMonitors for cells, voice and the CloudNativePG database |
+| `dashboards.enabled` | The Glovecell dashboard (`files/dashboards/glovecell.json`, a Prometheus datasource picker) labelled `grafana_dashboard: "1"`; set `dashboards.namespace` to Grafana's namespace if its sidecar watches only that one |
+
+The older `config.OTEL_ENABLED`, `config.OTEL_EXPORTER_OTLP_ENDPOINT` and `config.CELL_TELEMETRY_SCRAPER_JSON` keys still work while `telemetry.enabled` is false; the chart refuses them alongside the section.
+
+### Collector recipes
+
+These are minimal starting points; `monitoring` and the Prometheus address are placeholders.
+
+**OpenTelemetry Collector** (contrib image). Receives OTLP, scrapes the cells, writes metrics to Prometheus. Its ServiceAccount needs `get`/`list`/`watch` on pods cluster-wide for discovery.
+
+```yaml
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: glovecell-cells
+          kubernetes_sd_configs: [{role: pod}]
+          relabel_configs:
+            - {source_labels: [__meta_kubernetes_pod_label_projects_agentwork_dev_role], regex: proxy, action: keep}
+            - {source_labels: [__meta_kubernetes_pod_container_port_name], regex: metrics, action: keep}
+            - {source_labels: [__meta_kubernetes_namespace], target_label: namespace}
+exporters:
+  prometheusremotewrite:
+    endpoint: http://prometheus.monitoring.svc:9090/api/v1/write
+    resource_to_telemetry_conversion: {enabled: true}
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp, prometheus]
+      exporters: [prometheusremotewrite]
+```
+
+Add a `traces` pipeline to your trace store (for example `otlp` to Tempo) if you keep traces.
+
+**Grafana Alloy.** The same in Alloy syntax:
+
+```alloy
+otelcol.receiver.otlp "glovecell" {
+  http {
+    endpoint = "0.0.0.0:4318"
+  }
+  output {
+    metrics = [otelcol.exporter.prometheus.glovecell.input]
+  }
+}
+
+otelcol.exporter.prometheus "glovecell" {
+  forward_to = [prometheus.remote_write.default.receiver]
+}
+
+discovery.kubernetes "pods" {
+  role = "pod"
+}
+
+discovery.relabel "cells" {
+  targets = discovery.kubernetes.pods.targets
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_projects_agentwork_dev_role"]
+    regex         = "proxy"
+    action        = "keep"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_container_port_name"]
+    regex         = "metrics"
+    action        = "keep"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_namespace"]
+    target_label  = "namespace"
+  }
+}
+
+prometheus.scrape "cells" {
+  targets    = discovery.relabel.cells.output
+  forward_to = [prometheus.remote_write.default.receiver]
+}
+
+prometheus.remote_write "default" {
+  endpoint {
+    url = "http://prometheus.monitoring.svc:9090/api/v1/write"
+  }
+}
+```
+
+**OpenObserve.** It receives OTLP/HTTP directly. Set `otlp.endpoint: http://openobserve.<namespace>.svc:5080/api/<organization>` (the exporters append `/v1/traces` and `/v1/metrics`) and put `Authorization=Basic <base64 of user:token>` in the headers Secret. OpenObserve does not scrape, so for `cells.enabled` run one of the collectors above as the scraper and export to OpenObserve with its `otlphttp` exporter.
+
+### Process telemetry details
+
+Set `OTEL_ENABLED=true` and `OTEL_EXPORTER_OTLP_ENDPOINT` to a trusted endpoint (the `telemetry` section does this). Standard OTLP HTTP exporter environment variables configure authentication and TLS, and `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES` and `OTEL_TRACES_SAMPLER` override the defaults (10% of root traces). No Collector, OpenTelemetry Operator or particular monitoring vendor is required. The chart passes the controller's `OTEL_ENABLED` and `OTEL_EXPORTER_OTLP_ENDPOINT` to the forge agent.
 
 Each long-running process sets the same switch and exports traces and metrics with `service.namespace=glovecell`:
 

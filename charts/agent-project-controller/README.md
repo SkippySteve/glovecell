@@ -23,6 +23,10 @@ reachability does not imply hub reachability (separate DNS, route, and
 backend). Pairing offers use `publicAddress` only
 ([hubspoke](../../docs/hubspoke.md), [Hub console pairing](../../docs/design/hub-console-pairing.md)).
 
+## Telemetry (optional)
+
+Off by default. `telemetry.enabled: true` plus your collector's OTLP address (`telemetry.otlp.endpoint`), an optional auth Secret, the collector's namespace and pod labels, and three switches: per-sandbox counters (`cells`), Prometheus Operator PodMonitors and the Grafana dashboard. The chart sets every component's settings and network rules. Recipes for the OpenTelemetry Collector, Grafana Alloy and OpenObserve: [installation](../../docs/installation.md#telemetry).
+
 ## Database
 
 PostgreSQL is required. It holds exact approvals, access requests, history and per-request proxy summaries ([database](../../docs/database.md)). `database.mode` selects where it comes from:

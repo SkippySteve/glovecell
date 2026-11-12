@@ -1,3 +1,4 @@
+{{- include "apc.telemetryValidate" . }}
 {{- if not (kindIs "bool" .Values.additionalGitHub.enabled) }}
 {{- fail "additionalGitHub.enabled must be a boolean" }}
 {{- end }}
@@ -151,11 +152,24 @@ data:
 {{- end }}
 {{- range $key, $value := .Values.config }}
 {{- if and (eq $gitHost "github") (or (eq $key "FORGEJO_ORIGIN") (eq $key "FORGEJO_OWNER")) }}
+{{- else if and $.Values.telemetry.enabled (has $key (list "OTEL_ENABLED" "OTEL_EXPORTER_OTLP_ENDPOINT" "CELL_TELEMETRY_SCRAPER_JSON")) }}
 {{- else if not (and (eq $key "PROXY_GATEWAY_JSON") $.Values.proxyGateway) }}
   {{ $key }}: {{ $value | toString | quote }}
 {{- end }}
 {{- end }}
 
+{{- if .Values.telemetry.enabled }}
+  # From telemetry.* (the chart's telemetry section).
+  OTEL_ENABLED: {{ ternary "true" "false" (not (empty (include "apc.otlpPush" .))) | quote }}
+{{- if include "apc.otlpPush" . }}
+  OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.telemetry.otlp.endpoint | quote }}
+{{- end }}
+{{- if .Values.telemetry.cells.enabled }}
+  CELL_TELEMETRY_SCRAPER_JSON: {{ dict "namespace" .Values.telemetry.collector.namespace "selector" .Values.telemetry.collector.podLabels | toJson | quote }}
+{{- else }}
+  CELL_TELEMETRY_SCRAPER_JSON: ""
+{{- end }}
+{{- end }}
   T3_CONNECT_ENABLED: {{ .Values.t3Connect.enabled | toString | quote }}
   T3_CONNECT_DATA: "/var/lib/apc/t3-connect"
   T3_CONNECT_RELAY_URL: {{ .Values.t3Connect.relayURL | quote }}
