@@ -1,7 +1,7 @@
 # Design: console Hub page (operator pairing)
 
 **Status:** accepted direction (Steve, 2026-11-09). Implementation:
-[APC #113](https://git.cluster.aimingupward.com/steve/agent-project-controller/issues/113).
+[APC #113](https://git.cluster.aimingupward.com/steve/glovecell/issues/113).
 
 **Related:** [hubspoke](../hubspoke.md), [console](../console.md),
 [security](../security.md).

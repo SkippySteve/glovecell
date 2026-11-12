@@ -12,7 +12,7 @@ all and the project proxy enforces a per-request policy: see
 ## Parts
 
 ```
-offline owner pods (one per provider; login on a volume; no network, no token)
+offline owner pod(s) (per provider or shared; logins on volumes; no network, no token)
    ^ pods/exec: read the login, write it back after a refresh
 provider broker (lease mode) --HTTPS--> the provider's token endpoint
    | writes one 5-minute access lease per provider
@@ -25,8 +25,10 @@ controller ---> per opted-in project, in its own namespace:
                   CiliumNetworkPolicy providers  -> proxy may reach the hosts
 ```
 
-- **Owner pod.** One per provider. It runs `sleep`, mounts the provider's
-  login on a volume, has no service account token and a deny-all network
+- **Owner pod.** One per provider, or one pod for every provider with each
+  login on its own volume (the broker takes a namespace, pod and container per
+  provider, so both shapes work; the reference deployment uses one pod). It
+  runs `sleep`, mounts the provider's login on a volume, has no service account token and a deny-all network
   policy. Sign-in happens once, by the operator, in a temporary login pod that
   mounts the same volume.
 - **Provider broker.** The `provider-broker` command with

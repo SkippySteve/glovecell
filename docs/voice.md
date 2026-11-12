@@ -133,7 +133,7 @@ Content-Type: application/json
 {"kind": "blocked",  "text": "I need a package approved.", "thread": "$eventid"}
 {"kind": "done",     "text": "Bumped Go in PR 95.", "thread": "$eventid"}
 {"kind": "message",  "task": 12, "final": true, "failed": true, "text": "Tests fail on arm64."}
-{"kind": "approval", "repo": "steve/agent-project-controller", "pr": 95, "text": "Ready."}
+{"kind": "approval", "repo": "steve/glovecell", "pr": 95, "text": "Ready."}
 ```
 
 This is the body that `orca-pilot voice send --text … [--kind
