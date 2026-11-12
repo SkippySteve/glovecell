@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -402,6 +403,8 @@ func run(ctx context.Context) error {
 			return connectCLI(ctx, os.Args[2], os.Args[4:])
 		case "register":
 			return registerCLI(ctx, os.Args[2:])
+		case "provider":
+			return providerCLI(ctx, os.Args[2:])
 		case "hubspoke":
 			return hubspokeCLI(ctx, os.Args[2:])
 		case "forge-agent":
@@ -648,6 +651,11 @@ func run(ctx context.Context) error {
 	server.Reference = web.Reference{Digest: reconciler.Config.ReferenceDigest, Rules: reconciler.Config.ReferenceRules}
 	if reconciler.ProviderLeases != nil {
 		server.Providers = &web.Providers{Status: reconciler.ProviderLeaseStatus}
+		if brokerURL := os.Getenv("PROVIDER_BROKER_URL"); brokerURL != "" {
+			if server.ProviderLogins, e = web.NewProviderLogins(brokerURL, os.Getenv("PROVIDER_BROKER_TOKEN_FILE")); e != nil {
+				return e
+			}
+		}
 	}
 	server.GitHubBrokering = reconciler.GitHubLease != nil
 	if lan.Enabled() {
@@ -874,4 +882,31 @@ func installLogger() {
 	slog.SetDefault(logger)
 	ctrl.SetLogger(logr.FromSlogHandler(logger.Handler()))
 	klog.SetSlogLogger(logger)
+}
+
+// providerCLI is `provider import <grok|cursor>`: copy the operator's own
+// provider login from this machine to the provider broker (one-shot, with
+// the operator's kubeconfig; nothing keeps running here).
+func providerCLI(ctx context.Context, args []string) error {
+	usage := errors.New("usage: agent-project-controller provider import <grok|cursor> [--file PATH] [--namespace NAMESPACE] [--replace-account]")
+	if len(args) < 2 || args[0] != "import" {
+		return usage
+	}
+	flags := flag.NewFlagSet("provider import", flag.ContinueOnError)
+	file := flags.String("file", "", "login file (default: the provider CLI's own, ~/.grok/auth.json or ~/.config/cursor/auth.json)")
+	namespace := flags.String("namespace", env("PROVIDER_NAMESPACE", env("CONTROL_NAMESPACE", "agent-project-controller")+"-providers"), "the provider broker's namespace (chart providerBroker.namespace)")
+	replace := flags.Bool("replace-account", false, "allow a different Cursor account than the one already signed in")
+	if err := flags.Parse(args[2:]); err != nil || flags.NArg() != 0 {
+		return usage
+	}
+	config := ctrl.GetConfigOrDie()
+	scheme := runtime.NewScheme()
+	if e := clientgoscheme.AddToScheme(scheme); e != nil {
+		return e
+	}
+	c, e := client.New(config, client.Options{Scheme: scheme})
+	if e != nil {
+		return e
+	}
+	return providerbroker.Import(ctx, c, providerbroker.ImportOptions{Provider: args[1], File: *file, Namespace: *namespace, ReplaceAccount: *replace}, os.Stdout)
 }

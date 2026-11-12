@@ -28,17 +28,12 @@ The Tailscale operator must be installed. Set PUBLIC_ORIGIN and the identity-pro
 {{- $pns := include "apc.providerBrokerNamespace" . }}
 
 Subscription providers ({{ join ", " .Values.providerBroker.providers }}) are on, in namespace {{ $pns }}.
-{{- if .Values.providerBroker.login }}
-Sign-in for {{ .Values.providerBroker.login }} is running. When pod {{ .Values.providerBroker.login }}-login is Ready, run:
-{{- if eq .Values.providerBroker.login "grok" }}
-  kubectl -n {{ $pns }} exec -it grok-login -- /opt/grok/grok login --device-auth
-{{- else }}
-  kubectl -n {{ $pns }} exec -it cursor-login -- /opt/cursor-agent/cursor-agent login
+Sign each provider in once:
+{{- if .Values.providerBroker.consoleSignIn }}
+  - in the console: open any sandbox > Credentials > Connect, then approve in your browser; or
 {{- end }}
-Open the address it shows in your browser and approve. Then set providerBroker.login to '' and helm upgrade again.
-{{- else }}
-Sign each provider in once: helm upgrade with --set providerBroker.login=<provider> and follow the notes.
+  - from a machine where you are already signed in to that provider's CLI:
+      agent-project-controller provider import <provider> --namespace {{ $pns }}
+Then enable a provider per sandbox (Credentials > Enable).
 Check renewals: kubectl -n {{ $pns }} logs deploy/provider-broker --tail=20
-Then enable a provider per project in the console (sandbox > Credentials).
-{{- end }}
 {{- end }}

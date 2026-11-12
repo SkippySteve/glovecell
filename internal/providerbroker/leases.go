@@ -118,6 +118,7 @@ func (b *Broker) TickLeases(ctx context.Context) error {
 	if _, err := b.boundSecret(ctx, b.Config.Journal); err != nil {
 		return err
 	}
+	b.importPending(ctx)
 	leases, err := b.boundSecret(ctx, b.Config.Leases)
 	if err != nil {
 		return err

@@ -2,6 +2,7 @@ package installation
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"slices"
 	"strings"
@@ -105,7 +106,7 @@ func TestChartProviderBroker(t *testing.T) {
 			execNames = dig(r, "resourceNames").([]any)
 		}
 	}
-	if !slices.Equal(execNames, []any{"owners-0"}) {
+	if !slices.Equal(execNames, []any{"owners-0", "grok-login"}) {
 		t.Fatalf("broker exec scope %v", execNames)
 	}
 	reader := find(on, "RoleBinding", "provider-leases-reader")
@@ -113,47 +114,72 @@ func TestChartProviderBroker(t *testing.T) {
 		t.Fatalf("lease reader subject %v", s)
 	}
 	if find(on, "Pod", "") != nil {
-		t.Fatal("login pod rendered without providerBroker.login")
+		t.Fatal("a login pod was rendered by the chart; only the broker creates them during a sign-in")
 	}
 
-	_, login, err := renderChart(t, providerValues(map[string]any{"enabled": true, "providers": []string{"grok", "cursor"}, "login": "cursor"}))
+	// Console sign-in (on by default): the broker serves the controller only,
+	// may create only its login pods, and the controller gets its token.
+	_, console, err := renderChart(t, providerValues(map[string]any{"enabled": true, "providers": []string{"grok", "cursor"}}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dig(find(login, "StatefulSet", "owners"), "spec", "replicas") != 0.0 {
-		t.Fatal("owner keeps running during sign-in")
+	cenv, cvols := controllerPod(t, console)
+	if cenv["PROVIDER_BROKER_URL"] != "http://provider-broker."+ns+".svc:8443" || cenv["PROVIDER_BROKER_TOKEN_FILE"] != "/var/run/apc/provider-broker/token" {
+		t.Fatalf("controller sign-in env %v", cenv)
 	}
-	pod := find(login, "Pod", "cursor-login")
-	if pod == nil {
-		t.Fatal("login pod missing")
+	if src := dig(cvols["provider-broker-token"], "projected", "sources").([]any); dig(src[0], "serviceAccountToken", "audience") != "agent-project-controller-provider-broker" {
+		t.Fatalf("projected token %v", src)
 	}
-	var loginClaims []string
-	for _, v := range dig(pod, "spec", "volumes").([]any) {
-		if c := dig(v, "persistentVolumeClaim", "claimName"); c != nil {
-			loginClaims = append(loginClaims, c.(string))
+	benv := map[string]string{}
+	for _, e := range dig(find(console, "Deployment", "provider-broker"), "spec", "template", "spec", "containers").([]any)[0].(map[string]any)["env"].([]any) {
+		benv[e.(map[string]any)["name"].(string)] = e.(map[string]any)["value"].(string)
+	}
+	if benv["PROVIDER_BROKER_CALLER"] != "system:serviceaccount:test-control:controller" {
+		t.Fatalf("caller %q", benv["PROVIDER_BROKER_CALLER"])
+	}
+	var template map[string]any
+	if err := json.Unmarshal([]byte(benv["PROVIDER_LOGIN_POD"]), &template); err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range template["volumes"].([]any) {
+		if dig(v, "emptyDir") == nil {
+			t.Fatalf("login pod template mounts %v", v)
 		}
 	}
-	if !slices.Equal(loginClaims, []string{"cursor-identity"}) {
-		t.Fatalf("login pod mounts %v, want only its provider's login", loginClaims)
+	if template["automountServiceAccountToken"] != false || dig(template["containers"].([]any)[0], "image") != "registry.example.com/workspace@sha256:"+strings.Repeat("b", 64) {
+		t.Fatalf("login template %v", template)
 	}
-	var hosts []string
-	for _, rule := range dig(find(login, "CiliumNetworkPolicy", "credential-login"), "spec", "egress").([]any) {
-		fqdns, _ := dig(rule, "toFQDNs").([]any)
-		for _, f := range fqdns {
-			hosts = append(hosts, dig(f, "matchName").(string))
+	for _, p := range []string{"grok", "cursor"} {
+		if find(console, "CiliumNetworkPolicy", "credential-login-"+p) == nil {
+			t.Fatalf("no sign-in network policy for %s", p)
 		}
 	}
-	if !slices.Equal(hosts, []string{"api2.cursor.sh"}) {
-		t.Fatalf("login hosts %v", hosts)
+	if find(console, "Service", "provider-broker") == nil || find(console, "NetworkPolicy", "provider-broker-api") == nil || find(console, "ClusterRoleBinding", "test-control-qualification-provider-broker-review") == nil {
+		t.Fatal("sign-in API objects missing")
+	}
+	_, quiet, err := renderChart(t, providerValues(map[string]any{"enabled": true, "providers": []string{"grok"}, "consoleSignIn": false}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if find(quiet, "Service", "provider-broker") != nil || find(quiet, "ClusterRole", "test-control-qualification-provider-broker-review") != nil {
+		t.Fatal("sign-in API rendered while off")
+	}
+	if env, _ := controllerPod(t, quiet); env["PROVIDER_BROKER_URL"] != "" {
+		t.Fatal("controller pointed at a disabled sign-in API")
+	}
+	for _, r := range dig(find(quiet, "Role", "provider-broker"), "rules").([]any) {
+		if slices.Contains(dig(r, "resources").([]any), any("pods")) {
+			t.Fatal("broker may create pods with console sign-in off")
+		}
 	}
 
 	for name, broker := range map[string]map[string]any{
-		"no providers":      {"enabled": true},
-		"unknown provider":  {"enabled": true, "providers": []string{"codex"}},
-		"repeated provider": {"enabled": true, "providers": []string{"grok", "grok"}},
-		"login not listed":  {"enabled": true, "providers": []string{"grok"}, "login": "cursor"},
-		"controller ns":     {"enabled": true, "providers": []string{"grok"}, "namespace": "test-control"},
-		"cursor no client":  {"enabled": true, "providers": []string{"cursor"}, "cursorOAuthClientID": ""},
+		"no providers":       {"enabled": true},
+		"unknown provider":   {"enabled": true, "providers": []string{"codex"}},
+		"repeated provider":  {"enabled": true, "providers": []string{"grok", "grok"}},
+		"removed login mode": {"enabled": true, "providers": []string{"grok"}, "login": "grok"},
+		"controller ns":      {"enabled": true, "providers": []string{"grok"}, "namespace": "test-control"},
+		"cursor no client":   {"enabled": true, "providers": []string{"cursor"}, "cursorOAuthClientID": ""},
 	} {
 		if _, _, err := renderChart(t, providerValues(broker)); err == nil {
 			t.Errorf("%s: accepted", name)
@@ -191,11 +217,11 @@ func TestProviderBrokerAdmissionOnAPIServer(t *testing.T) {
 	delete(values["config"].(map[string]any), "PROVIDER_CELL_TOKENS")
 	var objs []client.Object
 	for _, o := range renderAdmission(t, values) {
-		if strings.HasSuffix(o.GetName(), "-providers-scope") || strings.HasSuffix(o.GetName(), "-provider-broker-exec") {
+		if strings.HasSuffix(o.GetName(), "-providers-scope") || strings.HasSuffix(o.GetName(), "-provider-broker-exec") || strings.HasSuffix(o.GetName(), "-provider-broker-pods") {
 			objs = append(objs, o)
 		}
 	}
-	if len(objs) != 4 {
+	if len(objs) != 6 {
 		t.Fatalf("provider policies and bindings not rendered: %d objects", len(objs))
 	}
 	providersNS := admissionNamespace + "-providers"
@@ -285,9 +311,59 @@ func TestProviderBrokerAdmissionOnAPIServer(t *testing.T) {
 	if err := connect(providersNS, "owners-0", "exec"); refused(err) {
 		t.Errorf("exec into the owner refused: %v", err)
 	}
-	for _, c := range []struct{ ns, name, sub string }{{providersNS, "other", "exec"}, {"elsewhere", "owners-0", "exec"}, {providersNS, "owners-0", "attach"}} {
+	if err := connect(providersNS, "grok-login", "exec"); refused(err) {
+		t.Errorf("exec into the login pod refused: %v", err)
+	}
+	for _, c := range []struct{ ns, name, sub string }{{providersNS, "other", "exec"}, {"elsewhere", "owners-0", "exec"}, {providersNS, "owners-0", "attach"}, {providersNS, "cursor-login", "exec"}} {
 		if err := connect(c.ns, c.name, c.sub); !refused(err) {
 			t.Errorf("%s %s/%s not refused: %v", c.sub, c.ns, c.name, err)
 		}
+	}
+
+	// Pods: the broker may create only the login pod shape. A pod that could
+	// mount a login volume, carry a token or run another image is refused.
+	if err := admin.Create(ctx, &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "credential-owner", Namespace: providersNS}}); err != nil {
+		t.Fatal(err)
+	}
+	broker, err := client.New(as(providersNS, "provider-broker"), client.Options{Scheme: scheme})
+	if err != nil {
+		t.Fatal(err)
+	}
+	no := false
+	login := func(change func(*corev1.Pod)) *corev1.Pod {
+		p := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "grok-login", Namespace: providersNS, Labels: map[string]string{"app.kubernetes.io/name": "credential-login", "projects.agentwork.dev/login": "grok"}},
+			Spec: corev1.PodSpec{ServiceAccountName: "credential-owner", AutomountServiceAccountToken: &no,
+				Containers: []corev1.Container{{Name: "login", Image: "registry.example.com/workspace@sha256:" + strings.Repeat("b", 64)}},
+				Volumes:    []corev1.Volume{{Name: "home", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}}}
+		if change != nil {
+			change(p)
+		}
+		return p
+	}
+	podRefused := func(err error) bool {
+		return err != nil && (strings.Contains(err.Error(), "Login pods") || strings.Contains(err.Error(), "provider broker"))
+	}
+	yes := true
+	for name, change := range map[string]func(*corev1.Pod){
+		"login volume": func(p *corev1.Pod) {
+			p.Spec.Volumes = append(p.Spec.Volumes, corev1.Volume{Name: "id", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "grok-identity"}}})
+		},
+		"other image":  func(p *corev1.Pod) { p.Spec.Containers[0].Image = "evil.example/tools:latest" },
+		"token":        func(p *corev1.Pod) { p.Spec.AutomountServiceAccountToken = &yes },
+		"host network": func(p *corev1.Pod) { p.Spec.HostNetwork = true },
+		"other name":   func(p *corev1.Pod) { p.Name = "helper" },
+		"wrong label":  func(p *corev1.Pod) { p.Labels["projects.agentwork.dev/login"] = "cursor" },
+		"two containers": func(p *corev1.Pod) {
+			p.Spec.Containers = append(p.Spec.Containers, p.Spec.Containers[0])
+			p.Spec.Containers[1].Name = "second"
+		},
+		"elsewhere": func(p *corev1.Pod) { p.Namespace = "elsewhere" },
+	} {
+		if err := broker.Create(ctx, login(change)); !podRefused(err) {
+			t.Errorf("broker created a pod with %s: %v", name, err)
+		}
+	}
+	if err := broker.Create(ctx, login(nil)); err != nil {
+		t.Errorf("broker refused its login pod: %v", err)
 	}
 }

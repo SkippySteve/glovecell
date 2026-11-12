@@ -168,3 +168,8 @@ podSelector:
 {{- define "apc.databasePodMonitor" -}}
 {{- if or .Values.database.cloudnativepg.monitoring.enablePodMonitor (and .Values.telemetry.enabled .Values.telemetry.prometheus.podMonitors) }}true{{ else }}false{{ end }}
 {{- end -}}
+
+{{/* Non-empty when the console can sign providers in (providerBroker.consoleSignIn). */}}
+{{- define "apc.providerConsoleSignIn" -}}
+{{- if and .Values.providerBroker.enabled .Values.providerBroker.consoleSignIn }}true{{ end }}
+{{- end -}}

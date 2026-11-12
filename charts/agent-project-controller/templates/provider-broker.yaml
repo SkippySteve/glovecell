@@ -2,6 +2,7 @@
 {{- $pb := .Values.providerBroker }}
 {{- $ns := include "apc.providerBrokerNamespace" . }}
 {{- $prefix := include "apc.policyPrefix" . }}
+{{- $console := include "apc.providerConsoleSignIn" . }}
 {{- $known := dict "grok" (dict "home" ".grok" "loginHosts" (list "accounts.x.ai" "auth.x.ai" "api.x.ai") "tokenHost" "auth.x.ai") "cursor" (dict "home" ".config/cursor" "loginHosts" (list "api2.cursor.sh") "tokenHost" "api2.cursor.sh") }}
 {{- if ne (default "cilium" (index .Values.config "NETWORK_PROVIDER" | toString)) "cilium" }}
 {{- fail "providerBroker.enabled requires NETWORK_PROVIDER=cilium (brokered providers use Cilium host policies)" }}
@@ -26,24 +27,52 @@
 {{- if and (has "cursor" $pb.providers) (not $pb.cursorOAuthClientID) }}
 {{- fail "providerBroker.cursorOAuthClientID is required when cursor is listed" }}
 {{- end }}
-{{- if and $pb.login (not (has $pb.login $pb.providers)) }}
-{{- fail "providerBroker.login must be one of providerBroker.providers" }}
+{{- if hasKey $pb "login" }}
+{{- fail "providerBroker.login was removed: sign in from the console (Connect) or with `agent-project-controller provider import`" }}
 {{- end }}
 {{- $controller := printf "system:serviceaccount:%s:controller" .Release.Namespace }}
 {{- $broker := printf "system:serviceaccount:%s:provider-broker" $ns }}
 {{- $runtimeClass := default (index .Values.config "RUNTIME_CLASS") $pb.owner.runtimeClassName }}
 {{- $dnsNamespace := default "kube-system" (index .Values.config "DNS_SERVICE_NAMESPACE") }}
-# Subscription providers (docs/brokered-providers.md). Two pods in one
-# namespace of their own:
+{{- $loginPods := list }}
+{{- range $p := $pb.providers }}{{ $loginPods = append $loginPods (printf "%s-login" $p) }}{{ end }}
+{{- $scheduling := fromYaml (include "apc.providerBrokerScheduling" $pb) | default dict }}
+{{- /* The login pod the broker creates for console sign-in: no login volume,
+       no token, emptyDir only. The admission policy below refuses any other. */}}
+{{- $loginSpec := dict
+  "serviceAccountName" "credential-owner"
+  "automountServiceAccountToken" false
+  "enableServiceLinks" false
+  "restartPolicy" "Never"
+  "activeDeadlineSeconds" 1200
+  "securityContext" (dict "runAsNonRoot" true "runAsUser" 1000 "runAsGroup" 1000 "fsGroup" 1000 "seccompProfile" (dict "type" "RuntimeDefault"))
+  "containers" (list (dict
+    "name" "login"
+    "image" .Values.workspaceImage
+    "command" (list "python3" "-c" "import time; time.sleep(1200)")
+    "env" (list (dict "name" "HOME" "value" "/owner/home") (dict "name" "NO_OPEN_BROWSER" "value" "1"))
+    "securityContext" (dict "allowPrivilegeEscalation" false "readOnlyRootFilesystem" true "capabilities" (dict "drop" (list "ALL")))
+    "resources" $pb.owner.resources
+    "volumeMounts" (list (dict "name" "home" "mountPath" "/owner/home") (dict "name" "tmp" "mountPath" "/tmp"))))
+  "volumes" (list (dict "name" "home" "emptyDir" (dict "sizeLimit" "256Mi")) (dict "name" "tmp" "emptyDir" (dict "sizeLimit" "256Mi")))
+}}
+{{- with $runtimeClass }}{{ $_ := set $loginSpec "runtimeClassName" . }}{{ end }}
+{{- range $k, $v := $scheduling }}{{ $_ := set $loginSpec $k $v }}{{ end }}
+# Subscription providers (docs/brokered-providers.md). In one namespace of
+# their own:
 #   owners-0         the offline credential owner: holds each listed provider's
 #                    login on its own volume, runs only sleep, has no network
 #                    and no service account token;
 #   provider-broker  execs into owners-0 to renew each login at the provider
 #                    and writes only short-lived access tokens to Secret
 #                    provider-leases, which the controller copies into the
-#                    projects that opted in.
-# The controller can read provider-leases and nothing else here; the policy
-# at the end refuses it every write and exec in this namespace.
+#                    projects that opted in. It also installs new logins:
+#                    from the console (Connect: a short-lived <provider>-login
+#                    pod with no login volume) or from an operator's
+#                    `agent-project-controller provider import`.
+# The controller can read provider-leases and call the broker's sign-in API,
+# nothing else here; the policies at the end refuse it every write and exec in
+# this namespace and keep the broker's own pods and exec to the login shapes.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -64,13 +93,13 @@ metadata:
   namespace: {{ $ns }}
 automountServiceAccountToken: false
 ---
-# Its journal and lease Secrets, created on first use.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: provider-broker
   namespace: {{ $ns }}
 rules:
+  # Its journal and lease Secrets, created on first use.
   - apiGroups: [""]
     resources: [secrets]
     verbs: [create]
@@ -78,11 +107,29 @@ rules:
     resources: [secrets]
     resourceNames: [provider-broker-journal, provider-leases]
     verbs: [get, patch]
-  # Exec into the owner pod only.
+  # One-shot imports from `agent-project-controller provider import`.
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames:
+{{- range $p := $pb.providers }}
+      - provider-import-{{ $p }}
+{{- end }}
+    verbs: [get, patch, delete]
+  # Exec into the owner (renewals, installs) and the login pods.
   - apiGroups: [""]
     resources: [pods/exec]
-    resourceNames: [owners-0]
+    resourceNames: {{ if $console }}{{ prepend $loginPods "owners-0" | toJson }}{{ else }}[owners-0]{{ end }}
     verbs: [create]
+{{- if $console }}
+  # Console sign-in pods; their shape is enforced by admission below.
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [pods]
+    resourceNames: {{ toJson $loginPods }}
+    verbs: [get, delete]
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -123,6 +170,45 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: provider-leases-reader
+{{- if $console }}
+---
+# The broker checks the controller's token on its sign-in API.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ printf "%s-%s-provider-broker-review" .Release.Namespace .Release.Name | trunc 63 | trimSuffix "-" }}
+rules:
+  - apiGroups: [authentication.k8s.io]
+    resources: [tokenreviews]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ printf "%s-%s-provider-broker-review" .Release.Namespace .Release.Name | trunc 63 | trimSuffix "-" }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ printf "%s-%s-provider-broker-review" .Release.Namespace .Release.Name | trunc 63 | trimSuffix "-" }}
+subjects:
+  - kind: ServiceAccount
+    name: provider-broker
+    namespace: {{ $ns }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: provider-broker
+  namespace: {{ $ns }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: provider-broker
+  ports:
+    - name: http
+      port: 8443
+      targetPort: http
+{{- end }}
 {{- range $p := $pb.providers }}
 {{- if not (hasKey $pb.owner.existingClaims $p) }}
 ---
@@ -154,6 +240,31 @@ metadata:
 spec:
   podSelector: {}
   policyTypes: [Ingress, Egress]
+{{- if $console }}
+---
+# Only the controller reaches the broker's sign-in API.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: provider-broker-api
+  namespace: {{ $ns }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: provider-broker
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agent-project-controller
+      ports:
+        - protocol: TCP
+          port: 8443
+{{- end }}
 ---
 # The owner is offline: a deny wins over any allow.
 apiVersion: cilium.io/v2
@@ -170,8 +281,9 @@ spec:
   egressDeny:
     - toEntities: [all]
 ---
-# The broker: the API server (exec into the owner, its Secrets), DNS for the
-# token endpoints, and those endpoints on 443. No ingress.
+# The broker: the API server (exec, its Secrets, login pods), DNS for the
+# token endpoints, and those endpoints on 443. Ingress only from the
+# controller to the sign-in API.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -181,8 +293,20 @@ spec:
   endpointSelector:
     matchLabels:
       app.kubernetes.io/name: provider-broker
+{{- if $console }}
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ .Release.Namespace }}
+            app.kubernetes.io/name: agent-project-controller
+      toPorts:
+        - ports:
+            - port: "8443"
+              protocol: TCP
+{{- else }}
   ingressDeny:
     - fromEntities: [all]
+{{- end }}
   egress:
     - toEntities: [kube-apiserver]
       toPorts:
@@ -228,17 +352,58 @@ spec:
 {{- with $pb.extraEgress }}
 {{ toYaml . | indent 4 }}
 {{- end }}
+{{- if $console }}
+{{- range $p := $pb.providers }}
+{{- $login := get $known $p }}
+---
+# The {{ $p }} sign-in pod (created only while a console sign-in runs)
+# reaches only {{ $p }}'s sign-in hosts. No ingress.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: credential-login-{{ $p }}
+  namespace: {{ $ns }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: credential-login
+      projects.agentwork.dev/login: {{ $p }}
+  ingressDeny:
+    - fromEntities: [all]
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ $dnsNamespace }}
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+          rules:
+            dns:
+{{- range $h := $login.loginHosts }}
+              - matchName: {{ $h }}
+{{- end }}
+    - toFQDNs:
+{{- range $h := $login.loginHosts }}
+        - matchName: {{ $h }}
+{{- end }}
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+{{- end }}
+{{- end }}
 ---
 # A StatefulSet so the pod keeps the fixed name owners-0 that the broker's
-# exec grant and the exec policy below name. While providerBroker.login is set
-# it scales to zero and the login pod has the volume instead.
+# exec grant and the exec policy below name.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: owners
   namespace: {{ $ns }}
 spec:
-  replicas: {{ if $pb.login }}0{{ else }}1{{ end }}
+  replicas: 1
   serviceName: ""
   selector:
     matchLabels:
@@ -265,7 +430,7 @@ spec:
       containers:
         - name: owner
           # The workspace image has python3 (the broker's read and write
-          # helpers) and each provider's CLI (for sign-in).
+          # helpers).
           image: {{ .Values.workspaceImage | quote }}
           command: [python3, -c, "import time; time.sleep(2147483647)"]
           env:
@@ -356,10 +521,28 @@ spec:
             - name: CURSOR_OAUTH_CLIENT_ID
               value: {{ $pb.cursorOAuthClientID | quote }}
 {{- end }}
+{{- if $console }}
+            # Console sign-in API (internal/providerbroker/server.go).
+            - name: PROVIDER_BROKER_LISTEN_ADDR
+              value: ":8443"
+            - name: PROVIDER_BROKER_CALLER
+              value: {{ $controller | quote }}
+            - name: PROVIDER_LOGIN_POD
+              value: {{ toJson $loginSpec | quote }}
+{{- end }}
             # Traces and metrics follow the controller's (telemetry.otlp, or the
             # legacy config.OTEL_*). With telemetry.collector set the egress
             # rule above is added; otherwise allow it with providerBroker.extraEgress.
 {{- include "apc.otelEnv" (dict "root" $ "optionalHeaders" true) | nindent 12 }}
+{{- if $console }}
+          ports:
+            - name: http
+              containerPort: 8443
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+{{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -367,109 +550,9 @@ spec:
               drop: [ALL]
           resources:
 {{ toYaml $pb.resources | indent 12 }}
-{{- if $pb.login }}
-{{- $login := get $known $pb.login }}
 ---
-# Temporary sign-in for {{ $pb.login }} (providerBroker.login). It mounts only
-# this provider's login volume and reaches only its login hosts. It exits after
-# 30 minutes; set providerBroker.login back to '' to remove it and restart the
-# owner.
-apiVersion: cilium.io/v2
-kind: CiliumNetworkPolicy
-metadata:
-  name: credential-login
-  namespace: {{ $ns }}
-spec:
-  endpointSelector:
-    matchLabels:
-      app.kubernetes.io/name: credential-login
-  ingressDeny:
-    - fromEntities: [all]
-  egress:
-    - toEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: {{ $dnsNamespace }}
-            k8s-app: kube-dns
-      toPorts:
-        - ports:
-            - port: "53"
-              protocol: ANY
-          rules:
-            dns:
-{{- range $h := $login.loginHosts }}
-              - matchName: {{ $h }}
-{{- end }}
-    - toFQDNs:
-{{- range $h := $login.loginHosts }}
-        - matchName: {{ $h }}
-{{- end }}
-      toPorts:
-        - ports:
-            - port: "443"
-              protocol: TCP
----
-apiVersion: v1
-kind: Pod
-metadata:
-  name: {{ $pb.login }}-login
-  namespace: {{ $ns }}
-  labels:
-    app.kubernetes.io/name: credential-login
-    projects.agentwork.dev/login: {{ $pb.login }}
-spec:
-  serviceAccountName: credential-owner
-  automountServiceAccountToken: false
-  enableServiceLinks: false
-  restartPolicy: Never
-  activeDeadlineSeconds: 1800
-{{- with $runtimeClass }}
-  runtimeClassName: {{ . | quote }}
-{{- end }}
-{{- include "apc.providerBrokerScheduling" $pb | nindent 2 }}
-  securityContext:
-    runAsNonRoot: true
-    runAsUser: 1000
-    runAsGroup: 1000
-    fsGroup: 1000
-    seccompProfile:
-      type: RuntimeDefault
-  containers:
-    - name: login
-      image: {{ .Values.workspaceImage | quote }}
-      command: [python3, -c, "import time; time.sleep(1800)"]
-      env:
-        - name: HOME
-          value: /owner/home
-        - name: NO_OPEN_BROWSER
-          value: "1"
-      securityContext:
-        allowPrivilegeEscalation: false
-        readOnlyRootFilesystem: true
-        capabilities:
-          drop: [ALL]
-      resources:
-{{ toYaml $pb.owner.resources | indent 8 }}
-      volumeMounts:
-        - name: home
-          mountPath: /owner/home
-        - name: tmp
-          mountPath: /tmp
-        - name: identity
-          mountPath: /owner/home/{{ $login.home }}
-  volumes:
-    - name: home
-      emptyDir:
-        sizeLimit: 64Mi
-    - name: tmp
-      emptyDir:
-        sizeLimit: 256Mi
-    - name: identity
-      persistentVolumeClaim:
-        claimName: {{ default (printf "%s-identity" $pb.login) (get $pb.owner.existingClaims $pb.login) | quote }}
-{{- end }}
----
-# The broker's exec reaches only owners-0 in this namespace, and it never
-# attaches or port-forwards. Fails closed.
+# The broker's exec reaches only owners-0 and its own login pods in this
+# namespace, and it never attaches or port-forwards. Fails closed.
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
@@ -491,8 +574,8 @@ spec:
   validations:
     - expression: "variables.sub == 'exec'"
       message: The provider broker never attaches to or port-forwards into pods
-    - expression: {{ printf "request.namespace == '%s' && request.name == 'owners-0'" $ns | quote }}
-      message: {{ printf "The provider broker may exec only into %s/owners-0" $ns | quote }}
+    - expression: {{ printf "request.namespace == '%s' && request.name in %s" $ns (toJson (ternary (prepend $loginPods "owners-0") (list "owners-0") (not (empty $console))) | replace "\"" "'") | quote }}
+      message: {{ printf "The provider broker may exec only into %s/owners-0 and its login pods" $ns | quote }}
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
@@ -501,10 +584,62 @@ metadata:
 spec:
   policyName: {{ printf "%s-provider-broker-exec" $prefix }}
   validationActions: [Deny]
+{{- if $console }}
+---
+# The only pods the broker may create: a <provider>-login pod in its own
+# namespace with the chart's login template (the workspace image, no service
+# account token, emptyDir volumes only, no host access). Fails closed.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ printf "%s-provider-broker-pods" $prefix }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["*"]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+  matchConditions:
+    - name: broker
+      expression: {{ printf "request.userInfo.username == '%s'" $broker | quote }}
+  variables:
+    - name: spec
+      expression: object.spec
+    - name: provider
+      expression: "has(object.metadata.labels) && 'projects.agentwork.dev/login' in object.metadata.labels ? object.metadata.labels['projects.agentwork.dev/login'] : ''"
+  validations:
+    - expression: "request.operation == 'CREATE'"
+      message: The provider broker never changes pods
+    - expression: {{ printf "request.namespace == '%s' && object.metadata.name in %s && object.metadata.name == variables.provider + '-login'" $ns (toJson $loginPods | replace "\"" "'") | quote }}
+      message: The provider broker may create only its <provider>-login pods, labelled with that provider
+    - expression: "object.metadata.labels['app.kubernetes.io/name'] == 'credential-login'"
+      message: Login pods carry app.kubernetes.io/name=credential-login (their network policy selects it)
+    - expression: "variables.spec.serviceAccountName == 'credential-owner' && has(variables.spec.automountServiceAccountToken) && variables.spec.automountServiceAccountToken == false"
+      message: Login pods have no service account token
+    - expression: "!has(variables.spec.hostNetwork) || !variables.spec.hostNetwork"
+      message: Login pods have no host network
+    - expression: "(!has(variables.spec.hostPID) || !variables.spec.hostPID) && (!has(variables.spec.hostIPC) || !variables.spec.hostIPC)"
+      message: Login pods share no host namespaces
+    - expression: "has(variables.spec.volumes) && variables.spec.volumes.all(v, has(v.emptyDir))"
+      message: Login pods mount only emptyDir volumes, never a login volume
+    - expression: {{ printf "size(variables.spec.containers) == 1 && variables.spec.containers.all(c, c.image == '%s') && (!has(variables.spec.initContainers) || size(variables.spec.initContainers) == 0) && (!has(variables.spec.ephemeralContainers) || size(variables.spec.ephemeralContainers) == 0)" .Values.workspaceImage | quote }}
+      message: Login pods run one container with the chart's workspace image
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ printf "%s-provider-broker-pods" $prefix }}
+spec:
+  policyName: {{ printf "%s-provider-broker-pods" $prefix }}
+  validationActions: [Deny]
+{{- end }}
 ---
 # The controller never writes, execs or changes anything in the providers'
 # namespace (Pods that could mount a login, RoleBindings, the namespace
-# itself). Its read of provider-leases is unaffected. Fails closed.
+# itself). Its read of provider-leases and its calls to the sign-in API are
+# unaffected. Fails closed.
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
