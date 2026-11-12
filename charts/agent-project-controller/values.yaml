@@ -46,12 +46,12 @@ providerBroker:
   providers: []
   # Its own namespace (default <release namespace>-providers). The chart creates it.
   namespace: ''
-  # Sign in: set to one provider (e.g. grok) and helm upgrade. The owner pod
-  # stops and a temporary <provider>-login pod starts with only that login
-  # volume and network access to only that provider's sign-in hosts. Run the
-  # command the install notes print, approve in your browser, then set this
-  # back to '' and helm upgrade again.
-  login: ''
+  # Sign providers in from the console (sandbox > Credentials > Connect): the
+  # broker starts a short-lived sign-in pod (no saved logins, network only to
+  # that provider's sign-in hosts), shows the provider's link and code, and
+  # installs the login when you approve. Off: sign in only with
+  # `agent-project-controller provider import` from your own machine.
+  consoleSignIn: true
   # Public OAuth client ID of the official Cursor CLI (not a secret).
   cursorOAuthClientID: KbZUR41cY7W6zRSdpSUJ7I7mLYBKOCmB
   owner:

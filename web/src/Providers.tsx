@@ -2,6 +2,7 @@ import {useEffect, useState} from 'react';
 import {api, type Project} from './api';
 import {useData} from './data';
 import {Button, Callout, Card, CardHeader, Tag} from './ui';
+import {ProviderLogins} from './ProviderLogins';
 
 const LABELS: Record<string, string> = {grok: 'Grok', cursor: 'Cursor'};
 const COMMANDS: Record<string, string> = {grok: 'grok', cursor: 'cursor-agent'};
@@ -60,6 +61,7 @@ export function Providers({p}: {p: Project}) {
         })}
       </ul>
       {!offered.length ? <Callout variant="neutral" description="Subscription providers are off on this controller. Existing access can still be revoked." /> : null}
+      {session.providerLogins && offered.length ? <ProviderLogins providers={offered} /> : null}
     </Card>
   );
 }

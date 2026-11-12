@@ -25,7 +25,7 @@ backend). Pairing offers use `publicAddress` only
 
 ## Subscription providers (optional)
 
-`providerBroker.enabled: true` with `providerBroker.providers: [grok, cursor]` (either or both) installs the provider broker and one offline credential owner pod in their own namespace (`<release namespace>-providers`), and points the controller at the broker's leases. Projects still opt in per provider in the console. Sign each provider in once: `helm upgrade --set providerBroker.login=grok`, run the command the install notes print, approve in your browser, then upgrade again with `login` back to `''`. Requires `NETWORK_PROVIDER=cilium` and `admissionPolicies.enabled`. Details: [brokered providers](../../docs/brokered-providers.md#deployment).
+`providerBroker.enabled: true` with `providerBroker.providers: [grok, cursor]` (either or both) installs the provider broker and one offline credential owner pod in their own namespace (`<release namespace>-providers`), and points the controller at the broker's leases. Projects still opt in per provider in the console. Sign each provider in once from the console (any sandbox, **Credentials**, **Connect**, then approve in your browser), or copy a login you already have with `agent-project-controller provider import grok`. Requires `NETWORK_PROVIDER=cilium` and `admissionPolicies.enabled`. Details: [brokered providers](../../docs/brokered-providers.md#deployment).
 
 ## Telemetry (optional)
 

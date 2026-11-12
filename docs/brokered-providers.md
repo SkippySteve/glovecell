@@ -158,31 +158,59 @@ This adds one namespace (`<release namespace>-providers`, or
   `providerBroker.owner.existingClaims` adopts claims you already have);
 - `provider-broker`, the controller image in lease mode, allowed to reach only
   the API server and the listed providers' token endpoints;
-- two admission policies: the broker may exec only into `owners-0` (never
-  attach or port-forward), and the controller may not create, change, exec or
-  delete anything in this namespace. Its only right here is `get` on
-  `provider-leases`.
+- three admission policies: the broker may exec only into `owners-0` and its
+  `<provider>-login` pods (never attach or port-forward); the only pods it may
+  create are those login pods with the chart's template (workspace image, no
+  token, emptyDir only, no host access); and the controller may not create,
+  change, exec or delete anything in this namespace. Its only rights here are
+  `get` on `provider-leases` and calls to the sign-in API.
 
 The chart sets the controller's `PROVIDER_LEASES_SECRET` itself (leave
 `config.PROVIDER_LEASES_SECRET` empty) and creates default provider classes
 only for the listed providers.
 
 **Sign in** once per provider, and again whenever the broker log says a login
-needs renewal:
+needs renewal. There are two ways; both end in the same checked install into
+the owner (the broker validates the file, refuses a different Cursor account
+unless you choose to replace it, clears any interrupted renewal first, writes
+the file atomically and reads it back through the renewal path before saying done).
 
-```sh
-helm upgrade <release> <chart> --reuse-values --set providerBroker.login=grok
-kubectl -n <namespace>-providers exec -it grok-login -- /opt/grok/grok login --device-auth
-# Cursor: --set providerBroker.login=cursor, then
-# kubectl -n <namespace>-providers exec -it cursor-login -- /opt/cursor-agent/cursor-agent login
-helm upgrade <release> <chart> --reuse-values --set providerBroker.login=''
-```
+1. **Console (Connect).** Open any sandbox, **Credentials**, *Your
+   subscription logins*, **Connect**. The broker starts a short-lived
+   `<provider>-login` pod (the workspace image, no service account token,
+   emptyDir volumes only, no login volume, network only to that provider's
+   sign-in hosts), runs the provider's own sign-in (`grok login
+   --device-auth`, `cursor-agent login`) and the console shows its link, plus
+   Grok's code. Approve in your browser; the broker copies the new login from
+   that pod into the owner and deletes the pod. One sign-in runs at a time and
+   each ends after 15 minutes. Only a signed-in OIDC operator can start one or
+   see its code. This gives Glovecell its own session, separate from any on
+   your machine. `providerBroker.consoleSignIn: false` turns this path off.
+2. **Copy from your machine.** If the provider's CLI is already signed in on
+   your computer:
 
-While `login` is set the owner pod is stopped (every provider's renewal pauses;
-leases last five minutes) and a temporary `<provider>-login` pod mounts only
-that provider's volume and may reach only its sign-in hosts. It exits after 30
-minutes. Open the address it prints in your own browser. Check renewals with
-`kubectl -n <namespace>-providers logs deploy/provider-broker --tail=20`.
+   ```sh
+   agent-project-controller provider import grok     # ~/.grok/auth.json
+   agent-project-controller provider import cursor   # ~/.config/cursor/auth.json
+   # --file PATH, --namespace <release namespace>-providers, --replace-account
+   ```
+
+   It checks the file locally, hands it to the broker as a one-shot Secret
+   `provider-import-<provider>` (with your own kubeconfig), waits for the
+   broker to install it (normally within 30 seconds) and removes the Secret
+   whether it worked or not. Nothing keeps running on your machine.
+   **Caveat:** your machine and Glovecell then share one sign-in session. If
+   the provider rotates its refresh token, whichever side renews first can sign
+   the other out: your local CLI asks you to sign in again, or the broker log
+   reports `credential owner renewal unavailable` and you import or Connect
+   again. Connect avoids this.
+
+The broker's sign-in API listens on 8443 inside the cluster. It accepts only
+the controller's ServiceAccount, through a projected token with its own
+audience checked by TokenReview (like the forge agent), and network policy
+admits only the controller's pod. The controller relays
+`GET/POST/DELETE /api/v1/provider-logins[/{provider}]` from the console and
+logs who started or canceled each sign-in.
 
 ### By hand
 
