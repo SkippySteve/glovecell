@@ -49,3 +49,29 @@ project's Secrets and for deleting the project namespace itself. */}}
 {{- define "apc.forgeAgentNamespace" -}}
 {{- default (printf "%s-forge" .Release.Namespace | trunc 63 | trimSuffix "-") .Values.forgeAgent.namespace -}}
 {{- end -}}
+
+{{/* Namespace of the provider broker and credential owner (providerBroker.namespace, default <release namespace>-providers). */}}
+{{- define "apc.providerBrokerNamespace" -}}
+{{- default (printf "%s-providers" .Release.Namespace | trunc 63 | trimSuffix "-") .Values.providerBroker.namespace -}}
+{{- end -}}
+
+{{/* Placement of the provider broker, owner and login pods (called with .Values.providerBroker). */}}
+{{- define "apc.providerBrokerScheduling" -}}
+{{- with .scheduling.nodeSelector }}
+nodeSelector:
+{{ toYaml . | indent 2 }}
+{{- end }}
+{{- with .scheduling.tolerations }}
+tolerations:
+{{ toYaml . | indent 2 }}
+{{- end }}
+{{- with .scheduling.affinity }}
+affinity:
+{{ toYaml . | indent 2 }}
+{{- end }}
+{{- end -}}
+
+{{/* The lease Secret the controller reads: the chart's broker when providerBroker.enabled, else config.PROVIDER_LEASES_SECRET. */}}
+{{- define "apc.providerLeasesSecret" -}}
+{{- if .Values.providerBroker.enabled }}{{ printf "%s/provider-leases" (include "apc.providerBrokerNamespace" .) }}{{ else }}{{ index .Values.config "PROVIDER_LEASES_SECRET" | default "" | toString }}{{ end }}
+{{- end -}}

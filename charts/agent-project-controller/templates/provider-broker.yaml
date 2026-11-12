@@ -1,0 +1,525 @@
+{{- if .Values.providerBroker.enabled }}
+{{- $pb := .Values.providerBroker }}
+{{- $ns := include "apc.providerBrokerNamespace" . }}
+{{- $prefix := include "apc.policyPrefix" . }}
+{{- $known := dict "grok" (dict "home" ".grok" "loginHosts" (list "accounts.x.ai" "auth.x.ai" "api.x.ai") "tokenHost" "auth.x.ai") "cursor" (dict "home" ".config/cursor" "loginHosts" (list "api2.cursor.sh") "tokenHost" "api2.cursor.sh") }}
+{{- if ne (default "cilium" (index .Values.config "NETWORK_PROVIDER" | toString)) "cilium" }}
+{{- fail "providerBroker.enabled requires NETWORK_PROVIDER=cilium (brokered providers use Cilium host policies)" }}
+{{- end }}
+{{- if not .Values.admissionPolicies.enabled }}
+{{- fail "providerBroker.enabled requires admissionPolicies.enabled: the controller's cluster-wide Pod and RoleBinding writes could otherwise reach the provider logins" }}
+{{- end }}
+{{- if eq $ns .Release.Namespace }}
+{{- fail "providerBroker.namespace must differ from the controller's namespace (the controller can read Secrets there)" }}
+{{- end }}
+{{- if not $pb.providers }}
+{{- fail "providerBroker.providers must name at least one provider (grok, cursor)" }}
+{{- end }}
+{{- range $p := $pb.providers }}
+{{- if not (hasKey $known $p) }}
+{{- fail (printf "providerBroker.providers: unknown provider %q (supported: grok, cursor)" $p) }}
+{{- end }}
+{{- end }}
+{{- if ne (len $pb.providers) (len (uniq $pb.providers)) }}
+{{- fail "providerBroker.providers lists a provider twice" }}
+{{- end }}
+{{- if and (has "cursor" $pb.providers) (not $pb.cursorOAuthClientID) }}
+{{- fail "providerBroker.cursorOAuthClientID is required when cursor is listed" }}
+{{- end }}
+{{- if and $pb.login (not (has $pb.login $pb.providers)) }}
+{{- fail "providerBroker.login must be one of providerBroker.providers" }}
+{{- end }}
+{{- $controller := printf "system:serviceaccount:%s:controller" .Release.Namespace }}
+{{- $broker := printf "system:serviceaccount:%s:provider-broker" $ns }}
+{{- $runtimeClass := default (index .Values.config "RUNTIME_CLASS") $pb.owner.runtimeClassName }}
+{{- $dnsNamespace := default "kube-system" (index .Values.config "DNS_SERVICE_NAMESPACE") }}
+# Subscription providers (docs/brokered-providers.md). Two pods in one
+# namespace of their own:
+#   owners-0         the offline credential owner: holds each listed provider's
+#                    login on its own volume, runs only sleep, has no network
+#                    and no service account token;
+#   provider-broker  execs into owners-0 to renew each login at the provider
+#                    and writes only short-lived access tokens to Secret
+#                    provider-leases, which the controller copies into the
+#                    projects that opted in.
+# The controller can read provider-leases and nothing else here; the policy
+# at the end refuses it every write and exec in this namespace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $ns }}
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: provider-broker
+  namespace: {{ $ns }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: credential-owner
+  namespace: {{ $ns }}
+automountServiceAccountToken: false
+---
+# Its journal and lease Secrets, created on first use.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: provider-broker
+  namespace: {{ $ns }}
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [provider-broker-journal, provider-leases]
+    verbs: [get, patch]
+  # Exec into the owner pod only.
+  - apiGroups: [""]
+    resources: [pods/exec]
+    resourceNames: [owners-0]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: provider-broker
+  namespace: {{ $ns }}
+subjects:
+  - kind: ServiceAccount
+    name: provider-broker
+    namespace: {{ $ns }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: provider-broker
+---
+# The controller reads the leases (PROVIDER_LEASES_SECRET), nothing else here.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: provider-leases-reader
+  namespace: {{ $ns }}
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [provider-leases]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: provider-leases-reader
+  namespace: {{ $ns }}
+subjects:
+  - kind: ServiceAccount
+    name: controller
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: provider-leases-reader
+{{- range $p := $pb.providers }}
+{{- if not (hasKey $pb.owner.existingClaims $p) }}
+---
+# The {{ $p }} login. Kept on uninstall: deleting it means signing in again.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $p }}-identity
+  namespace: {{ $ns }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+{{- with $pb.owner.storageClass }}
+  storageClassName: {{ . | quote }}
+{{- end }}
+  resources:
+    requests:
+      storage: {{ $pb.owner.storageSize | quote }}
+{{- end }}
+{{- end }}
+---
+# Nothing in this namespace talks to anything unless a policy below allows it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: {{ $ns }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# The owner is offline: a deny wins over any allow.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: credential-owner-offline
+  namespace: {{ $ns }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: credential-owner
+  ingressDeny:
+    - fromEntities: [all]
+  egressDeny:
+    - toEntities: [all]
+---
+# The broker: the API server (exec into the owner, its Secrets), DNS for the
+# token endpoints, and those endpoints on 443. No ingress.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: provider-broker
+  namespace: {{ $ns }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: provider-broker
+  ingressDeny:
+    - fromEntities: [all]
+  egress:
+    - toEntities: [kube-apiserver]
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "6443"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ $dnsNamespace }}
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+          rules:
+            dns:
+{{- range $p := $pb.providers }}
+              - matchName: {{ (get $known $p).tokenHost }}
+{{- end }}
+    - toFQDNs:
+{{- range $p := $pb.providers }}
+        - matchName: {{ (get $known $p).tokenHost }}
+{{- end }}
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+{{- with $pb.extraEgress }}
+{{ toYaml . | indent 4 }}
+{{- end }}
+---
+# A StatefulSet so the pod keeps the fixed name owners-0 that the broker's
+# exec grant and the exec policy below name. While providerBroker.login is set
+# it scales to zero and the login pod has the volume instead.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: owners
+  namespace: {{ $ns }}
+spec:
+  replicas: {{ if $pb.login }}0{{ else }}1{{ end }}
+  serviceName: ""
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: credential-owner
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: credential-owner
+    spec:
+      serviceAccountName: credential-owner
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+{{- with $runtimeClass }}
+      runtimeClassName: {{ . | quote }}
+{{- end }}
+{{- include "apc.providerBrokerScheduling" $pb | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: owner
+          # The workspace image has python3 (the broker's read and write
+          # helpers) and each provider's CLI (for sign-in).
+          image: {{ .Values.workspaceImage | quote }}
+          command: [python3, -c, "import time; time.sleep(2147483647)"]
+          env:
+            - name: HOME
+              value: /owner/home
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+{{ toYaml $pb.owner.resources | indent 12 }}
+          volumeMounts:
+            - name: home
+              mountPath: /owner/home
+            - name: tmp
+              mountPath: /tmp
+{{- range $p := $pb.providers }}
+            - name: {{ $p }}-identity
+              mountPath: /owner/home/{{ (get $known $p).home }}
+{{- end }}
+      volumes:
+        - name: home
+          emptyDir:
+            sizeLimit: 64Mi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+{{- range $p := $pb.providers }}
+        - name: {{ $p }}-identity
+          persistentVolumeClaim:
+            claimName: {{ default (printf "%s-identity" $p) (get $pb.owner.existingClaims $p) | quote }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: provider-broker
+  namespace: {{ $ns }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: provider-broker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: provider-broker
+    spec:
+      serviceAccountName: provider-broker
+      enableServiceLinks: false
+{{- include "apc.providerBrokerScheduling" $pb | nindent 6 }}
+{{- with .Values.controllerImagePullSecrets }}
+      imagePullSecrets:
+{{ toYaml . | indent 8 }}
+{{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: broker
+          image: {{ .Values.controllerImage | quote }}
+          args: [provider-broker]
+          env:
+            - name: PROVIDER_BROKER_CONTROL_NAMESPACE
+              value: {{ $ns | quote }}
+            - name: PROVIDER_BROKER_JOURNAL
+              value: provider-broker-journal
+            - name: PROVIDER_BROKER_LEASES
+              value: provider-leases
+            - name: PROVIDER_BROKER_PROVIDERS
+              value: {{ join "," $pb.providers | quote }}
+{{- range $p := $pb.providers }}
+            - name: {{ upper $p }}_OWNER_NAMESPACE
+              value: {{ $ns | quote }}
+            - name: {{ upper $p }}_OWNER_POD
+              value: owners-0
+            - name: {{ upper $p }}_OWNER_CONTAINER
+              value: owner
+{{- end }}
+{{- if has "cursor" $pb.providers }}
+            # Public OAuth client ID of the Cursor CLI (not a secret).
+            - name: CURSOR_OAUTH_CLIENT_ID
+              value: {{ $pb.cursorOAuthClientID | quote }}
+{{- end }}
+            # Traces and metrics follow the controller's switch and endpoint
+            # (config.OTEL_*); allow the endpoint with providerBroker.extraEgress.
+            {{- range $key := list "OTEL_ENABLED" "OTEL_EXPORTER_OTLP_ENDPOINT" }}
+            {{- with index $.Values.config $key }}
+            - name: {{ $key }}
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+{{ toYaml $pb.resources | indent 12 }}
+{{- if $pb.login }}
+{{- $login := get $known $pb.login }}
+---
+# Temporary sign-in for {{ $pb.login }} (providerBroker.login). It mounts only
+# this provider's login volume and reaches only its login hosts. It exits after
+# 30 minutes; set providerBroker.login back to '' to remove it and restart the
+# owner.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: credential-login
+  namespace: {{ $ns }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: credential-login
+  ingressDeny:
+    - fromEntities: [all]
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ $dnsNamespace }}
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+          rules:
+            dns:
+{{- range $h := $login.loginHosts }}
+              - matchName: {{ $h }}
+{{- end }}
+    - toFQDNs:
+{{- range $h := $login.loginHosts }}
+        - matchName: {{ $h }}
+{{- end }}
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ $pb.login }}-login
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/name: credential-login
+    projects.agentwork.dev/login: {{ $pb.login }}
+spec:
+  serviceAccountName: credential-owner
+  automountServiceAccountToken: false
+  enableServiceLinks: false
+  restartPolicy: Never
+  activeDeadlineSeconds: 1800
+{{- with $runtimeClass }}
+  runtimeClassName: {{ . | quote }}
+{{- end }}
+{{- include "apc.providerBrokerScheduling" $pb | nindent 2 }}
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: login
+      image: {{ .Values.workspaceImage | quote }}
+      command: [python3, -c, "import time; time.sleep(1800)"]
+      env:
+        - name: HOME
+          value: /owner/home
+        - name: NO_OPEN_BROWSER
+          value: "1"
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: [ALL]
+      resources:
+{{ toYaml $pb.owner.resources | indent 8 }}
+      volumeMounts:
+        - name: home
+          mountPath: /owner/home
+        - name: tmp
+          mountPath: /tmp
+        - name: identity
+          mountPath: /owner/home/{{ $login.home }}
+  volumes:
+    - name: home
+      emptyDir:
+        sizeLimit: 64Mi
+    - name: tmp
+      emptyDir:
+        sizeLimit: 256Mi
+    - name: identity
+      persistentVolumeClaim:
+        claimName: {{ default (printf "%s-identity" $pb.login) (get $pb.owner.existingClaims $pb.login) | quote }}
+{{- end }}
+---
+# The broker's exec reaches only owners-0 in this namespace, and it never
+# attaches or port-forwards. Fails closed.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ printf "%s-provider-broker-exec" $prefix }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["*"]
+        operations: [CONNECT]
+        resources: [pods/exec, pods/attach, pods/portforward]
+  matchConditions:
+    - name: broker
+      expression: {{ printf "request.userInfo.username == '%s'" $broker | quote }}
+  variables:
+    - name: sub
+      expression: "request.?subResource.orValue('')"
+  validations:
+    - expression: "variables.sub == 'exec'"
+      message: The provider broker never attaches to or port-forwards into pods
+    - expression: {{ printf "request.namespace == '%s' && request.name == 'owners-0'" $ns | quote }}
+      message: {{ printf "The provider broker may exec only into %s/owners-0" $ns | quote }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ printf "%s-provider-broker-exec" $prefix }}
+spec:
+  policyName: {{ printf "%s-provider-broker-exec" $prefix }}
+  validationActions: [Deny]
+---
+# The controller never writes, execs or changes anything in the providers'
+# namespace (Pods that could mount a login, RoleBindings, the namespace
+# itself). Its read of provider-leases is unaffected. Fails closed.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ printf "%s-providers-scope" $prefix }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["*"]
+        apiVersions: ["*"]
+        operations: [CREATE, UPDATE, DELETE, CONNECT]
+        resources: ["*/*"]
+  matchConditions:
+    - name: controller
+      expression: {{ printf "request.userInfo.username == '%s'" $controller | quote }}
+  validations:
+    - expression: {{ printf "request.namespace != '%s' && !(request.resource.resource == 'namespaces' && request.name == '%s')" $ns $ns | quote }}
+      message: {{ printf "The project controller may not change anything in the providers' namespace %s" $ns | quote }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ printf "%s-providers-scope" $prefix }}
+spec:
+  policyName: {{ printf "%s-providers-scope" $prefix }}
+  validationActions: [Deny]
+{{- end }}

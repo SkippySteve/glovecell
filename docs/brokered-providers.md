@@ -140,6 +140,52 @@ out. Pausing or removing the project stops the worker.
 
 ## Deployment
 
+### With the Helm chart
+
+```yaml
+providerBroker:
+  enabled: true
+  providers: [grok, cursor]   # only the subscriptions you have
+```
+
+This adds one namespace (`<release namespace>-providers`, or
+`providerBroker.namespace`) with:
+
+- `owners-0`, the offline owner (a one-replica StatefulSet, so its name is
+  fixed): the workspace image running `sleep`, no service account token, a
+  Cilium policy that denies all traffic, and one retained volume per listed
+  provider (`<provider>-identity`, kept on `helm uninstall`;
+  `providerBroker.owner.existingClaims` adopts claims you already have);
+- `provider-broker`, the controller image in lease mode, allowed to reach only
+  the API server and the listed providers' token endpoints;
+- two admission policies: the broker may exec only into `owners-0` (never
+  attach or port-forward), and the controller may not create, change, exec or
+  delete anything in this namespace. Its only right here is `get` on
+  `provider-leases`.
+
+The chart sets the controller's `PROVIDER_LEASES_SECRET` itself (leave
+`config.PROVIDER_LEASES_SECRET` empty) and creates default provider classes
+only for the listed providers.
+
+**Sign in** once per provider, and again whenever the broker log says a login
+needs renewal:
+
+```sh
+helm upgrade <release> <chart> --reuse-values --set providerBroker.login=grok
+kubectl -n <namespace>-providers exec -it grok-login -- /opt/grok/grok login --device-auth
+# Cursor: --set providerBroker.login=cursor, then
+# kubectl -n <namespace>-providers exec -it cursor-login -- /opt/cursor-agent/cursor-agent login
+helm upgrade <release> <chart> --reuse-values --set providerBroker.login=''
+```
+
+While `login` is set the owner pod is stopped (every provider's renewal pauses;
+leases last five minutes) and a temporary `<provider>-login` pod mounts only
+that provider's volume and may reach only its sign-in hosts. It exits after 30
+minutes. Open the address it prints in your own browser. Check renewals with
+`kubectl -n <namespace>-providers logs deploy/provider-broker --tail=20`.
+
+### By hand
+
 `config/samples/provider-broker.yaml` is a generic example: namespace,
 ServiceAccount, Roles, the broker Deployment and one owner pod. Replace the
 image digests and owner names, sign each provider in once with a temporary

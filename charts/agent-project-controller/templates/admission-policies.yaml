@@ -52,7 +52,7 @@ data:
   lanAllowedCIDRs: {{ join "," $allowed | quote }}
   lanDeniedCIDRs: {{ join "," $denied | quote }}
   # "true" when PROVIDER_LEASES_SECRET is set, so spec.providers may be used.
-  providersEnabled: {{ ternary "true" "false" (not (empty (index .Values.config "PROVIDER_LEASES_SECRET"))) | quote }}
+  providersEnabled: {{ ternary "true" "false" (not (empty (include "apc.providerLeasesSecret" .))) | quote }}
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy

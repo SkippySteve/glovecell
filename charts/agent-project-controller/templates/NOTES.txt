@@ -24,3 +24,21 @@ Sign in to the same T3 account on each receiving device, then select its project
 {{- if .Values.tailscaleIngress.enabled }}
 The Tailscale operator must be installed. Set PUBLIC_ORIGIN and the identity-provider callback for the private endpoint.
 {{- end }}
+{{- if .Values.providerBroker.enabled }}
+{{- $pns := include "apc.providerBrokerNamespace" . }}
+
+Subscription providers ({{ join ", " .Values.providerBroker.providers }}) are on, in namespace {{ $pns }}.
+{{- if .Values.providerBroker.login }}
+Sign-in for {{ .Values.providerBroker.login }} is running. When pod {{ .Values.providerBroker.login }}-login is Ready, run:
+{{- if eq .Values.providerBroker.login "grok" }}
+  kubectl -n {{ $pns }} exec -it grok-login -- /opt/grok/grok login --device-auth
+{{- else }}
+  kubectl -n {{ $pns }} exec -it cursor-login -- /opt/cursor-agent/cursor-agent login
+{{- end }}
+Open the address it shows in your browser and approve. Then set providerBroker.login to '' and helm upgrade again.
+{{- else }}
+Sign each provider in once: helm upgrade with --set providerBroker.login=<provider> and follow the notes.
+Check renewals: kubectl -n {{ $pns }} logs deploy/provider-broker --tail=20
+Then enable a provider per project in the console (sandbox > Credentials).
+{{- end }}
+{{- end }}

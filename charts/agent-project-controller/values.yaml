@@ -32,6 +32,58 @@ forgeAgent:
     limits:
       cpu: 200m
       memory: 64Mi
+# Subscription providers (docs/brokered-providers.md): lets project sandboxes
+# use your own Grok or Cursor subscription without the login entering any
+# sandbox. Off by default. On, the chart adds one namespace with two small
+# pods: an offline owner pod holding the logins, and the broker that renews
+# them and hands out 5-minute access tokens. The controller is configured to
+# read them (PROVIDER_LEASES_SECRET) automatically; each project still opts in
+# per provider in the console. Needs NETWORK_PROVIDER=cilium and
+# admissionPolicies.enabled.
+providerBroker:
+  enabled: false
+  # Which subscriptions you have: grok, cursor. Only these get a login volume.
+  providers: []
+  # Its own namespace (default <release namespace>-providers). The chart creates it.
+  namespace: ''
+  # Sign in: set to one provider (e.g. grok) and helm upgrade. The owner pod
+  # stops and a temporary <provider>-login pod starts with only that login
+  # volume and network access to only that provider's sign-in hosts. Run the
+  # command the install notes print, approve in your browser, then set this
+  # back to '' and helm upgrade again.
+  login: ''
+  # Public OAuth client ID of the official Cursor CLI (not a secret).
+  cursorOAuthClientID: KbZUR41cY7W6zRSdpSUJ7I7mLYBKOCmB
+  owner:
+    # Default: config.RUNTIME_CLASS.
+    runtimeClassName: ''
+    # Storage for the logins; '' uses the cluster default class.
+    storageClass: ''
+    storageSize: 1Gi
+    # Adopt claims you created yourself instead, e.g. {grok: my-grok-login}.
+    existingClaims: {}
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+  resources:
+    requests:
+      cpu: 20m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  # Placement of the broker, owner and login pods.
+  scheduling:
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+  # Extra Cilium egress rules for the broker, e.g. your OTLP collector when
+  # config.OTEL_ENABLED is true.
+  extraEgress: []
 # The default AccessProfiles (locked, ask, standard, open, custom; docs/access-levels.md).
 # locked is the cluster default for new cells. Set false to manage profiles yourself.
 accessProfiles:
@@ -312,10 +364,12 @@ hubspoke:
   # (docs/hubspoke.md, APC #113 follow-up). Requires Gateway listener + DNS.
   spoke:
     publicDomain: ''
+    # Your Gateway listener for the spoke hostnames; all three are required
+    # when publicDomain is set.
     gateway:
-      name: traefik-gateway
-      namespace: traefik-system
-      sectionName: websecure-cluster-aimingupward
+      name: ''
+      namespace: ''
+      sectionName: ''
 # Default OrchestratorClasses (cluster-scoped) that workspaces may name in
 # spec.orchestratorClassName. All off by default. Workspaces without a class
 # keep the deployment default: T3 Connect when t3Connect.enabled, else none.

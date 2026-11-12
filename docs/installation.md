@@ -11,6 +11,7 @@ Deploy first in a disposable qualification cluster. This initial implementation 
 - Forgejo 15.0.9. Repository-scoped personal access tokens and protected `main` are required. Git over HTTPS on port 443 must use a server certificate trusted by the container. The qualified identity provider is Authentik 2026.5.6.
 - One Forgejo owner, one operator group and one controller replica. This is not a multi-tenant hosted service.
 - A storage class and provisioner with `Delete` reclaim behavior. The controller checks both the class and bound volume. The provisioner must actually delete its backing data. Snapshots and backups need a separate operator retention policy.
+- PostgreSQL for history and approvals: the [CloudNativePG](https://cloudnative-pg.io/) operator (the chart's default `database.mode`, which renders a one-instance cluster), or an existing server with `database.mode: external` ([database](database.md)).
 - An HTTPS dashboard origin and OIDC provider. Register a confidential client with the exact redirect URI `<PUBLIC_ORIGIN>/auth/callback`. Request group claims or explicitly allow issuer-local subject IDs.
 
 Approved operators share one trust boundary and can manage every project under that owner.

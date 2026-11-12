@@ -2,7 +2,7 @@
 
 Helm chart for the controller, embedded dashboard, API, CRDs, admission policies, and RBAC.
 
-The chart does not install Agent Sandbox, Cilium, a runtime class, Forgejo, or an identity provider. The public install path is the [quickstart](../../docs/quickstart.md). Published image digests are in [alpha-values.yaml](../../docs/examples/alpha-values.yaml).
+The chart does not install Agent Sandbox, Cilium, a runtime class, Forgejo, an identity provider, or the CloudNativePG operator (see [Database](#database)). The public install path is the [quickstart](../../docs/quickstart.md). Published image digests are in [alpha-values.yaml](../../docs/examples/alpha-values.yaml).
 
 Supply digest-pinned `controllerImage` and `workspaceImage`, plus the Forgejo origin, owner, public origin, and OIDC client. Create Secret `controller-secrets` outside the chart, with `forgejo-token` and `oidc-client-secret`. `proxyImage` defaults to `controllerImage`.
 
@@ -22,6 +22,10 @@ refuses to render hubspoke without a `wss://` `publicAddress`. Console
 reachability does not imply hub reachability (separate DNS, route, and
 backend). Pairing offers use `publicAddress` only
 ([hubspoke](../../docs/hubspoke.md), [Hub console pairing](../../docs/design/hub-console-pairing.md)).
+
+## Subscription providers (optional)
+
+`providerBroker.enabled: true` with `providerBroker.providers: [grok, cursor]` (either or both) installs the provider broker and one offline credential owner pod in their own namespace (`<release namespace>-providers`), and points the controller at the broker's leases. Projects still opt in per provider in the console. Sign each provider in once: `helm upgrade --set providerBroker.login=grok`, run the command the install notes print, approve in your browser, then upgrade again with `login` back to `''`. Requires `NETWORK_PROVIDER=cilium` and `admissionPolicies.enabled`. Details: [brokered providers](../../docs/brokered-providers.md#deployment).
 
 ## Database
 
