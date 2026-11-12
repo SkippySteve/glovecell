@@ -16,6 +16,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      # Forgejo main is mirrored to GitHub on every commit: refuse private keys,
+      # tokens, private addresses and node names before anything reaches main.
+      - name: Publishable (this repository is public on GitHub)
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            git fetch --quiet origin "$BASE_REF"
+            python3 scripts/check-publishable.py --range "origin/$BASE_REF..HEAD"
+          else
+            python3 scripts/check-publishable.py
+          fi
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
