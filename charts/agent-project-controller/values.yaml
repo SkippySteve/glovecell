@@ -432,6 +432,18 @@ orchestratorClasses:
   command:
     enabled: false
     name: command
+  # projects.agentwork.dev/herdr: herdr-core in the worker (docs/herdr.md).
+  # Requires herdrCore.enabled so the controller registers the adapter.
+  herdr:
+    enabled: false
+    name: herdr
+# herdr-core in Glovecell workers (docs/herdr.md). Off by default. When
+# enabled, workspaces with OrchestratorClass herdr run `hc server` and publish
+# a hub `--via` recipe ConfigMap. Phone/PC still use a hub herdr-core over
+# LAN/WireGuard; this does not open public SSH.
+herdrCore:
+  enabled: false
+  className: herdr
 # ProviderClass and ForgeClass (docs/classes.md). The chart generates the
 # defaults from the settings above, so an upgrade changes nothing: a ForgeClass
 # for the configured Forgejo (GIT_HOST=forgejo) and, when PROVIDER_LEASES_SECRET
