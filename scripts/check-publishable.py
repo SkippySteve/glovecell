@@ -11,15 +11,22 @@ becomes public. This check runs in the required `checks` job and fails on:
                 in .publish-allow (the deployment's own LAN never appears here
                 by name: every private address is refused unless allowed)
   node-name     a node host name such as <name>-node-<n>
+  personal-email  an address at a personal mailbox provider (Gmail, Outlook,
+                iCloud, Proton, ...). Commits on main carry project or noreply
+                addresses only; the maintainer's Forgejo account keeps its
+                email private, so merge commits use its noreply address.
 
-It scans the files at HEAD (tracked, text) and, with --range, the messages and
-added lines of the commits in that range. Exceptions live in .publish-allow:
+It scans the files at HEAD (tracked, text) and, with --range, the messages,
+added lines and author/committer of the commits in that range. --last-commit
+checks the message and author/committer of HEAD only (CI on main: the merge
+commit Forgejo created). Exceptions live in .publish-allow:
 `value <regex>` allows a matched value anywhere, `path <glob> <category>`
 allows one category in matching files (test fixtures with fake keys).
 Matches are reported by file, line and category; values are masked.
 
   scripts/check-publishable.py                     # tree at HEAD
   scripts/check-publishable.py --range origin/main..HEAD
+  scripts/check-publishable.py --last-commit
 """
 import argparse
 import fnmatch
@@ -41,6 +48,9 @@ PATTERNS = {
         r'|(?i:token)["\'\s:=]{1,4}[0-9a-f]{40}\b'),
     'private-ip': re.compile(r'(?<![\d.])(?:10|172)\.\d{1,3}\.\d{1,3}\.\d{1,3}(?:/\d{1,2})?(?![\d.]*\d)'),
     'node-name': re.compile(r'\b[a-z][a-z0-9]*-node-\d+\b'),
+    'personal-email': re.compile(
+        r'[A-Za-z0-9._%+-]+@(?:gmail|googlemail|outlook|hotmail|live|msn|yahoo|ymail|icloud|me|mac'
+        r'|aol|proton|protonmail|pm|gmx|yandex|zoho|fastmail|hey)\.(?:com|net|me|de|ch|ru|co\.uk)\b', re.I),
 }
 
 
@@ -106,11 +116,19 @@ def scan_tree(allow, out):
             scan_line(line, (path, number), allow, out)
 
 
+def scan_commit_meta(sha, allow, out):
+    """Author, committer and message (Reviewed-by and Co-authored-by trailers included)."""
+    identities = git('show', '-s', '--format=%an <%ae>%n%cn <%ce>', sha)
+    for number, line in enumerate(identities.splitlines(), 1):
+        scan_line(line, (f'commit {sha[:12]} {("author", "committer")[number - 1]}', number), allow, out)
+    message = git('show', '-s', '--format=%B', sha)
+    for number, line in enumerate(message.splitlines(), 1):
+        scan_line(line, (f'commit {sha[:12]} message', number), allow, out)
+
+
 def scan_range(rev_range, allow, out):
     for sha in git('rev-list', rev_range).split():
-        message = git('show', '-s', '--format=%B', sha)
-        for number, line in enumerate(message.splitlines(), 1):
-            scan_line(line, (f'commit {sha[:12]} message', number), allow, out)
+        scan_commit_meta(sha, allow, out)
         path = None
         for line in git('show', '--format=', '--unified=0', '--no-color', sha).splitlines():
             if line.startswith('+++ '):
@@ -122,6 +140,7 @@ def scan_range(rev_range, allow, out):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--range', help='also scan these commits, e.g. origin/main..HEAD')
+    parser.add_argument('--last-commit', action='store_true', help='also scan the message and author/committer of HEAD')
     parser.add_argument('--no-tree', action='store_true', help='skip the files at HEAD')
     args = parser.parse_args(argv)
     allow_path = ROOT / ALLOW_FILE
@@ -131,13 +150,15 @@ def main(argv=None):
         scan_tree(allow, out)
     if args.range:
         scan_range(args.range, allow, out)
+    if args.last_commit:
+        scan_commit_meta(git('rev-parse', 'HEAD').strip(), allow, out)
     for line in out:
         print(line)
     if out:
         print(f'{len(out)} finding(s): this repository is published to GitHub. Remove them, or add a '
               f'reviewed exception to {ALLOW_FILE} if the value is a documentation example.', file=sys.stderr)
         return 1
-    print('publishable: no private keys, tokens, private addresses or node names')
+    print('publishable: no private keys, tokens, private addresses, node names or personal email addresses')
     return 0
 
 

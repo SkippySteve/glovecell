@@ -30,6 +30,14 @@ jobs:
           else
             python3 scripts/check-publishable.py
           fi
+      # The merge commit on main is written by Forgejo with the merging
+      # account's identity, after PR checks ran. Report a personal address
+      # there (the account must keep its email private); report-only until
+      # main is clean, then drop continue-on-error.
+      - name: Publishable merge commit (report only)
+        if: github.event_name == 'push'
+        continue-on-error: true
+        run: python3 scripts/check-publishable.py --no-tree --last-commit
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
