@@ -194,7 +194,7 @@ func (s *Server) createRequest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid access request", http.StatusBadRequest)
 		return
 	}
-	if !obj.DeletionTimestamp.IsZero() || obj.Spec.DesiredState == "Removed" {
+	if !obj.DeletionTimestamp.IsZero() || obj.Spec.DesiredState == api.DesiredRemoved {
 		http.Error(w, "project is being removed", http.StatusConflict)
 		return
 	}
@@ -237,7 +237,7 @@ func (s *Server) decide(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	approve := body.Decision == "approve"
-	if approve && (!obj.DeletionTimestamp.IsZero() || obj.Spec.DesiredState == "Removed") {
+	if approve && (!obj.DeletionTimestamp.IsZero() || obj.Spec.DesiredState == api.DesiredRemoved) {
 		http.Error(w, "project is being removed", http.StatusConflict)
 		return
 	}

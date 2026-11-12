@@ -31,7 +31,7 @@ func TestEnrollmentAPIAllowsReadyOrPausedAndKeepsOneWorkbench(t *testing.T) {
 	} {
 		scheme := runtime.NewScheme()
 		_ = api.AddToScheme(scheme)
-		original := &api.ProjectWorkspace{ObjectMeta: metav1.ObjectMeta{Name: "bench", Namespace: "control", UID: types.UID("existing-workbench"), ResourceVersion: "12", Generation: 1}, Spec: api.WorkspaceSpec{Repository: "steve/root", DesiredState: test.desired}, Status: api.WorkspaceStatus{Phase: test.phase, ObservedGeneration: 1}}
+		original := &api.ProjectWorkspace{ObjectMeta: metav1.ObjectMeta{Name: "bench", Namespace: "control", UID: types.UID("existing-workbench"), ResourceVersion: "12", Generation: 1}, Spec: api.WorkspaceSpec{Repository: "steve/root", DesiredState: api.DesiredState(test.desired)}, Status: api.WorkspaceStatus{Phase: api.Phase(test.phase), ObservedGeneration: 1}}
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(original).Build()
 		password := strings.Repeat("a", 32)
 		s := &Server{Client: c, Host: host{}, Namespace: "control", Owner: "steve", Password: password, Origin: "https://projects.example.com", AllowBasic: true, GitHubOwner: test.githubOwner}

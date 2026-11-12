@@ -253,15 +253,7 @@ func (r *Reconciler) Setup(m ctrl.Manager) error {
 		}
 		counts := map[string]int64{}
 		for _, w := range list.Items {
-			phase := w.Status.Phase
-			switch phase {
-			case "Ready", "Preparing", "Pausing", "Paused", "Blocked", "Removing", "Removed":
-			case "":
-				phase = "Requested"
-			default:
-				phase = "Other"
-			}
-			counts[phase]++
+			counts[phaseLabel(w.Status.Phase)]++
 		}
 		for phase, n := range counts {
 			o.ObserveInt64(gauge, n, metric.WithAttributes(attribute.String("phase", phase)))
@@ -322,13 +314,13 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ct
 	// class does not resolve, every forge call fails: nothing is granted, and
 	// removal of a workspace that holds a grant waits for revocation.
 	r, forgeErr := r.forWorkspace(ctx, w)
-	if !w.DeletionTimestamp.IsZero() || w.Spec.DesiredState == "Removed" {
+	if !w.DeletionTimestamp.IsZero() || w.Spec.DesiredState == api.DesiredRemoved {
 		if e := r.remove(ctx, w); e != nil {
-			statusErr := r.status(ctx, w, "Removing", false, "CleanupPending", e.Error())
+			statusErr := r.status(ctx, w, api.PhaseRemoving, false, "CleanupPending", e.Error())
 			return ctrl.Result{RequeueAfter: 5 * time.Second}, errors.Join(e, statusErr)
 		}
 		if w.DeletionTimestamp.IsZero() {
-			return ctrl.Result{}, r.status(ctx, w, "Removed", false, "Removed", "Access revoked and owned Kubernetes storage removed")
+			return ctrl.Result{}, r.status(ctx, w, api.PhaseRemoved, false, "Removed", "Access revoked and owned Kubernetes storage removed")
 		}
 		controllerutil.RemoveFinalizer(w, api.Finalizer)
 		return ctrl.Result{}, r.Update(ctx, w)
@@ -353,22 +345,22 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ct
 		if _, providerErr := r.applyProviders(ctx, w, nil, nil); providerErr != nil {
 			return ctrl.Result{}, providerErr
 		}
-		if statusErr := r.status(ctx, w, "Blocked", false, classRejection(e), e.Error()); statusErr != nil {
+		if statusErr := r.status(ctx, w, api.PhaseBlocked, false, classRejection(e), e.Error()); statusErr != nil {
 			return ctrl.Result{}, statusErr
 		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 	if e := r.ensure(ctx, w); e != nil {
 		stopErr := r.suspend(ctx, w)
-		statusErr := r.status(ctx, w, "Preparing", false, "PreparationPending", e.Error())
+		statusErr := r.status(ctx, w, api.PhasePreparing, false, "PreparationPending", e.Error())
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, errors.Join(e, stopErr, statusErr)
 	}
-	phase := "Preparing"
+	phase := api.PhasePreparing
 	ready := false
 	reason := "PreparationPending"
 	message := "Waiting for inspected clone and ready Sandbox"
-	if w.Spec.DesiredState == "Paused" {
-		phase = "Pausing"
+	if w.Spec.DesiredState == api.DesiredPaused {
+		phase = api.PhasePausing
 		reason = "PausePending"
 		message = "Waiting for project processes to terminate"
 		gone, e := r.processesGone(ctx, w)
@@ -376,12 +368,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ct
 			return ctrl.Result{}, e
 		}
 		if gone {
-			phase = "Paused"
+			phase = api.PhasePaused
 			reason = "Paused"
 			message = "Project paused; files and repository credentials retained"
 		}
 	}
-	if w.Spec.DesiredState == "Running" {
+	if w.Spec.DesiredState == api.DesiredRunning {
 		u := &unstructured.Unstructured{}
 		u.SetGroupVersionKind(sandboxGVK)
 		if e := r.Get(ctx, types.NamespacedName{Namespace: namespace(w), Name: "project"}, u); e != nil {
@@ -391,7 +383,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ct
 		for _, raw := range conditions {
 			c, _ := raw.(map[string]any)
 			if c["type"] == "Ready" && c["status"] == "True" {
-				phase = "Ready"
+				phase = api.PhaseReady
 				ready = true
 				reason = "ProjectReady"
 				message = "Inspected clone completed and project environment is ready"
@@ -404,7 +396,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ct
 		if stopErr := r.suspendOrchestrators(ctx, w, nil, e); stopErr != nil {
 			return ctrl.Result{}, stopErr
 		}
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, r.status(ctx, w, "Blocked", false, classRejection(e), e.Error())
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, r.status(ctx, w, api.PhaseBlocked, false, classRejection(e), e.Error())
 	}
 	if access != nil {
 		pendingReason, readyMessage := orchestrator.Wording(access)
@@ -420,7 +412,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ct
 				}
 			}
 			if e := access.Ensure(ctx, w); e != nil {
-				phase, ready, reason, message = "Preparing", false, pendingReason, e.Error()
+				phase, ready, reason, message = api.PhasePreparing, false, pendingReason, e.Error()
 			} else {
 				message = readyMessage
 			}
@@ -458,7 +450,7 @@ func (r *Reconciler) validate(ctx context.Context, w *api.ProjectWorkspace) erro
 	if e := r.validateRepositories(w); e != nil {
 		return e
 	}
-	if w.Spec.DesiredState != "Running" && w.Spec.DesiredState != "Paused" {
+	if w.Spec.DesiredState != api.DesiredRunning && w.Spec.DesiredState != api.DesiredPaused {
 		return errors.New("unsupported desired state")
 	}
 	if !strings.Contains(r.Config.Image, "@sha256:") || r.Config.RuntimeClass == "" || r.Config.StorageClass == "" {
@@ -526,7 +518,10 @@ func (r *Reconciler) auditLog() *auditlog.Log {
 	}
 	return &auditlog.Log{Client: r.Client, Namespace: r.Config.Namespace}
 }
-func (r *Reconciler) status(ctx context.Context, w *api.ProjectWorkspace, phase string, ready bool, reason, message string) error {
+
+// status records the workspace's phase and Ready condition. It is the only
+// writer of status.phase; Reconcile picks the phase.
+func (r *Reconciler) status(ctx context.Context, w *api.ProjectWorkspace, phase api.Phase, ready bool, reason, message string) error {
 	old := w.DeepCopyObject().(*api.ProjectWorkspace)
 	previous := meta.FindStatusCondition(w.Status.Conditions, "Ready")
 	if !ready && (previous == nil || previous.Reason != reason || previous.Message != message) {
@@ -539,11 +534,11 @@ func (r *Reconciler) status(ctx context.Context, w *api.ProjectWorkspace, phase 
 	// readable, never appended). One Event per transition: a phase change,
 	// or a new reason or message on a not-ready condition in the same phase.
 	if w.Status.Phase != phase {
-		if e := r.audit(ctx, w, "phase-"+strings.ToLower(phase)); e != nil {
+		if e := r.audit(ctx, w, "phase-"+strings.ToLower(string(phase))); e != nil {
 			return e
 		}
 		slog.InfoContext(ctx, "workspace phase changed", "workspace_uid", string(w.UID), "generation", w.Generation, "phase", phase, "trace_id", trace.SpanContextFromContext(ctx).TraceID().String())
-		from := w.Status.Phase
+		from := string(w.Status.Phase)
 		if from == "" {
 			from = "Requested"
 		}
@@ -672,7 +667,7 @@ func (r *Reconciler) ensure(ctx context.Context, w *api.ProjectWorkspace) error 
 	if e != nil {
 		return e
 	}
-	if w.Spec.DesiredState != "Paused" {
+	if w.Spec.DesiredState != api.DesiredPaused {
 		if e = r.modelAccess(ctx, w); e != nil {
 			return e
 		}
@@ -1660,7 +1655,7 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 		addCellTelemetry(proxyDeployment, r.Config.proxyImage(), security)
 	}
 	r.Config.ProxyScheduling.Apply(&proxyDeployment.Spec.Template.Spec)
-	if w.Spec.DesiredState == "Paused" {
+	if w.Spec.DesiredState == api.DesiredPaused {
 		proxyDeployment.Spec.Replicas = int32p(0)
 	}
 	objects = append(objects, proxyDeployment)
@@ -1708,8 +1703,8 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 	if e = json.Unmarshal(b, &podspec); e != nil {
 		return e
 	}
-	sandbox := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "agents.x-k8s.io/v1beta1", "kind": "Sandbox", "metadata": map[string]any{"name": "project", "namespace": ns, "labels": map[string]any{api.OwnerLabel: string(w.UID)}}, "spec": map[string]any{"operatingMode": w.Spec.DesiredState, "podTemplate": map[string]any{"metadata": map[string]any{"labels": stringMap(workerlabels)}, "spec": podspec}}}}
-	if w.Spec.DesiredState == "Paused" {
+	sandbox := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "agents.x-k8s.io/v1beta1", "kind": "Sandbox", "metadata": map[string]any{"name": "project", "namespace": ns, "labels": map[string]any{api.OwnerLabel: string(w.UID)}}, "spec": map[string]any{"operatingMode": string(w.Spec.DesiredState), "podTemplate": map[string]any{"metadata": map[string]any{"labels": stringMap(workerlabels)}, "spec": podspec}}}}
+	if w.Spec.DesiredState == api.DesiredPaused {
 		_ = unstructured.SetNestedField(sandbox.Object, "Suspended", "spec", "operatingMode")
 	}
 	objects = append(objects, sandbox)

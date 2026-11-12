@@ -25,7 +25,7 @@ type HTTPSRule struct {
 }
 type WorkspaceSpec struct {
 	Repository   string              `json:"repository"`
-	DesiredState string              `json:"desiredState"`
+	DesiredState DesiredState        `json:"desiredState"`
 	HTTPS        []HTTPSRule         `json:"https,omitempty"`
 	Repositories []RepositoryProject `json:"repositories,omitempty"`
 	// LANHosts grants the project's worker direct TCP to single IPv4 hosts on the
@@ -133,7 +133,7 @@ type AuditEvent struct {
 	Generation int64       `json:"generation"`
 }
 type WorkspaceStatus struct {
-	Phase              string `json:"phase,omitempty"`
+	Phase              Phase  `json:"phase,omitempty"`
 	Namespace          string `json:"namespace,omitempty"`
 	ObservedGeneration int64  `json:"observedGeneration,omitempty"`
 	// Conditions carry the current state; each records the generation it

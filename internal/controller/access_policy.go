@@ -162,8 +162,8 @@ func (r *Reconciler) updateAccessPolicy(ctx context.Context, w *api.ProjectWorks
 	// previous repo still present. Apply the widened policy live (no Pause);
 	// enrollRepositories then grants and refreshes workers. Removals and HTTPS
 	// edits still require Pause so processes stop before a narrower policy.
-	live := w.Spec.DesiredState == "Running" && reflect.DeepEqual(previous, w.Spec.HTTPS) && repositoriesOnlyAdded(previousRepositories, w.Spec.Repositories)
-	if !live && w.Spec.DesiredState != "Paused" {
+	live := w.Spec.DesiredState == api.DesiredRunning && reflect.DeepEqual(previous, w.Spec.HTTPS) && repositoriesOnlyAdded(previousRepositories, w.Spec.Repositories)
+	if !live && w.Spec.DesiredState != api.DesiredPaused {
 		return errors.New("pause the project before changing HTTPS access")
 	}
 	if !live {
