@@ -46,6 +46,11 @@ Open that one-time URL on the phone or browser within ten minutes. Keep the URL 
 
 ## Transport
 
+> **Being retired.** The desktop registrar is a `desktop-exception` under
+> [Glovecell runs in the cluster](in-cluster.md): it runs on an operator machine
+> with that operator's cluster credentials. Its replacement is the in-cluster
+> hubspoke enrollment with the desktop Orca app as a client. Do not extend it.
+
 `agent-project-controller register --watch` holds a go-fuse mount per Ready workspace. Each mount is backed by a jailed `python3` helper over `kubectl exec` with roots `/workspace/repo` and `/workspace/worktrees` only. No in-pod SSH server and no sshfs.
 
 Mount directory: `~/.local/share/agent-project-controller/mounts/<workspace>` (override with `APC_MOUNT_ROOT`).
