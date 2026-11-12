@@ -204,3 +204,41 @@ func TestChartDashboardIsGeneric(t *testing.T) {
 		t.Error("dashboard panels do not use the datasource variable")
 	}
 }
+
+// With both on, the provider broker exports to the same collector as the
+// controller and its Cilium policy allows exactly that collector and port.
+func TestChartProviderBrokerTelemetry(t *testing.T) {
+	requireHelm(t)
+	values := telemetryValues(fullTelemetry())
+	values["providerBroker"] = map[string]any{"enabled": true, "providers": []string{"grok"}}
+	_, docs, err := renderChart(t, values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := containerEnv(t, find(docs, "Deployment", "provider-broker"))
+	if env["OTEL_ENABLED"] != "true" || env["OTEL_EXPORTER_OTLP_ENDPOINT"] != "http://otel-collector.monitoring.svc:4318" {
+		t.Fatalf("broker OTLP env %v", env)
+	}
+	if ref, _ := json.Marshal(env["OTEL_EXPORTER_OTLP_HEADERS"]); !strings.Contains(string(ref), `"optional":true`) {
+		t.Fatalf("broker headers must be optional (Secret lives in the release namespace): %s", ref)
+	}
+	policy, _ := json.Marshal(dig(find(docs, "CiliumNetworkPolicy", "provider-broker"), "spec", "egress"))
+	for _, want := range []string{`"k8s:io.kubernetes.pod.namespace":"monitoring"`, `"app":"otel-collector"`, `"port":"4318"`} {
+		if !strings.Contains(string(policy), want) {
+			t.Fatalf("broker egress lacks %s: %s", want, policy)
+		}
+	}
+
+	off := telemetryValues(map[string]any{"enabled": false})
+	off["providerBroker"] = map[string]any{"enabled": true, "providers": []string{"grok"}}
+	_, docs, err = renderChart(t, off)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env := containerEnv(t, find(docs, "Deployment", "provider-broker")); env["OTEL_ENABLED"] == "true" || env["OTEL_EXPORTER_OTLP_ENDPOINT"] != nil {
+		t.Fatalf("broker exports while telemetry is off: %v", env)
+	}
+	if policy, _ := json.Marshal(dig(find(docs, "CiliumNetworkPolicy", "provider-broker"), "spec", "egress")); strings.Contains(string(policy), "monitoring") {
+		t.Fatalf("collector egress while telemetry is off: %s", policy)
+	}
+}
