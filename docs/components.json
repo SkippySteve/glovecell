@@ -2,6 +2,7 @@
   "_doc": "Every agent-project-controller subcommand and where it runs. See docs/in-cluster.md. internal/installation/incluster_test.go fails if a subcommand is missing here, if a chart component has no template, or if the exception list grows.",
   "components": [
     {"command": "controller", "class": "chart", "template": "deployment.yaml"},
+    {"command": "forge-agent", "class": "chart", "template": "forge-agent.yaml", "note": "own pod, namespace and ServiceAccount holding the Forgejo admin token; off by default"},
 
     {"command": "proxy", "class": "controller-pod", "note": "project egress proxy pod created by the controller"},
     {"command": "proxy-ready", "class": "controller-pod", "note": "proxy readiness probe"},
@@ -18,6 +19,7 @@
     {"command": "t3-stop", "class": "controller-pod", "note": "inside a worker"},
     {"command": "t3-relay", "class": "controller-pod", "note": "inside a worker"},
     {"command": "t3-codex", "class": "controller-pod", "note": "inside a worker"},
+    {"command": "telemetry-relay", "class": "controller-pod", "note": "relay container in each proxy pod (cell telemetry, pull only)"},
 
     {"command": "t3", "class": "operator-cli", "note": "one-shot, operator's own identity; nothing depends on it running"},
     {"command": "connect", "class": "operator-cli", "note": "one-shot, operator's own identity"},
