@@ -30,8 +30,9 @@ This is part of decision D12 (Kubernetes-native API).
 
 | controllerName | What it does today | Needs |
 | --- | --- | --- |
-| `projects.agentwork.dev/t3` | T3 Connect: starts T3 in the sandbox and links it to the T3 account ([T3 Connect](t3-connect.md)). | `t3Connect.enabled` |
+| `projects.agentwork.dev/t3` | T3 Connect: starts T3 in the sandbox and links it to the T3 account ([T3 Connect](t3-connect.md)). Phone and PC use the T3 account catalog. | `t3Connect.enabled` + **t3-controller** image |
 | `projects.agentwork.dev/orca` | Hub-and-spoke when `HUBSPOKE_ORCA_ENABLED=true` ([hubspoke.md](hubspoke.md)): `orcad` in each gVisor spoke, hub enrolls for phone relay. Otherwise the legacy control-host registrar (client kind `orca`). Design: [project Orca runtime](design/project-orca-runtime.md). | hubspoke hub + `ORCA_RUNTIME_IMAGE`, or a registrar with Orca |
+| `projects.agentwork.dev/herdr` | herdr-core in the worker; hub `--via` for Android/PC Herdr ([clients-choice.md](clients-choice.md); `docs/herdr.md` on APC #129). | `herdrCore.enabled` + workspace `hc` |
 | `projects.agentwork.dev/command` | Custom command clients on the registrar (`APC_CLIENT_<KIND>_REGISTER/REVOKE`). | a registrar with the custom kind |
 
 The Helm chart can create one class for each. All are off by default:
