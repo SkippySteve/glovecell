@@ -25,7 +25,9 @@ COPY --from=console /src/internal/web/dist/ internal/web/dist/
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${SOURCE_REVISION}" -o /agent-project-controller ./cmd/agent-project-controller
 
 FROM ${RUNTIME_IMAGE} AS runtime
-RUN apk add --no-cache ca-certificates git openssh-client \
+# git >= 2.52.1-r0: CVE-2026-105437, CVE-2026-111760, CVE-2026-114466 (HIGH). The
+# minimum also keeps a cached layer or a stale mirror from shipping an older git.
+RUN apk add --no-cache ca-certificates 'git>=2.52.1-r0' openssh-client \
     && apk upgrade --no-cache openssh-client openssh-client-common openssh-keygen \
     && addgroup -g 1000 agent && adduser -D -u 1000 -G agent agent
 COPY --from=build /agent-project-controller /usr/local/bin/agent-project-controller
