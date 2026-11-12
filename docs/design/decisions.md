@@ -63,7 +63,7 @@ with per-cell additions. First contents: the plain-language rule and the
 
 ## D7 — Orca runtime per cell (2026-10-26)
 
-Adopt [project-orca-runtime.md](project-orca-runtime.md) as an optional cell
+Adopt a per-project Orca runtime ([glovecell.md, section 9](glovecell.md#9-orca-runtime-per-cell)) as an optional cell
 orchestrator, with egress and credentials through the cell's own proxy and no
 shared runtime at the end of migration.
 
