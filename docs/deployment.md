@@ -71,3 +71,29 @@ than claiming Cilium enforces SNI in this profile.
 `PROXY_IMAGE` optionally selects a separate digest-pinned proxy runtime image.
 It defaults to `WORKSPACE_IMAGE` outside Helm. The Helm chart defaults it to the
 controller image so coding tools need not be included in the proxy container.
+
+### Lean repository bootstrap
+
+`BOOTSTRAP_IMAGE_SOURCE=proxy` opts the repository clone init container into
+the configured digest-pinned proxy image. The default, `workspace`, retains
+the coding image. No new image reference or credential is introduced. The
+controller validates this enum, and the chart accepts it through
+`config.BOOTSTRAP_IMAGE_SOURCE`.
+
+The upstream controller runtime contains the same bootstrap/credential helper,
+Git, shell, SSH client and CA certificates used by the coding image. Using it
+avoids mounting repository credentials in an init container that also contains
+coding clients and toolchain utilities. The worker keeps its existing coding
+or orchestrator runtime. Bootstrap mounts, resources, identity, gVisor runtime,
+network policy and restricted security context do not change. This does not
+fix vulnerabilities in the worker image or establish that all bootstrap
+vulnerabilities are gone.
+
+Leave the default for custom proxy images until their bootstrap command and
+Git dependencies have been qualified. First use a disposable cell to verify
+clone, extra repositories, interrupted-clone retry and pause/resume. Existing
+image-drift checks still refuse unexpected running-image changes. Activation
+in a deployment repository must wait for the new controller image; older
+controllers ignore the setting, allowing the config PR to land safely first.
+To undo, restore `workspace` and use the normal controlled image transition;
+workspace data and repository identity remain on their existing volumes.

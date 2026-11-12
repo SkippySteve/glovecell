@@ -136,6 +136,8 @@ accessGrants:
     lan: 24h
     package: 720h
 config:
+  # Opt into the lean runtime for repository clone init containers after qualification.
+  BOOTSTRAP_IMAGE_SOURCE: workspace
   # network-policy is experimental and requires independent dataplane qualification.
   NETWORK_PROVIDER: cilium
   NETWORK_POLICY_ENFORCEMENT_ACKNOWLEDGED: 'false'
