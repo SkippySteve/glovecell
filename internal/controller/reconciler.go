@@ -120,6 +120,9 @@ type Config struct {
 	// HerdrOrchestratorClass is the OrchestratorClass name that selects the
 	// herdr-core worker path (default "herdr").
 	HerdrOrchestratorClass string
+	// Platform floors (APC #106). Empty is inert; copied into every proxy
+	// policy so approvals and project rules cannot override them.
+	PlatformFloors proxy.PlatformFloors
 	// AuditAssignmentFeed publishes per-cell host audit assignments into
 	// ConfigMap AuditAssignmentFeedConfigMap in Namespace (default
 	// glovecell-audit-assignments). Off by default; enabling it is the
