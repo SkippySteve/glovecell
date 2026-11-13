@@ -12,7 +12,7 @@ spec:
   template:
     metadata:
       annotations:
-        checksum/config: {{ toJson (dict "config" .Values.config "workspaceImage" .Values.workspaceImage "proxyImage" (default .Values.controllerImage .Values.proxyImage) "workspaceScheduling" .Values.workspaceScheduling "proxyScheduling" .Values.proxyScheduling "proxyGateway" .Values.proxyGateway "t3Connect" .Values.t3Connect) | sha256sum }}
+        checksum/config: {{ toJson (dict "config" .Values.config "workspaceImage" .Values.workspaceImage "proxyImage" (default .Values.controllerImage .Values.proxyImage) "workspaceScheduling" .Values.workspaceScheduling "proxyScheduling" .Values.proxyScheduling "proxyGateway" .Values.proxyGateway "t3Connect" .Values.t3Connect "database" .Values.database) | sha256sum }}
       labels:
         app.kubernetes.io/name: agent-project-controller
     spec:
@@ -74,12 +74,51 @@ spec:
 {{- if eq $gitHost "github" }}
             - name: GITHUB_APP_PRIVATE_KEY_FILE
               value: /control-secrets/github-app-private-key
+{{- else if .Values.forgeAgent.enabled }}
+            # The Forgejo administrative token stays in the forge agent's pod
+            # (forge-agent.yaml); the controller proves itself with a
+            # projected token for the agent's audience.
+            - name: FORGE_AGENT_URL
+              value: {{ printf "http://forge-agent.%s.svc:8443" (include "apc.forgeAgentNamespace" .) | quote }}
+            - name: FORGE_AGENT_TOKEN_FILE
+              value: /var/run/apc/forge-agent/token
 {{- else }}
             - name: FORGEJO_TOKEN_FILE
               value: /control-secrets/forgejo-token
 {{- end }}
             - name: OIDC_CLIENT_SECRET_FILE
               value: /control-secrets/oidc-client-secret
+{{- if and (include "apc.otlpPush" .) .Values.telemetry.otlp.headersSecret }}
+            # Collector auth (telemetry.otlp.headersSecret).
+            - name: OTEL_EXPORTER_OTLP_HEADERS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.telemetry.otlp.headersSecret | quote }}
+                  key: {{ .Values.telemetry.otlp.headersKey | quote }}
+{{- end }}
+{{- if include "apc.providerConsoleSignIn" . }}
+            # Console provider sign-in (provider-broker.yaml): the controller
+            # proves itself to the broker with a projected token.
+            - name: PROVIDER_BROKER_URL
+              value: {{ printf "http://provider-broker.%s.svc:8443" (include "apc.providerBrokerNamespace" .) | quote }}
+            - name: PROVIDER_BROKER_TOKEN_FILE
+              value: /var/run/apc/provider-broker/token
+{{- end }}
+            # Controller database (docs/database.md): verify-full TLS.
+            - name: DATABASE_URL_FILE
+              value: /var/run/apc/database/uri
+{{- if or (eq .Values.database.mode "cloudnativepg") .Values.database.external.caKey }}
+            - name: DATABASE_CA_FILE
+              value: /var/run/apc/database-ca/ca.crt
+{{- end }}
+            - name: DATABASE_MAX_CONNS
+              value: {{ .Values.database.maxConnections | toString | quote }}
+            - name: HISTORY_RETENTION
+              value: {{ .Values.database.historyRetention | toString | quote }}
+            - name: DECIDED_REQUEST_RETENTION
+              value: {{ .Values.database.decidedRequestRetention | toString | quote }}
+            - name: PROXY_SUMMARY_RETENTION
+              value: {{ .Values.database.proxySummaryRetention | toString | quote }}
 {{- if .Values.automationAPI.enabled }}
             - name: API_SECRET_FILE
               value: /control-secrets/api-secret
@@ -119,6 +158,24 @@ spec:
             - name: control-secrets
               mountPath: /control-secrets
               readOnly: true
+{{- if and .Values.forgeAgent.enabled (ne $gitHost "github") }}
+            - name: forge-agent-token
+              mountPath: /var/run/apc/forge-agent
+              readOnly: true
+{{- end }}
+{{- if include "apc.providerConsoleSignIn" . }}
+            - name: provider-broker-token
+              mountPath: /var/run/apc/provider-broker
+              readOnly: true
+{{- end }}
+            - name: database
+              mountPath: /var/run/apc/database
+              readOnly: true
+{{- if or (eq .Values.database.mode "cloudnativepg") .Values.database.external.caKey }}
+            - name: database-ca
+              mountPath: /var/run/apc/database-ca
+              readOnly: true
+{{- end }}
 {{- if .Values.referenceRules.configMap }}
             - name: reference-rules
               mountPath: /reference-rules
@@ -146,6 +203,61 @@ spec:
           secret:
             secretName: {{ .Values.existingSecret | quote }}
             defaultMode: 0440
+{{- if and .Values.forgeAgent.enabled (ne $gitHost "github") }}
+            # Every key but forgejo-token, which only the forge agent mounts.
+            items:
+              - key: oidc-client-secret
+                path: oidc-client-secret
+{{- if .Values.automationAPI.enabled }}
+              - key: api-secret
+                path: api-secret
+{{- end }}
+        - name: forge-agent-token
+          projected:
+            defaultMode: 0440
+            sources:
+              - serviceAccountToken:
+                  audience: agent-project-controller-forge-agent
+                  expirationSeconds: 3600
+                  path: token
+{{- end }}
+{{- if include "apc.providerConsoleSignIn" . }}
+        - name: provider-broker-token
+          projected:
+            defaultMode: 0440
+            sources:
+              - serviceAccountToken:
+                  audience: agent-project-controller-provider-broker
+                  expirationSeconds: 3600
+                  path: token
+{{- end }}
+        # Only the URI key: the operator's app Secret also holds the password
+        # and pgpass separately.
+        - name: database
+          secret:
+            secretName: {{ include "apc.databaseSecret" . | quote }}
+            defaultMode: 0440
+            items:
+              - key: {{ ternary .Values.database.external.uriKey "uri" (eq .Values.database.mode "external") | quote }}
+                path: uri
+{{- if eq .Values.database.mode "cloudnativepg" }}
+        # Only ca.crt: never mount the operator's ca.key.
+        - name: database-ca
+          secret:
+            secretName: {{ printf "%s-ca" (include "apc.databaseCluster" .) | quote }}
+            defaultMode: 0444
+            items:
+              - key: ca.crt
+                path: ca.crt
+{{- else if .Values.database.external.caKey }}
+        - name: database-ca
+          secret:
+            secretName: {{ include "apc.databaseSecret" . | quote }}
+            defaultMode: 0444
+            items:
+              - key: {{ .Values.database.external.caKey | quote }}
+                path: ca.crt
+{{- end }}
 {{- if .Values.referenceRules.configMap }}
         - name: reference-rules
           configMap:
@@ -159,6 +271,9 @@ metadata:
   name: controller
 spec:
   type: ClusterIP
+  # Ready includes database health; the console stays reachable while the
+  # database is down so it can explain why requests are refused.
+  publishNotReadyAddresses: true
   selector:
     app.kubernetes.io/name: agent-project-controller
   ports:

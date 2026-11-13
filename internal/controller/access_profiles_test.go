@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/netip"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -94,6 +95,51 @@ func TestSampleProfilesMatchTheLevels(t *testing.T) {
 	}
 }
 
+func TestProfileRulesUseSubstrateShape(t *testing.T) {
+	read := func(hosts ...string) api.EgressRule {
+		return api.EgressRule{HTTPS: &api.HTTPSEgressRule{Hostnames: hosts, Methods: []string{"GET", "HEAD"}, Paths: []string{"/"}}}
+	}
+	p := &api.AccessProfile{ObjectMeta: metav1.ObjectMeta{Name: "docs"}, Spec: api.AccessProfileSpec{Level: api.AccessLevelCustom, Rules: []api.EgressRule{read("docs.example.com", "*.docs.example.org")}}}
+	p.Spec.Rules[0].HTTPS.Ports = &api.EgressPorts{Numbers: []int32{443}}
+	rules, err := ProfileRules(p)
+	if err != nil || len(rules) != 2 || rules[0].Host != "docs.example.com" || rules[1].Host != "*.docs.example.org" {
+		t.Fatalf("one rule per hostname expected: %#v %v", rules, err)
+	}
+	for _, r := range rules {
+		if r.Source != "profile:docs" || strings.Join(r.Methods, ",") != "GET,HEAD" || strings.Join(r.Paths, ",") != "/" {
+			t.Fatalf("expanded rule lost its label, methods or paths: %#v", r)
+		}
+	}
+	if err = proxy.Validate(proxy.Config{Rules: append([]api.HTTPSRule{{Host: "git.example.com", Methods: []string{"GET"}, Paths: []string{"/"}}}, rules...)}); err != nil {
+		t.Fatal("expanded profile rules refused by the proxy", err)
+	}
+	// "*.docs.example.org" matches one label, as in Substrate.
+	cfg := proxy.Config{Rules: rules}
+	if !proxy.Allowed(cfg, "api.docs.example.org", "GET", "/") || proxy.Allowed(cfg, "docs.example.org", "GET", "/") || proxy.Allowed(cfg, "a.b.docs.example.org", "GET", "/") {
+		t.Fatal("wildcard does not match exactly one label")
+	}
+	// Expanding hostnames must not edit the profile.
+	rules[0].Methods[0] = "POST"
+	if p.Spec.Rules[0].HTTPS.Methods[0] != "GET" {
+		t.Fatal("expanded rules share the profile's slices")
+	}
+
+	many := make([]string, 0, MaxProfileHostRules+1)
+	for i := 0; i <= MaxProfileHostRules; i++ {
+		many = append(many, "h"+strconv.Itoa(i)+".example.com")
+	}
+	for name, spec := range map[string]api.AccessProfileSpec{
+		"no-protocol": {Level: api.AccessLevelCustom, Rules: []api.EgressRule{{}}},
+		"other-port":  {Level: api.AccessLevelCustom, Rules: []api.EgressRule{{HTTPS: &api.HTTPSEgressRule{Hostnames: []string{"docs.example.com"}, Ports: &api.EgressPorts{Numbers: []int32{443, 8443}}, Methods: []string{"GET"}, Paths: []string{"/"}}}}},
+		"no-ports":    {Level: api.AccessLevelCustom, Rules: []api.EgressRule{{HTTPS: &api.HTTPSEgressRule{Hostnames: []string{"docs.example.com"}, Ports: &api.EgressPorts{}, Methods: []string{"GET"}, Paths: []string{"/"}}}}},
+		"too-many":    {Level: api.AccessLevelCustom, Rules: []api.EgressRule{read(many...)}},
+	} {
+		if got, err := ProfileRules(&api.AccessProfile{ObjectMeta: metav1.ObjectMeta{Name: name}, Spec: spec}); err == nil {
+			t.Fatalf("profile %s accepted: %d rules", name, len(got))
+		}
+	}
+}
+
 func TestProfileRulesApplyAndNarrowWhileRunning(t *testing.T) {
 	ctx := context.Background()
 	r, w, _ := fixture(t)
@@ -142,7 +188,7 @@ func TestMissingOrWritingProfileFailsClosed(t *testing.T) {
 	if err := r.validate(ctx, w); err == nil || !errors.Is(err, errProfileMissing) {
 		t.Fatal("missing profile accepted", err)
 	}
-	writer := &api.AccessProfile{ObjectMeta: metav1.ObjectMeta{Name: "writer"}, Spec: api.AccessProfileSpec{Level: api.AccessLevelCustom, HTTPS: []api.HTTPSRule{{Host: "upload.example.com", Methods: []string{"POST"}, Paths: []string{"/"}}}}}
+	writer := &api.AccessProfile{ObjectMeta: metav1.ObjectMeta{Name: "writer"}, Spec: api.AccessProfileSpec{Level: api.AccessLevelCustom, Rules: []api.EgressRule{{HTTPS: &api.HTTPSEgressRule{Hostnames: []string{"upload.example.com"}, Methods: []string{"POST"}, Paths: []string{"/"}}}}}}
 	createProfile(t, r, writer)
 	setProfile(t, r, w, "writer")
 	if err := r.validate(ctx, w); err == nil {

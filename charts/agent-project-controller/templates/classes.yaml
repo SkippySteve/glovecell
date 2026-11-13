@@ -12,9 +12,10 @@ workspace that names them behaves exactly like one that names nothing.
 {{- $prefix := include "apc.clusterPrefix" . }}
 {{- $gitHost := default "forgejo" (index .Values.config "GIT_HOST" | toString) }}
 {{- if .Values.classes.createDefaults }}
-{{- if eq $gitHost "forgejo" }}
+{{- if and (eq $gitHost "forgejo") (not .Values.forgeAgent.enabled) }}
 ---
-# The configured Forgejo as a class. Workspaces without forgeClassName keep
+# The configured Forgejo as a class. Not rendered with the forge agent: a class
+# credential must be readable by the controller, which the agent prevents. Workspaces without forgeClassName keep
 # using the same forge through the controller's settings.
 apiVersion: projects.agentwork.dev/v1alpha1
 kind: ForgeClass
@@ -30,9 +31,9 @@ spec:
   parameters:
     owner: {{ index .Values.config "FORGEJO_OWNER" | quote }}
 {{- end }}
-{{- $leases := index .Values.config "PROVIDER_LEASES_SECRET" | default "" | toString }}
+{{- $leases := include "apc.providerLeasesSecret" . }}
 {{- if $leases }}
-{{- range $provider := list "grok" "cursor" }}
+{{- range $provider := ternary .Values.providerBroker.providers (list "grok" "cursor") .Values.providerBroker.enabled }}
 ---
 # Default ProviderClass for bare spec.providers[] entries named {{ $provider }}:
 # the broker's lease Secret and the one-minute minimum, as before classes.

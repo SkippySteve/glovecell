@@ -94,6 +94,9 @@ func (s *Server) brokeredAllowed(host, method, path string) bool {
 
 // inRules reports whether the project's fixed policy names host.
 func (s *Server) inRules(host string) bool {
+	if s.Config.VendorTelemetry && slices.Contains(VendorTelemetryHosts(), host) {
+		return true
+	}
 	for _, rule := range s.Config.Rules {
 		if hostMatches(rule.Host, host) {
 			return true

@@ -82,6 +82,13 @@ rules:
     resourceNames: [ciliumnetworkpolicies.cilium.io]
     verbs: [get]
 {{- end }}
+{{- if and .Values.hubspoke.orca.enabled .Values.hubspoke.spoke.publicDomain }}
+  # Per-project spoke HTTPRoute for desktop pairing (wss://<project>.<domain>).
+  - apiGroups: [gateway.networking.k8s.io]
+    resources: [httproutes]
+    verbs: [get, list, watch, create, update, patch, delete]
+{{- end }}
+
   - apiGroups: [storage.k8s.io]
     resources: [storageclasses]
     verbs: [get]
@@ -95,6 +102,14 @@ rules:
     resources: [clusterroles]
     resourceNames: [{{ include "apc.projectAccessRole" . }}]
     verbs: [bind]
+{{- if include "apc.hubLogs" . }}
+  # The hub's pod and log read, bound per project namespace to the hub's
+  # ServiceAccount (HUBSPOKE_HUB_LOGS_CLUSTER_ROLE).
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterroles]
+    resourceNames: [{{ include "apc.hubLogsRole" . }}]
+    verbs: [bind]
+{{- end }}
 {{- if include "apc.workerExec" . }}
   # No cluster-wide exec grant: the controller binds the role below in each
   # project namespace it creates (WORKER_EXEC_CLUSTER_ROLE).
@@ -112,6 +127,22 @@ rules:
   - apiGroups: ['']
     resources: [pods/exec]
     verbs: [create]
+{{- end }}
+{{- if include "apc.hubLogs" . }}
+---
+# Orca hub: read worker pods and their logs for pairing offers. Bound only by
+# RoleBindings in project namespaces (orca-hub-logs), never cluster-wide.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "apc.hubLogsRole" . }}
+rules:
+  - apiGroups: ['']
+    resources: [pods]
+    verbs: [get, list, watch]
+  - apiGroups: ['']
+    resources: [pods/log]
+    verbs: [get]
 {{- end }}
 ---
 # A project's Secrets and its namespace object. Bound only by RoleBindings in

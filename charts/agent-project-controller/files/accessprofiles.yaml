@@ -1,6 +1,7 @@
 # The default access levels (docs/access-levels.md). Cluster-scoped presets a
 # cell names in spec.accessProfileName. Profile rules are read only; anything
-# that writes belongs in a cell's own spec.https. "locked" is the cluster
+# that writes belongs in a cell's own spec.https. Rules use Agent
+# Substrate's EgressPolicy shape (docs/access-levels.md). "locked" is the cluster
 # default for new cells; cells from before access profiles keep their rules.
 apiVersion: projects.agentwork.dev/v1alpha1
 kind: AccessProfile
@@ -32,12 +33,16 @@ spec:
   description: Package downloads from npm, PyPI, Go modules and crates.io, and GitHub pages, raw files, archives and release assets. Read only.
   approveRequests: true
   registries: [go, npm, python, rust]
-  https:
-    - {host: github.com, methods: [GET, HEAD], paths: [/]}
-    - {host: codeload.github.com, methods: [GET, HEAD], paths: [/]}
-    - {host: raw.githubusercontent.com, methods: [GET, HEAD], paths: [/]}
-    - {host: objects.githubusercontent.com, methods: [GET, HEAD], paths: [/]}
-    - {host: release-assets.githubusercontent.com, methods: [GET, HEAD], paths: [/]}
+  rules:
+    - https:
+        hostnames:
+          - github.com
+          - codeload.github.com
+          - raw.githubusercontent.com
+          - objects.githubusercontent.com
+          - release-assets.githubusercontent.com
+        methods: [GET, HEAD]
+        paths: [/]
   allowedGrants: [lan, package]
   maxGrantDuration: {lan: 24h, package: 720h}
 ---

@@ -2,11 +2,51 @@
 
 Helm chart for the controller, embedded dashboard, API, CRDs, admission policies, and RBAC.
 
-The chart does not install Agent Sandbox, Cilium, a runtime class, Forgejo, or an identity provider. The public install path is the [quickstart](../../docs/quickstart.md). Published image digests are in [alpha-values.yaml](../../docs/examples/alpha-values.yaml).
+The chart does not install Agent Sandbox, Cilium, a runtime class, Forgejo, an identity provider, or the CloudNativePG operator (see [Database](#database)). The public install path is the [quickstart](../../docs/quickstart.md). Published image digests are in [alpha-values.yaml](../../docs/examples/alpha-values.yaml).
 
 Supply digest-pinned `controllerImage` and `workspaceImage`, plus the Forgejo origin, owner, public origin, and OIDC client. Create Secret `controller-secrets` outside the chart, with `forgejo-token` and `oidc-client-secret`. `proxyImage` defaults to `controllerImage`.
 
 Keep `config.NETWORK_PROVIDER` at `cilium` for the qualified profile. `network-policy` is an unvalidated experiment. The `0.1.0-alpha.1` images do not contain that provider or workspace-image replacement.
+
+## Hub-and-spoke public addresses
+
+When `hubspoke.orca.enabled` or `hubspoke.hub.enabled` is true, set **both**:
+
+| Value | Role | Example |
+| --- | --- | --- |
+| `config.PUBLIC_ORIGIN` | Console HTTPS + OIDC callback | `https://projects.example` |
+| `hubspoke.hub.publicAddress` | Hub WebSocket clients dial after pairing | `wss://orca-hub.example` |
+
+They are independent. Do not rewrite one hostname into the other. The chart
+refuses to render hubspoke without a `wss://` `publicAddress`. Console
+reachability does not imply hub reachability (separate DNS, route, and
+backend). Pairing offers use `publicAddress` only
+([hubspoke](../../docs/hubspoke.md), [Hub console pairing](../../docs/design/hub-console-pairing.md)).
+
+## Subscription providers (optional)
+
+`providerBroker.enabled: true` with `providerBroker.providers: [grok, cursor]` (either or both) installs the provider broker and one offline credential owner pod in their own namespace (`<release namespace>-providers`), and points the controller at the broker's leases. Projects still opt in per provider in the console. Sign each provider in once from the console (any sandbox, **Credentials**, **Connect**, then approve in your browser), or copy a login you already have with `agent-project-controller provider import grok`. Requires `NETWORK_PROVIDER=cilium` and `admissionPolicies.enabled`. Details: [brokered providers](../../docs/brokered-providers.md#deployment).
+
+## Telemetry (optional)
+
+Off by default. `telemetry.enabled: true` plus your collector's OTLP address (`telemetry.otlp.endpoint`), an optional auth Secret, the collector's namespace and pod labels, and three switches: per-sandbox counters (`cells`), Prometheus Operator PodMonitors and the Grafana dashboard. The chart sets every component's settings and network rules. Recipes for the OpenTelemetry Collector, Grafana Alloy and OpenObserve: [installation](../../docs/installation.md#telemetry).
+
+## Database
+
+PostgreSQL is required. It holds exact approvals, access requests, history and per-request proxy summaries ([database](../../docs/database.md)). `database.mode` selects where it comes from:
+
+- `cloudnativepg` (the default) renders a CloudNativePG `Cluster` with one instance. **Install the [CloudNativePG operator](https://cloudnative-pg.io/documentation/current/installation_upgrade/) before this chart**: the chart doesn't install it, and without its CRDs the install fails. The operator creates the Secrets `<release>-db-app` and `<release>-db-ca`, which the controller mounts (only the `uri` and `ca.crt` keys).
+- `external` uses an existing Secret (`database.external.existingSecret`) with a `postgres://` URI and, optionally, the server's CA.
+
+The connection always uses TLS with `sslmode=verify-full`. The chart also sets:
+
+- instances, storage size and class, resources, `monitoring.enablePodMonitor`, and an optional backup (Barman Cloud plugin or `barmanObjectStore`; off by default);
+- a NetworkPolicy that lets only the controller, the operator and the Cluster's own instances reach PostgreSQL;
+- retention (`database.historyRetention` and the related settings).
+
+`config.OIDC_APPROVER_GROUPS` (default `agent-project-approvers`) names who may approve access requests.
+
+The controller's readiness includes database health. The console Service publishes not-ready addresses, so the console can still explain an outage. While the database is down, new approvals and requests are refused and proxies keep their cached approvals.
 
 ## CRDs and upgrades
 
@@ -22,7 +62,7 @@ To connect an agent runtime's handoff intake, set `config.HANDOFF_URL` and `conf
 
 ## Lifecycle Events
 
-The controller publishes each workspace's lifecycle transitions as Kubernetes Events (`events.k8s.io/v1`, reporting controller `projects.agentwork.dev/agent-project-controller`) regarding the `ProjectWorkspace`: phase changes (action `ChangePhase`, reason = the Ready condition's reason, type `Warning` for `Blocked` and `CleanupPending`) and a new not-ready reason or message in the same phase (`UpdateCondition`). Read them with `kubectl events -n <namespace> --for projectworkspace/<name>`. Audit records publish no Events: they are the durable history, which the console reads through its history store (audit ConfigMaps today). The Role `workspace-events` lets the controller create and patch Events in the release namespace only.
+The controller publishes each workspace's lifecycle transitions as Kubernetes Events (`events.k8s.io/v1`, reporting controller `projects.agentwork.dev/agent-project-controller`) regarding the `ProjectWorkspace`: phase changes (action `ChangePhase`, reason = the Ready condition's reason, type `Warning` for `Blocked` and `CleanupPending`) and a new not-ready reason or message in the same phase (`UpdateCondition`). Read them with `kubectl events -n <namespace> --for projectworkspace/<name>`. Audit records publish no Events: they are the durable history, kept in PostgreSQL (see [Database](#database)). The Role `workspace-events` lets the controller create and patch Events in the release namespace only.
 
 Events expire (kube-apiserver `--event-ttl`, one hour by default), so they show recent activity only. The console's History reads the durable audit records. `status.audit` is deprecated: the controller no longer appends to it, and existing entries stay readable for one release.
 
@@ -58,3 +98,20 @@ The CRD schema already enforces the remaining field rules: the `desiredState` en
 The controller keeps all of its checks as defence in depth, including those the policies repeat. Some rules depend on cluster state that admission cannot read, so only the controller enforces them: a LAN host must not be a node address, the network provider must support LAN and provider policies, the runtime and storage classes must exist, and the total proxy rule count must fit. It refuses such a project before granting anything. No admission webhook is needed.
 
 Set `admissionPolicies.enabled: false` only on a cluster without the API. It turns off every policy above, including the ForgeClass one. The controller's checks still apply.
+
+## Voice service (optional)
+
+`voice.enabled: true` adds glovecell-voice ([docs/voice.md](../../docs/voice.md), [docs/approval-gate.md](../../docs/approval-gate.md)):
+
+- a single-replica Deployment with no Kubernetes token, running the image from the Dockerfile's `voice` target (by digest);
+- a ClusterIP Service on 8080 (`POST /v1/notify` only), with probes and metrics on 8081;
+- an optional ConfigMap for the JSON details;
+- a NetworkPolicy, whose notify, metrics and egress peers you list in `voice.networkPolicy`.
+
+It mounts existing Secrets, `voice.secrets.matrix` and `voice.secrets.owner` (both required), plus optional `forgejo`, `handoff` and `notify`. The chart creates none of them.
+
+By default it uses the controller's database (`voice.database.mode: shared`), and the database NetworkPolicy then admits the voice pod. Set `external` for a separate database.
+
+Voice approvals are separately off by default (`voice.approval.enabled: false`).
+In this mode the chart mounts no Forgejo merge token. Qualify asynchronous voice
+tasks and spoken completions first; see [voice stages](../../docs/voice.md#complete-asynchronous-voice-before-enabling-approvals).

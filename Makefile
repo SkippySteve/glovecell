@@ -1,10 +1,16 @@
 .PHONY: test build vet render qualify-forgejo
+# The voice packages are also tested and vetted with -tags goolm (mautrix's
+# pure-Go Olm), which is how the voice image is built.
+VOICE_PKGS = ./cmd/glovecell-voice/... ./internal/voice/... ./internal/approvalgate/...
 test:
 	go test -race ./...
+	go test -race -tags goolm $(VOICE_PKGS)
 vet:
 	go vet ./...
+	go vet -tags goolm $(VOICE_PKGS)
 build:
 	CGO_ENABLED=0 go build -trimpath -o bin/agent-project-controller ./cmd/agent-project-controller
+	CGO_ENABLED=0 go build -tags goolm -trimpath -o bin/glovecell-voice ./cmd/glovecell-voice
 render:
 	kubectl kustomize config/deploy
 qualify-forgejo:

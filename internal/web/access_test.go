@@ -95,6 +95,31 @@ func TestProjectAccessRejectsUnstoppedProcessesAndReservedHosts(t *testing.T) {
 	}
 }
 
+func TestLifecycleChangeAcceptsStaleResourceVersion(t *testing.T) {
+	s, h, obj := accessFixture(t)
+	obj.Spec.DesiredState = "Running"
+	obj.Status.Phase = "Ready"
+	obj.Status.ObservedGeneration = obj.Generation
+	if err := s.Client.Update(context.Background(), obj); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("PATCH", "/api/v1/workspaces/project", strings.NewReader(`{"resourceVersion":"stale-from-poll","desiredState":"Paused"}`))
+	req.Header.Set("Authorization", "Bearer "+s.Password)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatal("pause rejected stale resourceVersion", rec.Code, rec.Body.String())
+	}
+	var updated api.ProjectWorkspace
+	if err := json.Unmarshal(rec.Body.Bytes(), &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Spec.DesiredState != "Paused" {
+		t.Fatal("desired state not paused", updated.Spec.DesiredState)
+	}
+}
+
 func TestProjectAccessAuthenticationAndPausedState(t *testing.T) {
 	s, h, obj := accessFixture(t)
 	rec := accessRequest(h, "incorrect", obj.ResourceVersion, `[]`)

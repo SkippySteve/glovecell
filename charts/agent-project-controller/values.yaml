@@ -13,6 +13,117 @@ additionalGitHub:
   tokenKey: token
 automationAPI:
   enabled: false
+# Forge agent (docs/security.md, "Forge agent"): a separate small pod holds the
+# Forgejo administrative token and serves only workspace grants to the
+# controller, so the controller holds no Forgejo admin credential. Off by
+# default. Turning it on moves forgejo-token out of the controller's mounts.
+forgeAgent:
+  enabled: false
+  # Its own namespace, so the controller (which may read every Secret in its
+  # own namespace) cannot read the token. The chart creates it.
+  namespace: ''
+  # Secret in forgeAgent.namespace with key forgejo-token, created by the
+  # operator. Then remove forgejo-token from existingSecret.
+  existingSecret: forge-agent
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 200m
+      memory: 64Mi
+# Subscription providers (docs/brokered-providers.md): lets project sandboxes
+# use your own Grok or Cursor subscription without the login entering any
+# sandbox. Off by default. On, the chart adds one namespace with two small
+# pods: an offline owner pod holding the logins, and the broker that renews
+# them and hands out 5-minute access tokens. The controller is configured to
+# read them (PROVIDER_LEASES_SECRET) automatically; each project still opts in
+# per provider in the console. Needs NETWORK_PROVIDER=cilium and
+# admissionPolicies.enabled.
+providerBroker:
+  enabled: false
+  # Which subscriptions you have: grok, cursor. Only these get a login volume.
+  providers: []
+  # Its own namespace (default <release namespace>-providers). The chart creates it.
+  namespace: ''
+  # Sign providers in from the console (sandbox > Credentials > Connect): the
+  # broker starts a short-lived sign-in pod (no saved logins, network only to
+  # that provider's sign-in hosts), shows the provider's link and code, and
+  # installs the login when you approve. Off: sign in only with
+  # `agent-project-controller provider import` from your own machine.
+  consoleSignIn: true
+  # Public OAuth client ID of the official Cursor CLI (not a secret).
+  cursorOAuthClientID: KbZUR41cY7W6zRSdpSUJ7I7mLYBKOCmB
+  owner:
+    # Default: config.RUNTIME_CLASS.
+    runtimeClassName: ''
+    # Storage for the logins; '' uses the cluster default class.
+    storageClass: ''
+    storageSize: 1Gi
+    # Adopt claims you created yourself instead, e.g. {grok: my-grok-login}.
+    existingClaims: {}
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+  resources:
+    requests:
+      cpu: 20m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  # Placement of the broker, owner and login pods.
+  scheduling:
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+  # Extra Cilium egress rules for the broker. The telemetry collector is
+  # added by the chart when telemetry.collector is set.
+  extraEgress: []
+
+# Telemetry (docs/installation.md, "Telemetry"). Off by default; when off,
+# nothing is sent or scraped. On, set where your collector is and the chart
+# wires every Glovecell component to it and opens the network paths itself.
+telemetry:
+  enabled: false
+  otlp:
+    # OTLP/HTTP endpoint the controller, forge agent and voice push traces and
+    # metrics to, e.g. http://otel-collector.monitoring.svc:4318. Empty: no push.
+    endpoint: ''
+    # Optional Secret (in the release namespace) holding collector auth as
+    # OTEL_EXPORTER_OTLP_HEADERS, e.g. "Authorization=Basic dXNlcjpwYXNz".
+    # Components in their own namespace (forge agent) read a copy of the same
+    # name there when it exists.
+    headersSecret: ''
+    headersKey: headers
+  # Where your collector or Prometheus pods run. The chart uses this to let
+  # them reach Glovecell (voice /metrics, each cell's /metrics) and to let
+  # voice push to them. Leave empty for a collector outside the cluster.
+  collector:
+    namespace: ''
+    podLabels: {}
+  cells:
+    # Each sandbox's proxy serves fixed agent counters (tokens, cost, sessions;
+    # never prompts or IDs) on :9464 for the collector above to scrape.
+    # Needs collector.namespace and collector.podLabels and Cilium.
+    enabled: false
+  prometheus:
+    # PodMonitors for the Prometheus Operator: cells (when cells.enabled),
+    # voice (when voice.enabled) and the CloudNativePG database.
+    podMonitors: false
+    # Labels your Prometheus selects PodMonitors by, e.g. {release: kube-prometheus-stack}.
+    labels: {}
+  dashboards:
+    # The Glovecell Grafana dashboard as a ConfigMap for Grafana's dashboard
+    # sidecar (kube-prometheus-stack and the Grafana chart use this label).
+    enabled: false
+    namespace: ''
+    labels:
+      grafana_dashboard: '1'
 # The default AccessProfiles (locked, ask, standard, open, custom; docs/access-levels.md).
 # locked is the cluster default for new cells. Set false to manage profiles yourself.
 accessProfiles:
@@ -60,6 +171,11 @@ config:
   # <namespace>/<secret> written by the provider broker in lease mode. Empty
   # turns spec.providers off. Requires NETWORK_PROVIDER=cilium.
   PROVIDER_LEASES_SECRET: ''
+  # Per-cell provider tokens: comma-separated grok and/or cursor. Workers get
+  # a token unique to their cell; only the cell's proxy holds the real one.
+  # Empty keeps the shared token. Set it only after every cell's proxy runs
+  # an image with cell-token support (docs/brokered-providers.md).
+  PROVIDER_CELL_TOKENS: ''
   WORKSPACE_CPU_REQUEST: 500m
   WORKSPACE_MEMORY_REQUEST: 512Mi
   WORKSPACE_CPU_LIMIT: '4'
@@ -72,14 +188,32 @@ config:
   SANDBOX_CONTROL_URL: ''
   SANDBOX_CONTROL_ORIGIN: ''
   SANDBOX_CONTROL_OPERATOR: ''
+  # Dashboard HTTPS origin (OIDC callback). Independent of hubspoke.hub.publicAddress.
   PUBLIC_ORIGIN: ''
   OIDC_ISSUER: ''
   OIDC_CLIENT_ID: ''
   OIDC_GROUPS_CLAIM: groups
   OIDC_ALLOWED_GROUPS: agent-project-operators
   OIDC_SCOPES: profile,groups
+  # Who may approve or deny access requests and revoke exact approvals
+  # (comma-separated groups; empty means nobody). Members must also be able
+  # to sign in (OIDC_ALLOWED_GROUPS). The claim defaults to OIDC_GROUPS_CLAIM.
+  # The automation token and static login never approve. docs/database.md.
+  OIDC_APPROVER_GROUPS: agent-project-approvers
+  OIDC_APPROVER_GROUPS_CLAIM: ''
   ALLOW_STATIC_LOGIN: 'false'
+  # Prefer the telemetry: section above; these two keys and
+  # CELL_TELEMETRY_SCRAPER_JSON are kept for existing installs and must stay
+  # at their defaults when telemetry.enabled is true.
   OTEL_ENABLED: 'false'
+  # Cell telemetry (docs/installation.md, "Cell telemetry"): JSON
+  # {"namespace": ..., "selector": {...}} naming the collector pods allowed to
+  # scrape each cell's relay. Empty = off. Cilium provider only.
+  CELL_TELEMETRY_SCRAPER_JSON: ''
+  # Publish apc-*/project host audit assignments into ConfigMap
+  # glovecell-audit-assignments (inert until true). Host sync/RBAC stay off
+  # until a separate one-way enable in the deployment repository (#217).
+  AUDIT_ASSIGNMENT_FEED_ENABLED: 'false'
 # ValidatingAdmissionPolicies (admissionregistration.k8s.io/v1, Kubernetes
 # 1.30+) that refuse invalid ProjectWorkspace requests at the API server,
 # with deployment settings from the admission-params ConfigMap (README
@@ -87,6 +221,73 @@ config:
 # a cluster without the API; that leaves the controller's checks alone.
 admissionPolicies:
   enabled: true
+# PostgreSQL holds exact approvals, access requests, history and per-request
+# proxy summaries (docs/database.md). It is required.
+database:
+  # cloudnativepg: render a CloudNativePG Cluster (install the CloudNativePG
+  # operator first). external: use an existing PostgreSQL.
+  mode: cloudnativepg
+  # The controller always connects with TLS (sslmode=verify-full).
+  maxConnections: 10
+  # How long to keep records: Go durations of at least 24h, or '0' to keep
+  # them. Approvals, pending requests and the ledger actions the controller
+  # relies on for safety are never pruned.
+  historyRetention: 8760h
+  decidedRequestRetention: 8760h
+  proxySummaryRetention: 720h
+  cloudnativepg:
+    # Cluster name; empty means <release>-db. The operator creates the
+    # Secrets <name>-app (connection URI) and <name>-ca (CA certificate).
+    name: ''
+    # One instance is the default; more add streaming replicas.
+    instances: 1
+    # Optional digest-pinned PostgreSQL image; empty uses the operator default.
+    imageName: ''
+    database: apc
+    owner: apc
+    storage:
+      size: 5Gi
+      # Empty uses the cluster's default StorageClass.
+      storageClass: ''
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 1Gi
+    monitoring:
+      # Needs the Prometheus operator's PodMonitor CRD.
+      enablePodMonitor: false
+    # Where the CloudNativePG operator runs, for the database NetworkPolicy.
+    operator:
+      namespace: cnpg-system
+      podLabels:
+        app.kubernetes.io/name: cloudnative-pg
+    # Further peers that may reach PostgreSQL on 5432 (NetworkPolicy peers),
+    # for example a backup job.
+    extraIngressFrom: []
+    backup:
+      enabled: false
+      # plugin: the Barman Cloud plugin (install it and an ObjectStore first).
+      # barmanObjectStore: CloudNativePG's in-tree Barman (deprecated upstream).
+      method: plugin
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        # For the Barman Cloud plugin: {barmanObjectName: <ObjectStore>}.
+        parameters: {}
+      # spec.backup.barmanObjectStore for method barmanObjectStore
+      # (destinationPath, s3Credentials, ...).
+      barmanObjectStore: {}
+      retentionPolicy: 30d
+      # ScheduledBackup: six-field cron (seconds first).
+      schedule: '0 0 3 * * *'
+  external:
+    # Existing Secret in the release namespace with a postgres:// URI.
+    existingSecret: ''
+    uriKey: uri
+    # Key of the server's CA certificate in that Secret; empty trusts the
+    # system roots (a publicly trusted server certificate).
+    caKey: ''
 controllerResources:
   requests:
     cpu: 100m
@@ -163,6 +364,55 @@ t3Connect:
   enabled: false
   existingClaim: ''
   relayURL: https://relay.t3.codes
+# Hub-and-spoke Orca (docs/hubspoke.md). Off by default. When enabled, project
+# workers run orcad from orcaRuntimeImage and Ready waits for the hub process
+# (`agent-project-controller hubspoke --watch`) to enroll each spoke. The hub
+# Deployment below is also off until a digest-pinned hub image is set.
+#
+# Two public endpoints, both required when hubspoke is on — set them separately:
+#   config.PUBLIC_ORIGIN          → console HTTPS (OIDC), e.g. https://projects.example
+#   hubspoke.hub.publicAddress    → hub WebSocket for phone/desktop pairing,
+#                                   e.g. wss://orca-hub.example
+# Do not derive one from the other. Console reachability does not imply hub
+# reachability (different DNS, route, and backend). Pairing offers use
+# publicAddress only (APC #113 / docs/design/hub-console-pairing.md).
+hubspoke:
+  orca:
+    enabled: false
+    # Digest-pinned image that contains orcad (for example orca-pilot).
+    runtimeImage: ''
+    # OrchestratorClass name workspaces must set (chart default class "orca").
+    className: orca
+  # Hub pod that runs hubspoke --watch next to an Orca desktop CLI. Disabled
+  # until image is set. Phone relay today needs the Orca desktop app (or
+  # stablyai/orca#40040 for headless relay).
+  hub:
+    enabled: false
+    image: ''
+    namespace: agent-project-control-orca-hub
+    # The hub's ServiceAccount in hub.namespace.
+    serviceAccount: orca-hub
+    # Bind the hub's pod and log read per project namespace (RoleBinding
+    # orca-hub-logs to ClusterRole <release>-hub-logs) instead of granting it
+    # cluster-wide. Off by default: an installation that already grants the
+    # hub cluster-wide read turns this on, waits for the bindings, then
+    # removes its cluster-wide grant (docs/hubspoke.md).
+    logsPerProject: false
+    # Hub WSS clients dial after pairing the hub itself (phone/desktop to hub).
+    # Required (wss://host[:port], no path) when hubspoke.orca.enabled or
+    # hubspoke.hub.enabled. Independent of config.PUBLIC_ORIGIN and of
+    # spoke.publicDomain.
+    publicAddress: ''
+  # Per-project spoke dial for desktops: wss://<project>.<publicDomain>
+  # (docs/hubspoke.md, APC #113 follow-up). Requires Gateway listener + DNS.
+  spoke:
+    publicDomain: ''
+    # Your Gateway listener for the spoke hostnames; all three are required
+    # when publicDomain is set.
+    gateway:
+      name: ''
+      namespace: ''
+      sectionName: ''
 # Default OrchestratorClasses (cluster-scoped) that workspaces may name in
 # spec.orchestratorClassName. All off by default. Workspaces without a class
 # keep the deployment default: T3 Connect when t3Connect.enabled, else none.
@@ -172,8 +422,8 @@ orchestratorClasses:
   t3:
     enabled: false
     name: t3
-  # projects.agentwork.dev/orca: Orca desktop registration through the
-  # control-host registrar. The per-project Orca runtime is not built yet.
+  # projects.agentwork.dev/orca: hub-and-spoke (docs/hubspoke.md) when
+  # hubspoke.orca.enabled, else the legacy control-host registrar.
   orca:
     enabled: false
     name: orca
@@ -198,3 +448,83 @@ classes:
 tailscaleIngress:
   enabled: false
   hostname: ''
+# glovecell-voice (docs/voice.md): Matrix voice tasks, the /v1/notify API for
+# agents and the voice approval gate (docs/approval-gate.md). Off by default.
+# Build the image from the Dockerfile's voice target and pin it by digest.
+voice:
+  enabled: false
+  image: ''
+  # The homeserver's https URL (the bot refuses plain http to a non-local host).
+  homeserver: ''
+  speech:
+    # OpenAI-compatible speech API, for example a speaches Service.
+    baseURL: ''
+    sttModel: Systran/faster-distil-whisper-small.en
+    ttsModel: speaches-ai/Kokoro-82M-v1.0-ONNX
+    voice: af_heart
+    language: en
+    # Existing Secret with key api-key, for a cloud provider only.
+    apiKeySecret: ''
+  # Forgejo API origin for the gate; empty uses config.FORGEJO_ORIGIN.
+  forgejoURL: ''
+  orca:
+    # orca-pilot handoff intake and run-record publisher (docs/voice.md).
+    handoffURL: ''
+    runRecordsURL: ''
+  approval:
+    # Enable only after asynchronous tasks and audit backups are qualified.
+    enabled: false
+    # OWNER/NAME or OWNER/* the gate may merge in; required for the gate.
+    repos: []
+    codeTTL: 24h
+    maxMergesPerHour: 10
+  # OWNER/NAME for task rooms without their own repository.
+  defaultRepo: ''
+  # Which targets each notify caller speaks for: caller=target|target,...
+  notifyCallerTargets: ''
+  # Existing Secrets in this namespace (the chart creates none). matrix and
+  # owner are required; the others are optional and switch features on.
+  #   matrix:  user_id, access_token, device_id (or password), pickle_key
+  #   owner:   mxid, master_key (pinned cross-signing master key), rooms
+  #   forgejo: token (the approval-gate user; used only with approval.enabled)
+  #   handoff: token (the orca-pilot handoff intake bearer)
+  #   notify:  one token file per caller, named after the caller
+  secrets:
+    matrix: glovecell-voice-matrix
+    owner: glovecell-voice-owner
+    forgejo: glovecell-voice-forgejo
+    handoff: glovecell-voice-handoff
+    notify: glovecell-voice-notify
+  # Optional JSON details (docs/examples/glovecell-voice-config.json): per-room
+  # targets and repositories, target aliases, the summarizer. No secrets.
+  config: {}
+  database:
+    # shared: the controller's database (CloudNativePG or external) with
+    # its own voice_* tables and mautrix's crypto_* and mx_* tables.
+    # external: a separate PostgreSQL (existingSecret with uriKey/caKey).
+    mode: shared
+    existingSecret: ''
+    uriKey: uri
+    caKey: ''
+    maxConnections: 5
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: '1'
+      memory: 512Mi
+  scheduling:
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+  networkPolicy:
+    enabled: true
+    # NetworkPolicy peers allowed to call /v1/notify (8080: agent cells,
+    # orchestrators) and to scrape /metrics (8081). Empty denies ingress.
+    notifyFrom: []
+    metricsFrom: []
+    # Egress rules beyond DNS and the shared CloudNativePG database: the
+    # Matrix homeserver, the speech server, Forgejo, the Orca intake (8791)
+    # and run records (8790). NetworkPolicy egress rules as YAML.
+    egress: []

@@ -46,6 +46,48 @@ type WorkspaceSpec struct {
 	// Repository (forgeclass_types.go). Empty keeps the controller's configured
 	// forge. Immutable: revocation must reach the forge that granted access.
 	ForgeClassName string `json:"forgeClassName,omitempty"`
+	// GitHub opts the project into brokered GitHub access: the project's proxy
+	// attaches a GitHub credential, held outside the project, to requests the
+	// GitHub policy allows. Off by default; editable while running. Removing
+	// it revokes access for this project. The controller needs a GitHub lease
+	// source (GITHUB_LEASE_SECRET).
+	GitHub *GitHubAccess `json:"github,omitempty"`
+}
+
+// GitHubAccess is a project's GitHub policy. See docs/design/github-brokering.md.
+type GitHubAccess struct {
+	// Repositories are "owner/name" or "owner/*" (every repository of owner
+	// the credential reaches).
+	Repositories []string `json:"repositories"`
+	// ProtectedBranches no push may create, update or delete: names or
+	// "prefix/*". Each repository's default branch is always protected.
+	ProtectedBranches []string `json:"protectedBranches,omitempty"`
+	// PushBranches, when set, are the only branches pushes may touch, for
+	// example ["agent/*"].
+	PushBranches []string `json:"pushBranches,omitempty"`
+	// AllowMerge lets agents merge pull requests. Off by default.
+	AllowMerge bool `json:"allowMerge,omitempty"`
+	// AllowReleases lets agents create releases and push new tags. Off by default.
+	AllowReleases bool `json:"allowReleases,omitempty"`
+	// Approvals are operator approvals for repository creation and forks,
+	// each bound to exact arguments, usable once and until it expires.
+	Approvals []GitHubApproval `json:"approvals,omitempty"`
+	AddedBy   string           `json:"addedBy,omitempty"`
+	AddedAt   *metav1.Time     `json:"addedAt,omitempty"`
+}
+
+// GitHubApproval approves one repository creation or fork.
+type GitHubApproval struct {
+	// Action is create-repository or fork-repository.
+	Action string `json:"action"`
+	// Name is the new repository's (or fork's) name.
+	Name string `json:"name"`
+	// Visibility is private or public for create-repository; empty for forks.
+	Visibility string `json:"visibility,omitempty"`
+	// Source is the owner/name being forked.
+	Source     string      `json:"source,omitempty"`
+	ExpiresAt  metav1.Time `json:"expiresAt"`
+	ApprovedBy string      `json:"approvedBy,omitempty"`
 }
 
 // ProviderGrant is one operator opt-in to a brokered provider. The worker then

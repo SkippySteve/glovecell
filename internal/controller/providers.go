@@ -16,6 +16,7 @@ import (
 	"time"
 
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/githubpolicy"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/network"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/providerbroker"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/proxy"
@@ -64,6 +65,9 @@ type brokeredAccess struct {
 	Token   string  `json:"accessToken"`
 	Expires float64 `json:"expiresAt"`
 	Issuer  string  `json:"issuer,omitempty"`
+	// CellToken is set only in the proxy's copy (cell_tokens.go): the
+	// stand-in the worker sends, which the proxy swaps for Token.
+	CellToken string `json:"cellToken,omitempty"`
 }
 
 // brokeredState is what one reconciliation decided for a project. objects()
@@ -74,6 +78,11 @@ type brokeredState struct {
 	// doc is the project's whole provider-access document after the change
 	// (other providers' entries, such as an operator Codex grant, included).
 	doc []byte
+	// gatewayDoc is the proxy's copy when it differs from doc (cell tokens);
+	// nil means the proxy gets doc.
+	gatewayDoc []byte
+	// github is the project's GitHub keys (github.go); nil when off.
+	github *githubState
 }
 
 // providerNames returns the opted-in providers in a stable order.
@@ -198,24 +207,55 @@ func (r *Reconciler) readLeases(ctx context.Context, key types.NamespacedName) (
 // applyProviders makes the project's grants, proxy keys and provider policy
 // match spec.providers. It runs while the project runs. Without a configured
 // lease source it changes nothing, so existing operator grants keep working.
-func (r *Reconciler) applyProviders(ctx context.Context, w *api.ProjectWorkspace, names []string) (*brokeredState, error) {
-	if r.ProviderLeases == nil {
+func (r *Reconciler) applyProviders(ctx context.Context, w *api.ProjectWorkspace, names []string, github *api.GitHubAccess) (*brokeredState, error) {
+	if r.ProviderLeases == nil && r.GitHubLease == nil {
 		return &brokeredState{}, nil
 	}
-	entries := map[string]json.RawMessage{}
-	for name, grant := range r.classLeases(ctx, w, names) {
-		entries[name], _ = json.Marshal(grant)
+	state := &brokeredState{}
+	var hosts []string
+	narrowedKeys := false
+	if r.ProviderLeases != nil {
+		entries := map[string]json.RawMessage{}
+		grants := r.classLeases(ctx, w, names)
+		var gateway map[string]brokeredGrant
+		if len(r.Config.CellTokens) > 0 {
+			grants, gateway = r.withCellTokens(ctx, w, grants)
+		}
+		for name, grant := range grants {
+			entries[name], _ = json.Marshal(grant)
+		}
+		doc, err := r.syncModelAccess(ctx, w, entries)
+		if err != nil {
+			return nil, err
+		}
+		state = &brokeredState{managed: true, names: names, doc: doc}
+		if gateway != nil {
+			if state.gatewayDoc, err = gatewayDoc(doc, gateway); err != nil {
+				return nil, err
+			}
+		}
+		if narrowedKeys, err = r.syncProxyProviders(ctx, w, state); err != nil {
+			return nil, err
+		}
+		hosts = providerHosts(names)
 	}
-	doc, err := r.syncModelAccess(ctx, w, entries)
-	if err != nil {
-		return nil, err
+	summary := "none"
+	if len(state.names) > 0 {
+		summary = strings.Join(state.names, ", ")
 	}
-	state := &brokeredState{managed: true, names: names, doc: doc}
-	narrowedKeys, err := r.syncProxyProviders(ctx, w, state)
-	if err != nil {
-		return nil, err
+	if r.GitHubLease != nil {
+		gh, narrowed, err := r.applyGitHub(ctx, w, github)
+		if err != nil {
+			return nil, err
+		}
+		state.github = gh
+		narrowedKeys = narrowedKeys || narrowed
+		if gh.policy != nil {
+			hosts = append(hosts, githubpolicy.Hosts...)
+			summary += "; GitHub: " + strings.Join(github.Repositories, ", ")
+		}
 	}
-	changed, narrowedPolicy, err := r.syncProviderPolicy(ctx, w, providerHosts(names))
+	changed, narrowedPolicy, err := r.syncProviderPolicy(ctx, w, hosts)
 	if err != nil {
 		return nil, err
 	}
@@ -227,10 +267,6 @@ func (r *Reconciler) applyProviders(ctx context.Context, w *api.ProjectWorkspace
 		}
 	}
 	if changed {
-		summary := "none"
-		if len(names) > 0 {
-			summary = strings.Join(names, ", ")
-		}
 		sum := sha256.Sum256([]byte(summary))
 		slog.InfoContext(ctx, "brokered providers applied", "workspace_uid", string(w.UID), "generation", w.Generation, "providers", summary)
 		if err = r.auditDetails(ctx, w, "providers-applied-"+hex.EncodeToString(sum[:6]), map[string]string{"providers": summary, "message": "Brokered providers now: " + summary}); err != nil {
@@ -343,6 +379,9 @@ func proxyProviderData(state *brokeredState, legacy bool, legacyDoc []byte) map[
 	if state != nil && state.managed {
 		if (legacy || len(state.names) > 0) && len(state.doc) > 0 {
 			out["provider-access"] = state.doc
+			if state.gatewayDoc != nil {
+				out["provider-access"] = state.gatewayDoc
+			}
 		}
 		if len(state.names) > 0 {
 			out[proxy.BrokeredProviderKey] = []byte(strings.Join(state.names, ","))

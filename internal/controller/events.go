@@ -12,9 +12,8 @@ import (
 // projectworkspace/<name>`: phase changes and new not-ready reasons only.
 // status.audit no longer grows (D12). Events expire (kube-apiserver
 // --event-ttl, 1h by default), so they are not the durable history: audit
-// records are, read through HistoryStore (internal/web/history.go). They stay
-// in the immutable audit ConfigMaps until a PostgreSQL store replaces them,
-// and publish no Event of their own.
+// records are (internal/auditlog: PostgreSQL, with audit ConfigMaps before the
+// database or while it is down), and publish no Event of their own.
 const (
 	// ActionChangePhase reports a status.phase transition.
 	ActionChangePhase = "ChangePhase"
@@ -32,7 +31,7 @@ const (
 
 // event publishes one Event regarding the workspace. A nil recorder (tests,
 // tools) records nothing. Publication is asynchronous and best effort, like
-// every Kubernetes Event; the audit ConfigMaps remain the durable record.
+// every Kubernetes Event; the audit log remains the durable record.
 func (r *Reconciler) event(w *api.ProjectWorkspace, eventtype, reason, action, note string) {
 	if r.Events == nil {
 		return

@@ -39,12 +39,20 @@ func policyHosts(cfg proxy.Config) []string {
 			hosts = append(hosts, r.Host)
 		}
 	}
+	if cfg.VendorTelemetry {
+		for _, host := range proxy.VendorTelemetryHosts() {
+			if !slices.Contains(hosts, host) {
+				hosts = append(hosts, host)
+			}
+		}
+	}
 	return hosts
 }
 
 // withLabelled replaces the labelled rules of cfg with the cell's profile
 // rules followed by the deployment's reference list.
 func (r *Reconciler) withLabelled(cfg proxy.Config, profile []api.HTTPSRule) proxy.Config {
+	cfg.VendorTelemetry = r.Config.VendorTelemetry
 	rules := slices.DeleteFunc(slices.Clone(cfg.Rules), func(rule api.HTTPSRule) bool { return rule.Source != "" })
 	rules = append(rules, profile...)
 	cfg.Rules = append(rules, r.Config.ReferenceRules...)
@@ -79,7 +87,7 @@ func (r *Reconciler) syncReferenceRules(ctx context.Context, w *api.ProjectWorks
 	currentRaw, _ := json.Marshal(current)
 	wantRaw, _ := json.Marshal(want)
 	if string(currentRaw) == string(wantRaw) {
-		return nil
+		return r.finishTelemetryUpdate(ctx, w, cm, want.VendorTelemetry, true)
 	}
 	if err = proxy.Validate(want); err != nil {
 		return err
@@ -134,9 +142,40 @@ func (r *Reconciler) syncReferenceRules(ctx context.Context, w *api.ProjectWorks
 	if err = r.restartRole(ctx, w, "proxy"); err != nil {
 		return err
 	}
+	if err = r.finishTelemetryUpdate(ctx, w, cm, want.VendorTelemetry, false); err != nil {
+		return err
+	}
 	digest := r.Config.ReferenceDigest
 	if digest == "" {
 		digest = "none"
 	}
 	return r.auditDetails(ctx, w, "reference-rules-"+digest, map[string]string{"message": "Reference rules applied: " + digest})
+}
+
+const telemetryApplied = "projects.agentwork.dev/vendor-telemetry-applied"
+
+// Persist completion only after old proxy pods are stopped. If the controller
+// stops after saving policy.json, the next reconcile still finishes the restart.
+func (r *Reconciler) finishTelemetryUpdate(ctx context.Context, w *api.ProjectWorkspace, cm *corev1.ConfigMap, enabled, restart bool) error {
+	state := "disabled"
+	if enabled {
+		state = "enabled"
+	}
+	previous, tracked := cm.Annotations[telemetryApplied]
+	if previous == state || !tracked && !enabled {
+		return nil
+	}
+	if restart {
+		if err := r.restartRole(ctx, w, "proxy"); err != nil {
+			return err
+		}
+	}
+	if cm.Annotations == nil {
+		cm.Annotations = map[string]string{}
+	}
+	cm.Annotations[telemetryApplied] = state
+	if err := r.Update(ctx, cm); err != nil {
+		return err
+	}
+	return r.auditDetails(ctx, w, "vendor-telemetry-"+state+"-"+cm.ResourceVersion, map[string]string{"message": "Vendor telemetry " + state})
 }

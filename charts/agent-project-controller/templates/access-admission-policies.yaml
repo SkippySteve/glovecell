@@ -103,7 +103,8 @@ spec:
         resources: [accessprofiles]
   variables:
     - name: rules
-      expression: "has(object.spec.https) ? object.spec.https : []"
+      # Every rule's https member (the only protocol profiles allow); the checks below read methods and paths.
+      expression: "has(object.spec.rules) ? object.spec.rules.filter(r, has(r.https)).map(r, r.https) : []"
   validations:
     # Profile rules are read only: POST only to git-upload-pack (Git fetch), never git-receive-pack (push).
     - expression: >-

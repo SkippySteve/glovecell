@@ -1,0 +1,154 @@
+{{- /*
+The controller database (docs/database.md). In cloudnativepg mode the
+CloudNativePG operator must already be installed: it serves TLS from its own
+CA and creates the Secrets <cluster>-app (URI) and <cluster>-ca (ca.crt).
+*/ -}}
+{{- $db := .Values.database }}
+{{- if not (has $db.mode (list "cloudnativepg" "external")) }}
+{{- fail "database.mode must be cloudnativepg or external" }}
+{{- end }}
+{{- range $key := list "historyRetention" "decidedRequestRetention" "proxySummaryRetention" }}
+{{- $v := index $db $key | toString }}
+{{- if or (not (regexMatch "^(0|[0-9]+h)$" $v)) (and (ne $v "0") (lt (int (trimSuffix "h" $v)) 24)) }}
+{{- fail (printf "database.%s must be 0 (keep) or whole hours of at least 24h, for example 720h" $key) }}
+{{- end }}
+{{- end }}
+{{- if eq $db.mode "cloudnativepg" }}
+{{- $c := $db.cloudnativepg }}
+{{- $name := include "apc.databaseCluster" . }}
+{{- if or (lt (int $c.instances) 1) (gt (int $c.instances) 9) }}
+{{- fail "database.cloudnativepg.instances must be 1 to 9" }}
+{{- end }}
+{{- if and $c.imageName (not (regexMatch "^.+@sha256:[a-f0-9]{64}$" $c.imageName)) }}
+{{- fail "database.cloudnativepg.imageName must use @sha256:<digest>" }}
+{{- end }}
+{{- if $c.backup.enabled }}
+{{- if not (has $c.backup.method (list "plugin" "barmanObjectStore")) }}
+{{- fail "database.cloudnativepg.backup.method must be plugin or barmanObjectStore" }}
+{{- end }}
+{{- if and (eq $c.backup.method "barmanObjectStore") (not $c.backup.barmanObjectStore.destinationPath) }}
+{{- fail "database.cloudnativepg.backup.barmanObjectStore.destinationPath is required" }}
+{{- end }}
+{{- end }}
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ $name }}
+  labels:
+    app.kubernetes.io/name: agent-project-controller-db
+    app.kubernetes.io/part-of: agent-project-controller
+spec:
+  instances: {{ int $c.instances }}
+{{- with $c.imageName }}
+  imageName: {{ . | quote }}
+{{- end }}
+  primaryUpdateStrategy: unsupervised
+  # With one instance a PodDisruptionBudget would block every node drain.
+  # While the database is away the controller fails closed (docs/database.md).
+  enablePDB: {{ gt (int $c.instances) 1 }}
+  enableSuperuserAccess: false
+  bootstrap:
+    initdb:
+      database: {{ required "database.cloudnativepg.database is required" $c.database | quote }}
+      owner: {{ required "database.cloudnativepg.owner is required" $c.owner | quote }}
+      dataChecksums: true
+  postgresql:
+    # TLS only: refuse every connection without it.
+    pg_hba:
+      - hostnossl all all all reject
+  storage:
+    size: {{ required "database.cloudnativepg.storage.size is required" $c.storage.size | quote }}
+{{- with $c.storage.storageClass }}
+    storageClass: {{ . | quote }}
+{{- end }}
+{{- with $c.resources }}
+  resources:
+{{ toYaml . | indent 4 }}
+{{- end }}
+  monitoring:
+    enablePodMonitor: {{ include "apc.databasePodMonitor" . | eq "true" }}
+{{- if and $c.backup.enabled (eq $c.backup.method "plugin") }}
+  plugins:
+    - name: {{ $c.backup.plugin.name | quote }}
+      isWALArchiver: true
+{{- with $c.backup.plugin.parameters }}
+      parameters:
+{{ toYaml . | indent 8 }}
+{{- end }}
+{{- end }}
+{{- if and $c.backup.enabled (eq $c.backup.method "barmanObjectStore") }}
+  backup:
+    retentionPolicy: {{ $c.backup.retentionPolicy | quote }}
+    barmanObjectStore:
+{{ toYaml $c.backup.barmanObjectStore | indent 6 }}
+{{- end }}
+{{- if $c.backup.enabled }}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: {{ $name }}
+  labels:
+    app.kubernetes.io/name: agent-project-controller-db
+spec:
+  schedule: {{ $c.backup.schedule | quote }}
+  backupOwnerReference: self
+  cluster:
+    name: {{ $name }}
+  method: {{ $c.backup.method }}
+{{- if eq $c.backup.method "plugin" }}
+  pluginConfiguration:
+    name: {{ $c.backup.plugin.name | quote }}
+{{- end }}
+{{- end }}
+---
+# Only the controller, the CloudNativePG operator and the Cluster's own
+# instances reach PostgreSQL.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}
+  labels:
+    app.kubernetes.io/name: agent-project-controller-db
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: {{ $name }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agent-project-controller
+{{- if and .Values.voice.enabled (eq .Values.voice.database.mode "shared") }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: glovecell-voice
+{{- end }}
+{{- with $c.extraIngressFrom }}
+{{ toYaml . | indent 8 }}
+{{- end }}
+      ports:
+        - protocol: TCP
+          port: 5432
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ required "database.cloudnativepg.operator.namespace is required" $c.operator.namespace | quote }}
+          podSelector:
+            matchLabels:
+{{ toYaml $c.operator.podLabels | indent 14 }}
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: {{ $name }}
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 8000
+{{- if include "apc.databasePodMonitor" . | eq "true" }}
+    - ports:
+        - protocol: TCP
+          port: 9187
+{{- end }}
+{{- end }}

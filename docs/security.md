@@ -6,6 +6,54 @@ The controller holds a Forgejo administrative credential and cross-namespace Kub
 
 Each workspace gets a unique non-admin Forgejo user and repository-scoped token. Only that token and username are mounted in the worker. Its administrative password stays in the control namespace. Inspection private keys are mounted in the trusted proxy, while workers receive only the public CA certificate. Agent containers have no Kubernetes token and use an operator-qualified runtime.
 
+### Forge agent
+
+With `forgeAgent.enabled` (chart) the Forgejo administrative token leaves the
+controller. A separate small pod, `forge-agent` in its own namespace
+(`forgeAgent.namespace`, default `<controller namespace>-forge`), is the only
+mount of it. It serves three calls to the controller's ServiceAccount only,
+checked by TokenReview with a projected token for audience
+`agent-project-controller-forge-agent`:
+
+- `POST /v1/discover`: the owner's repositories;
+- `POST /v1/grant` and `/v1/revoke`: for workspace identities only
+  (`apc-`/`apcp-` and 32 lowercase hex characters) and only the configured
+  owner's repositories, with the same main-protection and ownership checks as
+  before.
+
+A compromised controller can still grant and revoke its own workspace
+identities, but can no longer use Forgejo administration for anything else:
+no new administrators, no other users, no other owners' repositories, no site
+settings. The agent's ServiceAccount can only create TokenReviews. A
+NetworkPolicy admits only the controller's pod.
+
+**The boundary depends on admission.** The controller's ClusterRole can write
+Deployments and RoleBindings (and bind the project access role) in any
+namespace, so without a policy it could patch the agent's Deployment to copy
+the token out, or bind a Secret-reading role in the agent's namespace. The
+chart therefore requires `admissionPolicies.enabled` with the forge agent and
+installs `<prefix>-forge-agent-scope` (Deny): the controller's
+ServiceAccount may not create, update, delete or connect to anything in the
+agent's namespace, nor change or delete that namespace. `internal/installation`
+proves this on a real API server with the controller given cluster-admin. An
+installation that removes this policy loses the boundary. Pod-to-pod traffic is plain HTTP; run it on a
+network that encrypts node-to-node traffic (for example Cilium WireGuard) or
+keep both pods on one node.
+
+The controller can read every Secret in its own namespace (credential
+ledgers), so the token must not stay there. To move an installation:
+
+1. Create Secret `forge-agent` (key `forgejo-token`) in the agent namespace
+   with the same token, then set `forgeAgent.enabled: true`. The controller
+   restarts with `FORGE_AGENT_URL` and no `FORGEJO_TOKEN_FILE`; it refuses to
+   start with both. The default Forgejo ForgeClass is not rendered (a class
+   credential must be readable by the controller).
+2. Check that a workspace prepares and that `Revoke` still completes.
+3. Remove `forgejo-token` from the controller's Secret (`existingSecret`).
+   Until then the controller could still read it through the API.
+
+Undo: put the key back into `existingSecret` and set `forgeAgent.enabled: false`.
+
 ## Authorization
 
 OIDC login requires a verified token and an explicit operator allowlist. Operators share one administration boundary. Email addresses and proxy-injected identity headers do not confer authority. Group changes at the identity provider take effect on the next login; existing application sessions expire within 15 minutes. Local sign-out does not terminate the provider's own session. Login transaction and application sessions live in memory, so rolling multi-replica OIDC operation is unsupported.
@@ -85,6 +133,37 @@ this has not been qualified on a cluster. Pause the project when a session must
 end for certain. Every add and remove is an immutable audit record with the
 operator, project, address, ports and time, and the controller records each
 applied policy.
+
+## Credentials the proxy injects
+
+Some credentials never enter the worker. The worker sends a placeholder, and
+the project proxy replaces it on the way out:
+
+- the GitHub read grant for private repositories;
+- the Muse subscription key.
+
+The proxy names each credential with a URI, such as
+`ate-secret://cell.agentwork.dev/tls/github-token`, and fetches it through a
+provider interface (`internal/credentials`) on every request. A replaced or
+revoked Secret therefore applies at once.
+
+The URI syntax and the failure rules copy
+[Agent Substrate's credential providers](https://github.com/agent-substrate/substrate/blob/main/docs/guides/egress-credential-injection.md):
+
+| Situation | Proxy answers |
+| --- | --- |
+| Credential missing (`NotFound`) or not granted to this cell (`PermissionDenied`) | 403 |
+| Backend unavailable, timed out, or no provider configured | 503 (retryable) |
+| Credential empty, too long, or containing a control character | 503 |
+
+Either way, the request never leaves without its credential.
+
+The built-in provider reads the proxy's own Secret volume, which only the
+proxy mounts. It serves only the listed keys, so a URI can't reach the CA key
+or other files there. A backend such as OpenBao can implement the same
+interface later (the reserved `openbao-broker` ProviderClass driver). It must
+check that the calling cell may have the credential: `Request.Cell` names the
+cell, and a shared backend refuses requests that leave it empty.
 
 ## Brokered subscription providers
 
@@ -217,3 +296,12 @@ Volume and namespace deletion are infrastructure checks, not proof of physical s
 ## Reporting a vulnerability
 
 Report a vulnerability privately to steve@aimingupward.com. Do not include credentials, tokens or a proof-of-concept exploit in a public issue. The same contact is in the repository `SECURITY.md`. GitHub private vulnerability reporting applies when this commit is mirrored there. The Git mirror does not carry Forgejo issues or pull requests.
+
+The [DNS and direct-IP qualification procedure](network-qualification.md) includes
+an executable probe matrix with independent positive controls. Passing its IPv4
+probes alone does not establish isolation: correlate denials with the dataplane
+and prove effective FQDN lease expiry before accepting APC #107.
+
+The [runtime health pilot](proxy-runtime-health.md) adds a disabled-by-default
+quarantine guard and loopback readiness endpoint. It does not activate new pod
+probes or complete the live runtime-failure qualification in APC #108.

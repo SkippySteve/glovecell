@@ -172,8 +172,9 @@ func TestAccessAdmissionPoliciesOnAPIServer(t *testing.T) {
 		}
 	}
 	for name, spec := range map[string]api.AccessProfileSpec{
-		"post-anywhere": {Level: api.AccessLevelCustom, HTTPS: []api.HTTPSRule{{Host: "api.example.com", Methods: []string{"POST"}, Paths: []string{"/"}}}},
-		"push":          {Level: api.AccessLevelCustom, HTTPS: []api.HTTPSRule{{Host: "github.com", Methods: []string{"POST"}, Paths: []string{"/o/r/git-receive-pack"}}}},
+		"post-anywhere": {Level: api.AccessLevelCustom, Rules: []api.EgressRule{{HTTPS: &api.HTTPSEgressRule{Hostnames: []string{"api.example.com"}, Methods: []string{"POST"}, Paths: []string{"/"}}}}},
+		"push":          {Level: api.AccessLevelCustom, Rules: []api.EgressRule{{HTTPS: &api.HTTPSEgressRule{Hostnames: []string{"github.com"}, Methods: []string{"POST"}, Paths: []string{"/o/r/git-receive-pack"}}}}},
+		"push-second":   {Level: api.AccessLevelCustom, Rules: []api.EgressRule{{HTTPS: &api.HTTPSEgressRule{Hostnames: []string{"github.com"}, Methods: []string{"GET"}, Paths: []string{"/"}}}, {HTTPS: &api.HTTPSEgressRule{Hostnames: []string{"github.com"}, Methods: []string{"POST"}, Paths: []string{"/o/r/git-receive-pack"}}}}},
 		"open-forever":  {Level: api.AccessLevelOpen, AllowedGrants: []api.AccessGrantType{api.AccessGrantInternet}},
 		"custom-window": {Level: api.AccessLevelCustom, AllowedGrants: []api.AccessGrantType{api.AccessGrantInternet}, MaxGrantDuration: map[api.AccessGrantType]metav1.Duration{api.AccessGrantInternet: {Duration: time.Hour}}},
 	} {

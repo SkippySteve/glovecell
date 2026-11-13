@@ -48,34 +48,68 @@ spec:
                 description:
                   type: string
                   maxLength: 500
-                https:
-                  description: Read-only HTTPS rules every cell with this profile gets (GET and HEAD, plus POST to git-upload-pack).
+                rules:
+                  description: >-
+                    Read-only rules every cell with this profile gets (GET and HEAD, plus POST to git-upload-pack).
+                    Agent Substrate's EgressPolicy shape: each rule is a union by protocol, and https (inspected) is
+                    the only member the project proxy supports. Hostnames and ports follow Substrate; methods and
+                    paths are this API's extension.
                   type: array
                   maxItems: 256
                   items:
                     type: object
-                    required: [host, methods, paths]
+                    required: [https]
                     properties:
-                      host:
-                        type: string
-                        maxLength: 253
-                        pattern: '^(\*\.)?[a-z0-9]([a-z0-9.-]*[a-z0-9])?$'
-                      methods:
-                        type: array
-                        minItems: 1
-                        maxItems: 3
-                        items:
-                          type: string
-                          enum: [GET, HEAD, POST]
-                      paths:
-                        type: array
-                        minItems: 1
-                        maxItems: 64
-                        items:
-                          type: string
-                          minLength: 1
-                          maxLength: 512
-                          pattern: '^/'
+                      https:
+                        type: object
+                        required: [hostnames, methods, paths]
+                        properties:
+                          hostnames:
+                            description: >-
+                              DNS names, or a DNS name with "*" as its whole leftmost label. "*.example.com"
+                              matches exactly one label: not example.com, not a.b.example.com.
+                            type: array
+                            minItems: 1
+                            maxItems: 16
+                            x-kubernetes-list-type: set
+                            items:
+                              type: string
+                              maxLength: 253
+                              pattern: '^(\*\.)?[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$'
+                          ports:
+                            description: Destination ports. Omitted means 443, the only port the project proxy serves.
+                            type: object
+                            required: [numbers]
+                            properties:
+                              numbers:
+                                type: array
+                                minItems: 1
+                                maxItems: 16
+                                x-kubernetes-list-type: set
+                                items:
+                                  type: integer
+                                  format: int32
+                                  minimum: 1
+                                  maximum: 65535
+                            x-kubernetes-validations:
+                              - rule: self.numbers.all(n, n == 443)
+                                message: The project proxy serves HTTPS on port 443 only.
+                          methods:
+                            type: array
+                            minItems: 1
+                            maxItems: 3
+                            items:
+                              type: string
+                              enum: [GET, HEAD, POST]
+                          paths:
+                            type: array
+                            minItems: 1
+                            maxItems: 64
+                            items:
+                              type: string
+                              minLength: 1
+                              maxLength: 512
+                              pattern: '^/'
                 registries:
                   type: array
                   maxItems: 4

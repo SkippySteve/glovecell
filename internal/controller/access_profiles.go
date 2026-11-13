@@ -39,8 +39,13 @@ import (
 // ProfileSource labels the rules a profile contributes.
 func ProfileSource(name string) string { return "profile:" + name }
 
+// MaxProfileHostRules bounds a profile's own rules once expanded to one
+// proxy rule per hostname, so a profile cannot crowd out the deployment's
+// reference rules (proxy.MaxReferenceRules covers both).
+const MaxProfileHostRules = 256
+
 // ProfileRules expands a profile into labelled, read-only proxy rules:
-// registries first, then its own rules.
+// registries first, then its own rules, one per hostname.
 func ProfileRules(p *api.AccessProfile) ([]api.HTTPSRule, error) {
 	if p == nil {
 		return nil, nil
@@ -49,7 +54,19 @@ func ProfileRules(p *api.AccessProfile) ([]api.HTTPSRule, error) {
 	if err != nil {
 		return nil, fmt.Errorf("access profile %s: %w", p.Name, err)
 	}
-	rules = append(rules, p.Spec.HTTPS...)
+	for _, r := range p.Spec.Rules {
+		if r.HTTPS == nil {
+			return nil, fmt.Errorf("access profile %s: every rule needs https, the only protocol the project proxy supports", p.Name)
+		}
+		if r.HTTPS.Ports != nil && (len(r.HTTPS.Ports.Numbers) == 0 || slices.ContainsFunc(r.HTTPS.Ports.Numbers, func(n int32) bool { return n != 443 })) {
+			return nil, fmt.Errorf("access profile %s: the project proxy serves HTTPS on port 443 only", p.Name)
+		}
+	}
+	own := p.Spec.HTTPSRules()
+	if len(own) > MaxProfileHostRules {
+		return nil, fmt.Errorf("access profile %s: more than %d hostnames across its rules", p.Name, MaxProfileHostRules)
+	}
+	rules = append(rules, own...)
 	for i := range rules {
 		rules[i].Source = ProfileSource(p.Name)
 	}

@@ -1,0 +1,14 @@
+{
+  "rooms": [
+    {"id": "!apc:matrix.example.com", "name": "APC", "target": "codex", "repo": "steve/agent-project-controller"}
+  ],
+  "targets": {
+    "orca": {"kind": "orca", "agent": "claude", "aliases": ["orka", "claude"]},
+    "codex": {"kind": "orca", "agent": "codex", "aliases": ["codecs", "code x", "codec"]},
+    "archon": {"kind": "archon", "aliases": ["arkon"]}
+  },
+  "speech": {"speed": 1.0},
+  "matrix": {"maxEventAge": "1h"},
+  "summarizer": {"enabled": false},
+  "pollInterval": "30s"
+}

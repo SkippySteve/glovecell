@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,13 +16,17 @@ import (
 	"time"
 
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/auditlog"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/bootstrap"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/cellrelay"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/connect"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/controller"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/download"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/forge"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/forgejo"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/githubbroker"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/githubhost"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/hubspoke"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/network"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/orchestrator"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/preflight"
@@ -30,9 +35,11 @@ import (
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/proxy"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/reader"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/registration"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/store"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/t3"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/telemetry"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/web"
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -41,6 +48,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/events"
+	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -58,6 +66,66 @@ func env(k, fallback string) string {
 	}
 	return v
 }
+
+// databaseFromEnv reads the controller database settings (D13 item 2,
+// docs/database.md). Without DATABASE_URL_FILE it returns nil: history stays
+// in audit ConfigMaps and approvals and access requests are refused.
+func databaseFromEnv(ctx context.Context) (*store.Postgres, store.Retention, error) {
+	urlFile, caFile := os.Getenv("DATABASE_URL_FILE"), os.Getenv("DATABASE_CA_FILE")
+	retention := store.Retention{History: 365 * 24 * time.Hour, DecidedRequests: 365 * 24 * time.Hour, ProxySummaries: 30 * 24 * time.Hour}
+	if urlFile == "" {
+		if caFile != "" || os.Getenv("DATABASE_MAX_CONNS") != "" {
+			return nil, retention, errors.New("DATABASE_CA_FILE and DATABASE_MAX_CONNS need DATABASE_URL_FILE")
+		}
+		return nil, retention, nil
+	}
+	cfg, err := store.ConfigFromFiles(urlFile, caFile)
+	if err != nil {
+		return nil, retention, err
+	}
+	if v := os.Getenv("DATABASE_MAX_CONNS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 2 || n > 100 {
+			return nil, retention, errors.New("DATABASE_MAX_CONNS must be 2 to 100")
+		}
+		cfg.MaxConns = int32(n)
+	}
+	for key, dst := range map[string]*time.Duration{"HISTORY_RETENTION": &retention.History, "DECIDED_REQUEST_RETENTION": &retention.DecidedRequests, "PROXY_SUMMARY_RETENTION": &retention.ProxySummaries} {
+		if v := os.Getenv(key); v != "" {
+			d, err := time.ParseDuration(v)
+			if err != nil || d < 0 || d > 0 && d < 24*time.Hour {
+				return nil, retention, fmt.Errorf("%s must be 0 (keep) or a duration of at least 24h", key)
+			}
+			*dst = d
+		}
+	}
+	db, err := store.Open(ctx, cfg)
+	return db, retention, err
+}
+
+// Vendor telemetry is enabled by default; malformed settings never broaden it.
+func vendorTelemetryFromEnv() (bool, error) {
+	switch env("VENDOR_TELEMETRY_ENABLED", "true") {
+	case "true":
+		return true, nil
+	case "false":
+		return false, nil
+	default:
+		return false, errors.New("VENDOR_TELEMETRY_ENABLED must be true or false")
+	}
+}
+
+func auditAssignmentFeedFromEnv() (bool, error) {
+	switch env("AUDIT_ASSIGNMENT_FEED_ENABLED", "false") {
+	case "true":
+		return true, nil
+	case "false", "":
+		return false, nil
+	default:
+		return false, errors.New("AUDIT_ASSIGNMENT_FEED_ENABLED must be true or false")
+	}
+}
+
 func profile(prefix string) controller.ResourceProfile {
 	return controller.ResourceProfile{CPURequest: os.Getenv(prefix + "_CPU_REQUEST"), MemoryRequest: os.Getenv(prefix + "_MEMORY_REQUEST"), CPULimit: os.Getenv(prefix + "_CPU_LIMIT"), MemoryLimit: os.Getenv(prefix + "_MEMORY_LIMIT")}
 }
@@ -113,16 +181,26 @@ func lanFromEnv(provider network.Provider) (network.LANConfig, error) {
 // PROVIDER_LEASES_SECRET=<namespace>/<name>: the Secret the provider broker
 // writes in lease mode. Unset keeps spec.providers off.
 func providerLeasesFromEnv(provider network.Provider) (*types.NamespacedName, error) {
-	raw := os.Getenv("PROVIDER_LEASES_SECRET")
+	return leaseSecretFromEnv("PROVIDER_LEASES_SECRET", provider)
+}
+
+// githubLeaseFromEnv reads GITHUB_LEASE_SECRET=<namespace>/<name>: the lease
+// Secret the GitHub broker writes. Unset keeps spec.github off.
+func githubLeaseFromEnv(provider network.Provider) (*types.NamespacedName, error) {
+	return leaseSecretFromEnv("GITHUB_LEASE_SECRET", provider)
+}
+
+func leaseSecretFromEnv(variable string, provider network.Provider) (*types.NamespacedName, error) {
+	raw := os.Getenv(variable)
 	if raw == "" {
 		return nil, nil
 	}
 	ns, name, ok := strings.Cut(raw, "/")
 	if !ok || len(validation.IsDNS1123Label(ns)) != 0 || len(validation.IsDNS1123Subdomain(name)) != 0 {
-		return nil, errors.New("PROVIDER_LEASES_SECRET must be <namespace>/<secret name>")
+		return nil, errors.New(variable + " must be <namespace>/<secret name>")
 	}
 	if _, ok := provider.(network.ProviderPolicy); !ok {
-		return nil, errors.New("PROVIDER_LEASES_SECRET requires NETWORK_PROVIDER=cilium")
+		return nil, errors.New(variable + " requires NETWORK_PROVIDER=cilium")
 	}
 	return &types.NamespacedName{Namespace: ns, Name: name}, nil
 }
@@ -172,6 +250,13 @@ func positiveID(key string) (int64, error) {
 func openGitHost() (forge.Forge, string, string, string, error) {
 	switch env("GIT_HOST", "forgejo") {
 	case "forgejo":
+		if os.Getenv("FORGE_AGENT_URL") != "" {
+			client, err := forgeAgentHost()
+			if err != nil {
+				return nil, "", "", "", err
+			}
+			return client, "forgejo", client.Origin, client.Owner, nil
+		}
 		token, err := secret("FORGEJO_TOKEN_FILE")
 		if err != nil {
 			return nil, "", "", "", err
@@ -229,7 +314,23 @@ func run(ctx context.Context) error {
 			if err != nil {
 				return errors.New("trusted broker client unavailable")
 			}
+			defer telemetry.Start(ctx, "apc-provider-broker")()
 			return providerbroker.Run(ctx, c, config)
+		case "github-broker":
+			config, err := ctrl.GetConfig()
+			if err != nil {
+				return errors.New("trusted Kubernetes client unavailable")
+			}
+			scheme := runtime.NewScheme()
+			if err := clientgoscheme.AddToScheme(scheme); err != nil {
+				return err
+			}
+			c, err := client.New(config, client.Options{Scheme: scheme})
+			if err != nil {
+				return errors.New("trusted broker client unavailable")
+			}
+			defer telemetry.Start(ctx, "apc-github-broker")()
+			return githubbroker.Run(ctx, c, os.Args[2:])
 		case "register-projects":
 			return projects.Register(ctx)
 		case "version", "--version":
@@ -264,7 +365,14 @@ func run(ctx context.Context) error {
 			return bootstrap.Credential()
 		case "reader":
 			return reader.Run(ctx)
+		case "telemetry-relay":
+			// Second container of each cell's proxy pod (decision GT A).
+			return cellrelay.Run(ctx)
+		case "proxy-ready":
+			return proxy.ReadyCLI(ctx)
 		case "proxy":
+			// No OTLP push from inside a cell (decision GT A): the collector
+			// will scrape the proxy and its telemetry relay instead.
 			return proxy.Run(ctx)
 		case "fetch":
 			// Run by the controller inside a project worker for "Download into sandbox".
@@ -295,6 +403,13 @@ func run(ctx context.Context) error {
 			return connectCLI(ctx, os.Args[2], os.Args[4:])
 		case "register":
 			return registerCLI(ctx, os.Args[2:])
+		case "provider":
+			return providerCLI(ctx, os.Args[2:])
+		case "hubspoke":
+			return hubspokeCLI(ctx, os.Args[2:])
+		case "forge-agent":
+			defer telemetry.Start(ctx, "apc-forge-agent")()
+			return forgeAgentCLI(ctx)
 		case "controller":
 		default:
 			return errors.New("unknown command")
@@ -313,16 +428,7 @@ func run(ctx context.Context) error {
 	if e != nil {
 		return e
 	}
-	shutdown, e := telemetry.Setup(ctx, os.Getenv("OTEL_ENABLED") == "true")
-	if e != nil {
-		slog.Warn("optional telemetry unavailable; controller enforcement continues")
-		shutdown = func(context.Context) error { return nil }
-	}
-	defer func() {
-		c, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		_ = shutdown(c)
-	}()
+	defer telemetry.Start(ctx, "agent-project-controller")()
 	scheme := runtime.NewScheme()
 	if e = clientgoscheme.AddToScheme(scheme); e != nil {
 		return e
@@ -358,7 +464,20 @@ func run(ctx context.Context) error {
 	if e != nil {
 		return e
 	}
-	reconciler := &controller.Reconciler{LAN: lan, Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, GitHost: gitHost, ForgejoOrigin: origin, Owner: owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling, RegistrarNamespace: os.Getenv("REGISTRAR_NAMESPACE"), WorkerExecClusterRole: os.Getenv("WORKER_EXEC_CLUSTER_ROLE"), ProjectAccessClusterRole: os.Getenv("PROJECT_ACCESS_CLUSTER_ROLE"), ControllerServiceAccount: env("CONTROLLER_SERVICE_ACCOUNT", controller.DefaultControllerServiceAccount)}}
+	orcaHubSpoke := os.Getenv("HUBSPOKE_ORCA_ENABLED") == "true"
+	auditAssignmentFeed, e := auditAssignmentFeedFromEnv()
+	if e != nil {
+		return e
+	}
+	reconciler := &controller.Reconciler{LAN: lan, Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, GitHost: gitHost, ForgejoOrigin: origin, Owner: owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling, RegistrarNamespace: os.Getenv("REGISTRAR_NAMESPACE"), WorkerExecClusterRole: os.Getenv("WORKER_EXEC_CLUSTER_ROLE"), ProjectAccessClusterRole: os.Getenv("PROJECT_ACCESS_CLUSTER_ROLE"), ControllerServiceAccount: env("CONTROLLER_SERVICE_ACCOUNT", controller.DefaultControllerServiceAccount), OrcaHubSpoke: orcaHubSpoke, OrcaRuntimeImage: os.Getenv("ORCA_RUNTIME_IMAGE"), OrcaOrchestratorClass: env("HUBSPOKE_ORCHESTRATOR_CLASS", "orca"), OrcaSpokePublicDomain: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_DOMAIN")), OrcaSpokeGatewayName: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_GATEWAY_NAME")), OrcaSpokeGatewayNamespace: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_GATEWAY_NAMESPACE")), OrcaSpokeGatewaySection: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_GATEWAY_SECTION")), OrcaHubNamespace: env("HUBSPOKE_HUB_NAMESPACE", "agent-project-control-orca-hub"), HubLogsClusterRole: strings.TrimSpace(os.Getenv("HUBSPOKE_HUB_LOGS_CLUSTER_ROLE")), HubServiceAccount: strings.TrimSpace(os.Getenv("HUBSPOKE_HUB_SERVICE_ACCOUNT")), AuditAssignmentFeed: auditAssignmentFeed, AuditAssignmentFeedConfigMap: strings.TrimSpace(os.Getenv("AUDIT_ASSIGNMENT_FEED_CONFIGMAP"))}}
+	if orcaHubSpoke && reconciler.Config.OrcaRuntimeImage == "" {
+		return errors.New("HUBSPOKE_ORCA_ENABLED=true requires ORCA_RUNTIME_IMAGE")
+	}
+	telemetry, e := vendorTelemetryFromEnv()
+	if e != nil {
+		return e
+	}
+	reconciler.Config.VendorTelemetry = telemetry
 	if os.Getenv("GITHUB_REPOSITORY_TOKEN_FILE") != "" {
 		reconciler.GitHubToken, e = secret("GITHUB_REPOSITORY_TOKEN_FILE")
 		if e != nil {
@@ -384,6 +503,15 @@ func run(ctx context.Context) error {
 	reconciler.IndependentCodexWorkspaceUID = os.Getenv("INDEPENDENT_CODEX_WORKSPACE_UID")
 	reconciler.MuseSubscriptionKeyFile = os.Getenv("MUSE_SUBSCRIPTION_KEY_FILE")
 	if reconciler.ProviderLeases, e = providerLeasesFromEnv(networkProvider); e != nil {
+		return e
+	}
+	if reconciler.Config.CellTokens, e = controller.ParseCellTokenProviders(os.Getenv("PROVIDER_CELL_TOKENS")); e != nil {
+		return e
+	}
+	if reconciler.Config.CellTokens != nil && reconciler.ProviderLeases == nil {
+		return errors.New("PROVIDER_CELL_TOKENS requires PROVIDER_LEASES_SECRET")
+	}
+	if reconciler.GitHubLease, e = githubLeaseFromEnv(networkProvider); e != nil {
 		return e
 	}
 	if host := os.Getenv("READER_HTTPS_HOST"); host != "" {
@@ -413,10 +541,42 @@ func run(ctx context.Context) error {
 	if e = reconciler.Config.Validate(); e != nil {
 		return e
 	}
-	// Orchestrator adapters an OrchestratorClass may name. Orca and command
-	// clients grant nothing in the cluster today (the control-host registrar
-	// does); T3 joins when T3 Connect is configured below.
-	if reconciler.Orchestrators, e = orchestrator.NewRegistry(orchestrator.NewOrca(direct, ns), orchestrator.NewCommand(direct, ns)); e != nil {
+	// Operational records (D13 item 2). The pool connects lazily: the
+	// controller starts and enforces while the database is down, and the
+	// monitor applies migrations as soon as it is reachable.
+	db, retention, e := databaseFromEnv(ctx)
+	if e != nil {
+		return fmt.Errorf("database: %w", e)
+	}
+	var monitor *store.Monitor
+	var auditLog *auditlog.Log
+	if db != nil {
+		defer db.Close()
+		auditLog = &auditlog.Log{Client: direct, Namespace: ns, Store: db}
+		monitor = store.NewMonitor(db, db.Migrate)
+		monitor.Retention = retention
+		monitor.OnReady = func(ctx context.Context) {
+			if _, err := auditLog.ImportLegacy(ctx); err != nil {
+				slog.Warn("audit ConfigMap import incomplete; retrying", "error", err.Error())
+			}
+		}
+		reconciler.AuditLog = auditLog
+		go monitor.Run(ctx)
+		go auditLog.Run(ctx, 30*time.Second)
+	} else {
+		slog.Warn("no database configured (DATABASE_URL_FILE): history stays in audit ConfigMaps, and approvals and access requests are refused; PostgreSQL is required (docs/database.md)")
+	}
+	// Orchestrator adapters an OrchestratorClass may name. Orca is either the
+	// legacy control-host registrar (desktop mounts) or hub-and-spoke
+	// (HUBSPOKE_ORCA_ENABLED=true): agents stay in gVisor spokes, the hub
+	// enrolls them for phone relay. T3 joins when T3 Connect is configured below.
+	orcaAdapter := orchestrator.Adapter(orchestrator.NewOrca(direct, ns))
+	if os.Getenv("HUBSPOKE_ORCA_ENABLED") == "true" {
+		orcaAdapter = hubspoke.NewOrcaAccess(direct, ns, true)
+	} else if v := os.Getenv("HUBSPOKE_ORCA_ENABLED"); v != "" && v != "false" {
+		return errors.New("HUBSPOKE_ORCA_ENABLED must be true or false")
+	}
+	if reconciler.Orchestrators, e = orchestrator.NewRegistry(orcaAdapter, orchestrator.NewCommand(direct, ns)); e != nil {
 		return e
 	}
 	if v := os.Getenv("T3_CONNECT_ENABLED"); v != "" && v != "true" && v != "false" {
@@ -465,12 +625,39 @@ func run(ctx context.Context) error {
 	if e = manager.AddReadyzCheck("readyz", healthz.Ping); e != nil {
 		return e
 	}
+	if monitor != nil {
+		// Ready reflects database health. The chart's console Service
+		// publishes not-ready addresses, so the console stays reachable to
+		// explain an outage.
+		if e = manager.AddReadyzCheck("database", monitor.Check); e != nil {
+			return e
+		}
+	}
 	server := &web.Server{T3Connect: reconciler.Access != nil, Client: direct, Host: host, Namespace: ns, Owner: owner, Password: password, Origin: os.Getenv("PUBLIC_ORIGIN"), GitHost: gitHost, GitOrigin: origin, AllowBasic: os.Getenv("ALLOW_STATIC_LOGIN") == "true"}
 	server.GitHubOwner = reconciler.Config.GitHubOwner
+	server.Audit = auditLog
+	if orcaHubSpoke && strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_DOMAIN")) != "" {
+		server.OrcaPairing = &web.OrcaPairing{
+			Rest:      config,
+			Domain:    strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_DOMAIN")),
+			HubSpoke:  true,
+			ClassName: env("HUBSPOKE_ORCHESTRATOR_CLASS", "orca"),
+			Container: env("HUBSPOKE_WORKER_CONTAINER", "workspace"),
+		}
+	}
+	if db != nil {
+		server.Database = &web.Database{Store: db, Monitor: monitor}
+	}
 	server.Reference = web.Reference{Digest: reconciler.Config.ReferenceDigest, Rules: reconciler.Config.ReferenceRules}
 	if reconciler.ProviderLeases != nil {
 		server.Providers = &web.Providers{Status: reconciler.ProviderLeaseStatus}
+		if brokerURL := os.Getenv("PROVIDER_BROKER_URL"); brokerURL != "" {
+			if server.ProviderLogins, e = web.NewProviderLogins(brokerURL, os.Getenv("PROVIDER_BROKER_TOKEN_FILE")); e != nil {
+				return e
+			}
+		}
 	}
+	server.GitHubBrokering = reconciler.GitHubLease != nil
 	if lan.Enabled() {
 		server.LAN = &web.LANGrants{Config: lan, Nodes: network.NodeAddresses}
 	}
@@ -504,7 +691,8 @@ func run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		server.OIDC, e = web.NewOIDC(ctx, web.OIDCConfig{Issuer: os.Getenv("OIDC_ISSUER"), ClientID: os.Getenv("OIDC_CLIENT_ID"), ClientSecret: clientSecret, Origin: server.Origin, GroupsClaim: env("OIDC_GROUPS_CLAIM", "groups"), Scopes: web.CSV(env("OIDC_SCOPES", "profile,groups")), AllowedGroups: web.CSV(os.Getenv("OIDC_ALLOWED_GROUPS")), AllowedSubjects: web.CSV(os.Getenv("OIDC_ALLOWED_SUBJECTS"))})
+		server.OIDC, e = web.NewOIDC(ctx, web.OIDCConfig{Issuer: os.Getenv("OIDC_ISSUER"), ClientID: os.Getenv("OIDC_CLIENT_ID"), ClientSecret: clientSecret, Origin: server.Origin, GroupsClaim: env("OIDC_GROUPS_CLAIM", "groups"), Scopes: web.CSV(env("OIDC_SCOPES", "profile,groups")), AllowedGroups: web.CSV(os.Getenv("OIDC_ALLOWED_GROUPS")), AllowedSubjects: web.CSV(os.Getenv("OIDC_ALLOWED_SUBJECTS")),
+			ApproverGroups: web.CSV(os.Getenv("OIDC_APPROVER_GROUPS")), ApproverGroupsClaim: os.Getenv("OIDC_APPROVER_GROUPS_CLAIM")})
 		if e != nil {
 			return e
 		}
@@ -547,6 +735,60 @@ func t3CLI(ctx context.Context, workspace string) error {
 		return err
 	}
 	return t3.Launch(ctx, c, config, env("CONTROL_NAMESPACE", "agent-project-controller"), workspace)
+}
+
+func hubspokeCLI(ctx context.Context, args []string) error {
+	watch := false
+	for _, a := range args {
+		switch a {
+		case "--watch":
+			watch = true
+		case "-h", "--help":
+			return errors.New("usage: agent-project-controller hubspoke --watch")
+		default:
+			return fmt.Errorf("unknown hubspoke flag %q", a)
+		}
+	}
+	if !watch {
+		return errors.New("usage: agent-project-controller hubspoke --watch")
+	}
+	config := ctrl.GetConfigOrDie()
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		return err
+	}
+	if err := api.AddToScheme(scheme); err != nil {
+		return err
+	}
+	c, err := client.New(config, client.Options{Scheme: scheme})
+	if err != nil {
+		return err
+	}
+	runtimeKind := env("HUBSPOKE_KIND", "orca")
+	var (
+		rt hubspoke.Runtime
+		en hubspoke.Enroller
+	)
+	switch runtimeKind {
+	case "orca":
+		rt = hubspoke.OrcaRuntime{}
+		en = &hubspoke.OrcaEnroller{
+			Binary:      env("APC_ORCA_BINARY", registration.ResolveOrcaBinary()),
+			ProjectPath: env("HUBSPOKE_PROJECT_PATH", "/workspace/repo"),
+		}
+	case "t3":
+		rt, en = hubspoke.T3Runtime{}, hubspoke.T3Enroller{}
+	default:
+		return fmt.Errorf("unsupported HUBSPOKE_KIND %q", runtimeKind)
+	}
+	opts := hubspoke.WatchOptions{
+		ControlNamespace: env("CONTROL_NAMESPACE", "agent-project-controller"),
+		Kind:             runtimeKind,
+		ProjectPath:      env("HUBSPOKE_PROJECT_PATH", "/workspace/repo"),
+		ClassName:        os.Getenv("HUBSPOKE_ORCHESTRATOR_CLASS"),
+		OfferFrom:        hubspoke.OfferFromLogs(config, rt, env("HUBSPOKE_WORKER_CONTAINER", "workspace")),
+	}
+	return hubspoke.RunWatch(ctx, c, en, rt, opts)
 }
 
 func registerCLI(ctx context.Context, args []string) error {
@@ -624,9 +866,47 @@ func connectCLI(ctx context.Context, workspace string, command []string) error {
 	return connect.Exec(ctx, config, pod.Namespace, pod.Name, command, os.Stdin, os.Stdout, os.Stderr, tty)
 }
 func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+	installLogger()
 	if e := run(ctrl.SetupSignalHandler()); e != nil {
 		slog.Error("process failed", "error", e)
 		os.Exit(1)
 	}
+}
+
+// installLogger makes every log line of this binary, including
+// controller-runtime and client-go (klog) output, JSON on stderr with
+// credentials redacted. LOG_LEVEL selects debug, info, warn or error.
+func installLogger() {
+	telemetry.Version = version
+	logger := telemetry.NewLogger(os.Stderr, telemetry.ParseLevel(os.Getenv("LOG_LEVEL")))
+	slog.SetDefault(logger)
+	ctrl.SetLogger(logr.FromSlogHandler(logger.Handler()))
+	klog.SetSlogLogger(logger)
+}
+
+// providerCLI is `provider import <grok|cursor>`: copy the operator's own
+// provider login from this machine to the provider broker (one-shot, with
+// the operator's kubeconfig; nothing keeps running here).
+func providerCLI(ctx context.Context, args []string) error {
+	usage := errors.New("usage: agent-project-controller provider import <grok|cursor> [--file PATH] [--namespace NAMESPACE] [--replace-account]")
+	if len(args) < 2 || args[0] != "import" {
+		return usage
+	}
+	flags := flag.NewFlagSet("provider import", flag.ContinueOnError)
+	file := flags.String("file", "", "login file (default: the provider CLI's own, ~/.grok/auth.json or ~/.config/cursor/auth.json)")
+	namespace := flags.String("namespace", env("PROVIDER_NAMESPACE", env("CONTROL_NAMESPACE", "agent-project-controller")+"-providers"), "the provider broker's namespace (chart providerBroker.namespace)")
+	replace := flags.Bool("replace-account", false, "allow a different Cursor account than the one already signed in")
+	if err := flags.Parse(args[2:]); err != nil || flags.NArg() != 0 {
+		return usage
+	}
+	config := ctrl.GetConfigOrDie()
+	scheme := runtime.NewScheme()
+	if e := clientgoscheme.AddToScheme(scheme); e != nil {
+		return e
+	}
+	c, e := client.New(config, client.Options{Scheme: scheme})
+	if e != nil {
+		return e
+	}
+	return providerbroker.Import(ctx, c, providerbroker.ImportOptions{Provider: args[1], File: *file, Namespace: *namespace, ReplaceAccount: *replace}, os.Stdout)
 }
