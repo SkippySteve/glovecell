@@ -34,7 +34,7 @@ future changes.
   `components.json`, and every entry still exists;
 - every `chart` component names a template that exists;
 - every exception names its replacement and tracking, and no exception is added
-  beyond the four recorded below;
+  beyond the five recorded below (hub-admin shares hubspoke's pod and migrates with it);
 - no doc, script or chart file tells an operator to install a desktop service
   (`systemctl --user`, `~/.config/systemd/user`, `kubectl port-forward`), except
   the files that document the existing exceptions until they are retired.
@@ -45,6 +45,7 @@ future changes.
 | --- | --- | --- |
 | `register --watch` (desktop registrar) | systemd user unit on Steve's desktop (installed 2026-11-08), running with the operator's **admin** kubeconfig; FUSE-mounts each Ready cell via `kubectl exec` and runs `orca repo add` | In-cluster `hubspoke` already enrolls each Ready cell and its `spec.repositories` with the Orca hub (APC #118/#119). The desktop Orca app connects to the hub as a client, like the phone. Retire the unit once that path works on the desktop (add before remove). APC #132 (extending the registrar) was closed for this reason |
 | `hubspoke` (Orca hub) | `infra/agent-workplace/orca-hub` in the infra repo | Chart hub Deployment (`hubspoke.hub`, already templated off by default) as its own pod; the infra repo only sets values |
+| `hub-admin` (console Hub pairing, APC #126) | Same pod as `hubspoke`: started by `hub-entry` only when `HUB_ADMIN_ENABLED=true` | Moves with `hubspoke` into the chart hub Deployment; no separate migration |
 | `provider-broker` | `infra/agent-workplace/provider-broker` | Chart template, own Deployment and ServiceAccount, off by default |
 | `github-broker` | `infra/agent-workplace/github-broker` | Chart template, own Deployment holding the GitHub App credential, off by default |
 
