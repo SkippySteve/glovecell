@@ -26,6 +26,8 @@
     {"command": "model", "class": "operator-cli", "note": "one-shot"},
     {"command": "exec", "class": "operator-cli", "note": "one-shot"},
     {"command": "version", "class": "operator-cli", "note": "one-shot"},
+    {"command": "provider", "class": "operator-cli", "note": "one-shot: provider import uploads a local login with the operator's own identity"},
+    {"command": "herdr-via", "class": "operator-cli", "note": "one-shot pipe the Herdr hub runs (hc machine add --via), kubectl exec with the operator's own identity"},
 
     {"command": "provider-broker", "class": "cluster-exception",
      "where": "steve/opnsense-kubernetes-bgp infra/agent-workplace/provider-broker",
