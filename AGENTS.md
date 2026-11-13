@@ -8,6 +8,20 @@ Do not include deployment-specific addresses, credentials or source from private
 
 Security changes need tests for denial and interrupted-operation recovery. Unsupported policies must fail closed. Removal must never report completion before external revocation and owned storage cleanup are verified.
 
+## This repository is public
+
+Forgejo `main` is mirrored to a public GitHub repository on every commit, so
+write everything here for outside readers:
+
+- Document how Glovecell works and how to configure it safely. Assessments of
+  a particular deployment (findings, open issues, gap lists, incident notes,
+  qualification runs against real projects, internal host or repository names)
+  belong in the private deployment repository, not here.
+- No personal email addresses in files, commit messages or commit identities.
+  Use project or noreply addresses; `scripts/check-publishable.py` refuses
+  personal mailbox providers, private keys, tokens, private addresses and node
+  names.
+
 ## Prefer maintained open source over custom builds
 
 Before writing a custom tool, service, script or controller, look for a
@@ -49,12 +63,13 @@ not the automation author's token. Never copy either token into Git or logs.
 
 Steve merges once per change. Make one PR per change, code and tests together;
 do not stack PRs unless unavoidable (say why). Do not open pin or promotion PRs
-in steve/opnsense-kubernetes-bgp: after merge, this repository's CI builds the
+in the private deployment repository: after merge, this repository's CI builds the
 images from main and adds them to the single rolling promotion PR there
 (`promote/glovecell`), which that repository's promote-merger
 merges once promote-guard passes. Keep new behaviour compatible with the
 deployed config so no companion config PR is needed; when one is, say so in the
-PR, make the config PR safe to merge first, and link the two. See docs/one-merge-delivery.md in steve/opnsense-kubernetes-bgp.
+PR, make the config PR safe to merge first, and link the two. See docs/one-merge-delivery.md in the deployment repository.
+
 ## Explain proposals in plain language
 
 Maintainers and users should understand what they are approving. Start every

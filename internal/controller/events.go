@@ -39,11 +39,25 @@ func (r *Reconciler) event(w *api.ProjectWorkspace, eventtype, reason, action, n
 	r.Events.Eventf(w, nil, eventtype, reason, action, "%s", truncateNote(note))
 }
 
-func phaseEventType(phase, reason string) string {
-	if phase == "Blocked" || reason == "CleanupPending" {
+func phaseEventType(phase api.Phase, reason string) string {
+	if phase == api.PhaseBlocked || reason == "CleanupPending" {
 		return corev1.EventTypeWarning
 	}
 	return corev1.EventTypeNormal
+}
+
+// phaseLabel names a phase for metrics and Events: an unreconciled
+// workspace is "Requested", and a phase this controller does not write is
+// "Other".
+func phaseLabel(p api.Phase) string {
+	switch {
+	case p == "":
+		return "Requested"
+	case p.Known():
+		return string(p)
+	default:
+		return "Other"
+	}
 }
 
 func truncateNote(note string) string {

@@ -143,7 +143,7 @@ func (s *Server) projectProfile(ctx context.Context, name string) (*api.AccessPr
 
 // pausedForAccess repeats changeAccess's checks for a change that rewrites spec.https.
 func (s *Server) pausedForAccess(r *http.Request, obj *api.ProjectWorkspace) (int, string) {
-	if obj.Spec.DesiredState != "Paused" || obj.Status.Phase != "Paused" || obj.Status.ObservedGeneration != obj.Generation {
+	if obj.Spec.DesiredState != api.DesiredPaused || !obj.Settled(api.PhasePaused) {
 		return http.StatusConflict, "the sandbox has its own HTTPS rules; pause it and wait for Paused to replace them with a level"
 	}
 	var pods corev1.PodList
@@ -175,7 +175,7 @@ func (s *Server) changeLevel(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if obj.Spec.DesiredState == "Removed" {
+	if obj.Spec.DesiredState == api.DesiredRemoved {
 		http.Error(w, "removed projects cannot change access", http.StatusConflict)
 		return
 	}
@@ -342,7 +342,7 @@ func (s *Server) addGrant(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "project unavailable", http.StatusNotFound)
 		return
 	}
-	if !obj.DeletionTimestamp.IsZero() || obj.Spec.DesiredState == "Removed" {
+	if !obj.DeletionTimestamp.IsZero() || obj.Spec.DesiredState == api.DesiredRemoved {
 		http.Error(w, "removed projects cannot receive grants", http.StatusConflict)
 		return
 	}

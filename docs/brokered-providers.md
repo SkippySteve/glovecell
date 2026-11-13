@@ -1,8 +1,9 @@
 # Brokered subscription providers
 
-A project sandbox can run the stock Grok (`grok`) and Cursor (`cursor-agent`)
-command line tools against the operator's own subscription. The login never
-enters the sandbox. Each project opts in per provider, the default is off, and
+A project sandbox can run the stock Grok (`grok`), Cursor (`cursor-agent`),
+Codex (`codex`) and Claude Code (`claude`) command line tools against the
+operator's own subscriptions. The login never enters the sandbox, and Claude's
+subscription token never enters it either (see cell tokens below). Each project opts in per provider, the default is off, and
 an operator can revoke one provider for one project while it runs.
 
 GitHub has its own broker, where the credential never enters the sandbox at
@@ -12,7 +13,7 @@ all and the project proxy enforces a per-request policy: see
 ## Parts
 
 ```
-offline owner pod(s) (per provider or shared; logins on volumes; no network, no token)
+offline owner pods (one per provider; login on a volume; no network, no token)
    ^ pods/exec: read the login, write it back after a refresh
 provider broker (lease mode) --HTTPS--> the provider's token endpoint
    | writes one 5-minute access lease per provider
@@ -25,19 +26,27 @@ controller ---> per opted-in project, in its own namespace:
                   CiliumNetworkPolicy providers  -> proxy may reach the hosts
 ```
 
-- **Owner pod.** One per provider, or one pod for every provider with each
-  login on its own volume (the broker takes a namespace, pod and container per
-  provider, so both shapes work; the reference deployment uses one pod). It
-  runs `sleep`, mounts the provider's login on a volume, has no service account token and a deny-all network
-  policy. Sign-in happens once, by the operator, in a temporary login pod that
-  mounts the same volume.
+- **Owner pod.** It runs `sleep`, mounts each provider's login on that
+  provider's own volume, has no service account token and a deny-all network
+  policy. One pod may hold every provider's login (the
+  `<PROVIDER>_OWNER_NAMESPACE`/`_POD`/`_CONTAINER` settings may all name the
+  same container), or each provider may have its own. Sign-in happens once per
+  provider, by the operator, in a temporary login pod that mounts only that
+  provider's volume. Grok, Cursor and Codex use the CLI's own login
+  (`~/.grok/auth.json`, `~/.config/cursor/auth.json`, `~/.codex/auth.json`).
+  Claude uses `claude setup-token`, whose long-lived subscription token the
+  operator saves with its expiry as `~/.claude/apc-subscription-token.json`
+  (`{"accessToken": "sk-ant-oat01-…", "expiresAt": <unix seconds>}`, mode
+  0600). It has no refresh: renewing it is a new `setup-token` before expiry.
 - **Provider broker.** The `provider-broker` command with
   `PROVIDER_BROKER_LEASES` set ("lease mode"). Every 30 seconds it reads each
   owner's login through `pods/exec`, refreshes it at the provider when it is
   within 10 minutes of expiry (the journal makes an interrupted refresh
   recoverable without replaying it), and publishes only the access token, with
-  an expiry capped at five minutes, to its lease Secret. It pins the Cursor
-  account on first use. It needs `pods/exec` on the owner pods, `create` on
+  an expiry capped at five minutes, to its lease Secret. Codex leases also
+  carry the ChatGPT account id and plan. It pins the Cursor and Codex accounts
+  on first use (journal keys `cursor-subject`, `codex-account`). Claude's
+  owner is only read, never refreshed. It needs `pods/exec` on the owner pods, `create` on
   Secrets and `get`/`patch` on its journal and lease Secret, all in its own
   namespace, and nothing in project namespaces.
 - **Controller.** With `PROVIDER_LEASES_SECRET=<namespace>/<name>` it reads the
@@ -45,14 +54,19 @@ controller ---> per opted-in project, in its own namespace:
   each provider in a project's `spec.providers`, and only those, into that
   project's Secrets and policy. A lease that is missing, malformed, carries
   refresh material or expires within a minute becomes `{"enabled": false}`.
-- **Worker launchers.** `grok` and `cursor-agent` in the workspace image read
-  `/run/model/provider-access` (see [provider launchers](provider-launchers.md)).
+- **Worker launchers.** `grok`, `cursor-agent`, `codex` and `claude` in the
+  worker image read the projected `provider-access` (see
+  [provider launchers](provider-launchers.md)).
   They refuse sign-in, updates, credential overrides and alternate endpoints.
 - **Project proxy.** A request to a provider host is admitted only when the
   provider is in `brokered-providers`, its grant is enabled and valid for over a
   minute, the method and path match the reviewed route, and the
   `Authorization` header carries the current lease token. Cursor's `/auth` and
-  `/oauth` routes are always refused. The proxy rereads both files on every
+  `/oauth` routes are always refused. Codex may use only the ChatGPT backend's
+  `/backend-api/codex` and `/backend-api/wham` paths. Claude may use only the
+  exact routes the sandbox-control gateway reviewed (`POST /v1/messages`,
+  `/v1/messages/count_tokens`, and the `GET` account and settings routes in
+  `internal/proxy/claude.go`), never with an `X-Api-Key`. The proxy rereads both files on every
   request.
 
 ## Opting in
@@ -72,12 +86,16 @@ spec:
   providers:
   - name: grok
   - name: cursor
+  - name: codex
+  - name: claude
 ```
 
 Each entry may name a `providerClassName`; without one it uses the
 provider's default class, which matches the behaviour described here (see
 [provider and forge classes](classes.md)). The controller refuses an unknown or
-repeated name, an unknown or unsupported class, and any opt-in when the
+repeated name, an unknown or unsupported class, an opt-in whose provider host
+the project also lists in a fixed HTTPS rule (for example `chatgpt.com` for an
+older hand-made Codex grant: remove the rule first), and any opt-in when the
 controller has no lease source or the network provider is not Cilium. A
 refused opt-in blocks the project, like an invalid HTTPS rule, and withdraws
 every brokered grant.
@@ -121,7 +139,12 @@ out. Pausing or removing the project stops the worker.
   HTTPS rules you would trust with that token. Rotating the owner's login (a
   new sign-in) invalidates a copied Cursor token. Cell tokens (below) remove
   the real token from workers.
-- **Cell tokens (`PROVIDER_CELL_TOKENS=grok,cursor`, off by default).** The
+- **Claude always uses a cell token.** Its subscription token is long-lived,
+  so whatever `PROVIDER_CELL_TOKENS` says, a Claude worker receives only an
+  `sk-ant-oat01-apc-cell-…` stand-in and the proxy swaps in the real token
+  (adding the `oauth-2025-04-20` beta). A Claude grant without a cell token is
+  refused at the proxy.
+- **Cell tokens (`PROVIDER_CELL_TOKENS=grok,cursor,codex`, off by default).** The
   worker's `provider-access` then carries a token unique to its cell: an HMAC
   of the provider and the real token, keyed from the cell's own inspection CA
   key. A Cursor JWT keeps its header and claims and gets a new signature; Grok
@@ -142,6 +165,80 @@ out. Pausing or removing the project stops the worker.
 
 ## Deployment
 
+### With the Helm chart
+
+```yaml
+providerBroker:
+  enabled: true
+  providers: [grok, cursor]   # only the subscriptions you have
+```
+
+This adds one namespace (`<release namespace>-providers`, or
+`providerBroker.namespace`) with:
+
+- `owners-0`, the offline owner (a one-replica StatefulSet, so its name is
+  fixed): the workspace image running `sleep`, no service account token, a
+  Cilium policy that denies all traffic, and one retained volume per listed
+  provider (`<provider>-identity`, kept on `helm uninstall`;
+  `providerBroker.owner.existingClaims` adopts claims you already have);
+- `provider-broker`, the controller image in lease mode, allowed to reach only
+  the API server and the listed providers' token endpoints;
+- three admission policies: the broker may exec only into `owners-0` and its
+  `<provider>-login` pods (never attach or port-forward); the only pods it may
+  create are those login pods with the chart's template (workspace image, no
+  token, emptyDir only, no host access); and the controller may not create,
+  change, exec or delete anything in this namespace. Its only rights here are
+  `get` on `provider-leases` and calls to the sign-in API.
+
+The chart sets the controller's `PROVIDER_LEASES_SECRET` itself (leave
+`config.PROVIDER_LEASES_SECRET` empty) and creates default provider classes
+only for the listed providers.
+
+**Sign in** once per provider, and again whenever the broker log says a login
+needs renewal. There are two ways; both end in the same checked install into
+the owner (the broker validates the file, refuses a different Cursor account
+unless you choose to replace it, clears any interrupted renewal first, writes
+the file atomically and reads it back through the renewal path before saying done).
+
+1. **Console (Connect).** Open any sandbox, **Credentials**, *Your
+   subscription logins*, **Connect**. The broker starts a short-lived
+   `<provider>-login` pod (the workspace image, no service account token,
+   emptyDir volumes only, no login volume, network only to that provider's
+   sign-in hosts), runs the provider's own sign-in (`grok login
+   --device-auth`, `cursor-agent login`) and the console shows its link, plus
+   Grok's code. Approve in your browser; the broker copies the new login from
+   that pod into the owner and deletes the pod. One sign-in runs at a time and
+   each ends after 15 minutes. Only a signed-in OIDC operator can start one or
+   see its code. This gives Glovecell its own session, separate from any on
+   your machine. `providerBroker.consoleSignIn: false` turns this path off.
+2. **Copy from your machine.** If the provider's CLI is already signed in on
+   your computer:
+
+   ```sh
+   agent-project-controller provider import grok     # ~/.grok/auth.json
+   agent-project-controller provider import cursor   # ~/.config/cursor/auth.json
+   # --file PATH, --namespace <release namespace>-providers, --replace-account
+   ```
+
+   It checks the file locally, hands it to the broker as a one-shot Secret
+   `provider-import-<provider>` (with your own kubeconfig), waits for the
+   broker to install it (normally within 30 seconds) and removes the Secret
+   whether it worked or not. Nothing keeps running on your machine.
+   **Caveat:** your machine and Glovecell then share one sign-in session. If
+   the provider rotates its refresh token, whichever side renews first can sign
+   the other out: your local CLI asks you to sign in again, or the broker log
+   reports `credential owner renewal unavailable` and you import or Connect
+   again. Connect avoids this.
+
+The broker's sign-in API listens on 8443 inside the cluster. It accepts only
+the controller's ServiceAccount, through a projected token with its own
+audience checked by TokenReview (like the forge agent), and network policy
+admits only the controller's pod. The controller relays
+`GET/POST/DELETE /api/v1/provider-logins[/{provider}]` from the console and
+logs who started or canceled each sign-in.
+
+### By hand
+
 `config/samples/provider-broker.yaml` is a generic example: namespace,
 ServiceAccount, Roles, the broker Deployment and one owner pod. Replace the
 image digests and owner names, sign each provider in once with a temporary
@@ -153,7 +250,10 @@ Deployment that still carries the single-workspace variables runs on an older
 image without granting anything, so the configuration can be rolled out before
 the image.
 
-Lease mode replaces the single-workspace mode for Grok and Cursor: with a
-lease source configured, the controller owns the `grok` and `cursor` entries of
-every project's `provider-access` document and removes them from projects that
-did not opt in.
+Lease mode replaces the single-workspace mode for all four providers: with a
+lease source configured, the controller owns the `grok`, `cursor`, `codex` and
+`claude` entries of every project's `provider-access` document and removes them
+from projects that did not opt in. An operator-made Codex grant (the
+`access-token`, `chatgpt-account-id` and `expires-at` keys) keeps those keys,
+but its `codex` entry is replaced by the brokered one or removed; move such a
+project to `spec.providers: [{name: codex}]`.

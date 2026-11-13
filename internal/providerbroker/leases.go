@@ -23,8 +23,9 @@ import (
 // a project opts out. One owner login therefore serves every opted-in project
 // without its refresh material ever leaving the owner.
 
-// LeaseProviders are the providers lease mode can renew.
-var LeaseProviders = []string{"grok", "cursor"}
+// LeaseProviders are the providers lease mode can renew (Claude's owner holds
+// a long-lived subscription token, so it is read, never renewed).
+var LeaseProviders = []string{"grok", "cursor", "codex", "claude"}
 
 const (
 	// LeasesLabel binds the journal and the lease Secret to this broker; its
@@ -35,6 +36,8 @@ const (
 	// cursorSubjectKey pins the Cursor account on first use. A different
 	// account is refused until an operator deletes this journal key.
 	cursorSubjectKey = "cursor-subject"
+	// codexAccountKey pins the ChatGPT account the same way.
+	codexAccountKey = "codex-account"
 )
 
 // journalBound checks that the renewal journal belongs to this broker.
@@ -70,14 +73,20 @@ func (b *Broker) boundSecret(ctx context.Context, name string) (*corev1.Secret, 
 
 // pinCursor records the Cursor account on first use and refuses another one.
 func (b *Broker) pinCursor(ctx context.Context, subject string) error {
+	return b.pinAccount(ctx, cursorSubjectKey, "Cursor", subject)
+}
+
+// pinAccount records a provider's account on first use under key and refuses
+// another one until an operator deletes that journal key.
+func (b *Broker) pinAccount(ctx context.Context, key, label, subject string) error {
 	if subject == "" {
-		return errors.New("Cursor account unknown")
+		return errors.New(label + " account unknown")
 	}
 	journal, err := b.boundSecret(ctx, b.Config.Journal)
 	if err != nil {
 		return err
 	}
-	switch pinned := string(journal.Data[cursorSubjectKey]); pinned {
+	switch pinned := string(journal.Data[key]); pinned {
 	case subject:
 		return nil
 	case "":
@@ -85,13 +94,13 @@ func (b *Broker) pinCursor(ctx context.Context, subject string) error {
 		if journal.Data == nil {
 			journal.Data = map[string][]byte{}
 		}
-		journal.Data[cursorSubjectKey] = []byte(subject)
+		journal.Data[key] = []byte(subject)
 		if b.Client.Patch(ctx, journal, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})) != nil {
-			return errors.New("Cursor account pin pending")
+			return errors.New(label + " account pin pending")
 		}
 		return nil
 	default:
-		return errors.New("Cursor enrollment account changed")
+		return errors.New(label + " enrollment account changed")
 	}
 }
 
@@ -104,9 +113,11 @@ func currentLeases(raw []byte) map[string]Grant {
 		return out
 	}
 	for _, name := range LeaseProviders {
-		if g, ok := grants[name]; ok && g.Enabled && g.Access != nil && validAccess(*g.Access) && g.Access.Account == "" && g.Access.Plan == "" {
-			out[name] = Grant{Enabled: true, Access: &Access{Token: g.Access.Token, Expires: g.Access.Expires, Issuer: g.Access.Issuer}}
+		g, ok := grants[name]
+		if !ok || !g.Enabled || g.Access == nil || !validAccess(*g.Access) || (name == "codex") != (g.Access.Account != "") || name != "codex" && g.Access.Plan != "" {
+			continue
 		}
+		out[name] = Grant{Enabled: true, Access: &Access{Token: g.Access.Token, Expires: g.Access.Expires, Issuer: g.Access.Issuer, Account: g.Access.Account, Plan: g.Access.Plan}}
 	}
 	return out
 }
@@ -118,6 +129,7 @@ func (b *Broker) TickLeases(ctx context.Context) error {
 	if _, err := b.boundSecret(ctx, b.Config.Journal); err != nil {
 		return err
 	}
+	b.importPending(ctx)
 	leases, err := b.boundSecret(ctx, b.Config.Leases)
 	if err != nil {
 		return err
@@ -135,6 +147,9 @@ func (b *Broker) TickLeases(ctx context.Context) error {
 		if err == nil && name == "cursor" {
 			err = b.pinCursor(ctx, access.Subject)
 		}
+		if err == nil && name == "codex" {
+			err = b.pinAccount(ctx, codexAccountKey, "Codex", access.Account)
+		}
 		if err != nil || !validAccess(access) || access.Expires <= float64(now.Add(time.Minute).Unix()) {
 			recordRenewal(ctx, name, false)
 			failures = append(failures, errors.New(name+" credential owner renewal unavailable"))
@@ -146,7 +161,7 @@ func (b *Broker) TickLeases(ctx context.Context) error {
 			continue
 		}
 		recordRenewal(ctx, name, true)
-		lease := Access{Token: access.Token, Expires: math.Min(access.Expires, float64(now.Add(5*time.Minute).Unix())), Issuer: access.Issuer}
+		lease := Access{Token: access.Token, Expires: math.Min(access.Expires, float64(now.Add(5*time.Minute).Unix())), Issuer: access.Issuer, Account: access.Account, Plan: access.Plan}
 		next[name] = Grant{Enabled: true, Access: &lease}
 	}
 	recordLeases(ctx, next, now)

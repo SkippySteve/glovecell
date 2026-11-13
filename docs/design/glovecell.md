@@ -617,8 +617,7 @@ use) and the `explain` skill.
 
 ## 9. Orca runtime per cell
 
-This section adopts the per-project Orca runtime design
-([project-orca-runtime.md](project-orca-runtime.md)) with these changes:
+This section adopts a per-project Orca runtime with these choices:
 
 - `spec.runtime` becomes `spec.runtime.orchestrator: none | orca`, immutable.
 - The runtime's egress goes through the cell's own proxy and broker
@@ -785,10 +784,6 @@ devices, cluster control plane, other cells' code.
 | Supply chain via packages | name@version approvals, lockfile review, dev-link scans |
 | Audit gap | outbox full stops forwarding; new runtime-audit loss pauses agent work |
 
-Residual risks: a compromised proxy reaches any public 80/443 address;
-already-downloaded packages are outside network control; gVisor/Sentry bugs;
-the operator approving something harmful from a convincing blocked report.
-
 ## 14. Packaging and rename
 
 ### 14.1 Helm chart
@@ -857,7 +852,7 @@ migrated cell.
 | 4 | LAN model: `LANGrant`, cell allowlist, learned ports, restrict now | grant opens only listed ports; expiry and restrict-now remove access; denylist refusal test |
 | 5 | Console Option B and API v1 with OpenAPI | every sidebar section works against API only; CSRF/origin negative tests |
 | 6 | Agent kit: `Kit`, renderer, read-only mount, first kit | kit update changes instructions without pod restart; agent cannot write the mount |
-| 7 | Per-cell Orca runtime (project-orca-runtime phases B–C) and automations per cell | pair, work, suspend revokes pairing, resume |
+| 7 | Per-cell Orca runtime (section 9) and automations per cell | pair, work, suspend revokes pairing, resume |
 | 8 | Runtime profiles; qualify gVisor-KVM | same qualification suite passes on gVisor-KVM; audit unchanged |
 | 9 | Open-source release: chart defaults, docs, example kit, no-telemetry install | clean install on a disposable cluster with defaults; secret/name scan of repo clean |
 

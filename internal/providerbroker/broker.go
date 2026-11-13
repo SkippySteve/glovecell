@@ -18,12 +18,15 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/connect"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/forgeagent"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -58,6 +61,14 @@ type Broker struct {
 	Execute func(context.Context, Owner, string, []byte) ([]byte, error)
 	HTTP    *http.Client
 	Now     func() time.Time
+}
+
+// ownerMu serializes renewal ticks and login installs on the owner. One broker
+// runs per process.
+var ownerMu sync.Mutex
+
+func (b *Broker) log(ctx context.Context, message, provider string) {
+	slog.InfoContext(ctx, message, "provider", provider)
 }
 
 func validAccess(value Access) bool {
@@ -150,6 +161,9 @@ func (b *Broker) now() time.Time {
 func (b *Broker) owner(ctx context.Context, provider string) (Access, error) {
 	if provider == "codex" || provider == "cursor" {
 		return b.oauthOwner(ctx, provider)
+	}
+	if provider == "claude" {
+		return b.claudeOwner(ctx)
 	}
 	owner, ok := b.Config.Owners[provider]
 	if !ok {
@@ -292,7 +306,7 @@ func (b *Broker) refresh(ctx context.Context, refresh, id string) (oauthResponse
 // provider from renewing. Leases expire if this trusted publisher is unavailable.
 func (b *Broker) Tick(ctx context.Context) error {
 	var work api.ProjectWorkspace
-	if b.Client.Get(ctx, types.NamespacedName{Namespace: b.Config.Control, Name: b.Config.Workspace}, &work) != nil || string(work.UID) != b.Config.UID || work.Spec.DesiredState == "Removed" || !work.DeletionTimestamp.IsZero() {
+	if b.Client.Get(ctx, types.NamespacedName{Namespace: b.Config.Control, Name: b.Config.Workspace}, &work) != nil || string(work.UID) != b.Config.UID || work.Spec.DesiredState == api.DesiredRemoved || !work.DeletionTimestamp.IsZero() {
 		return errors.New("workbench unavailable or removed")
 	}
 	namespace := "apc-" + strings.ReplaceAll(b.Config.UID, "-", "")
@@ -332,7 +346,7 @@ func (b *Broker) Tick(ctx context.Context) error {
 	// Re-read lifecycle and projection before publication. Never undo a revocation
 	// made while a refresh request was in flight or replace another provider's data.
 	var current api.ProjectWorkspace
-	if b.Client.Get(ctx, client.ObjectKeyFromObject(&work), &current) != nil || current.UID != work.UID || current.Spec.DesiredState == "Removed" || !current.DeletionTimestamp.IsZero() {
+	if b.Client.Get(ctx, client.ObjectKeyFromObject(&work), &current) != nil || current.UID != work.UID || current.Spec.DesiredState == api.DesiredRemoved || !current.DeletionTimestamp.IsZero() {
 		return errors.New("workbench changed during renewal")
 	}
 	var latest corev1.Secret
@@ -370,7 +384,7 @@ func configFromEnv() (Config, error) {
 		}
 		for _, name := range strings.Split(os.Getenv("PROVIDER_BROKER_PROVIDERS"), ",") {
 			if !slices.Contains(LeaseProviders, name) || slices.Contains(cfg.Providers, name) {
-				return Config{}, errors.New("PROVIDER_BROKER_PROVIDERS must list grok and/or cursor")
+				return Config{}, errors.New("PROVIDER_BROKER_PROVIDERS must list some of grok, cursor, codex and claude, once each")
 			}
 			cfg.Providers = append(cfg.Providers, name)
 		}
@@ -388,7 +402,7 @@ func configFromEnv() (Config, error) {
 			return Config{}, errors.New("explicit credential owner required")
 		}
 		cfg.Owners[name] = owner
-		if name != "grok" {
+		if name == "codex" || name == "cursor" {
 			cfg.OAuthClientIDs[name] = os.Getenv(strings.ToUpper(name) + "_OAUTH_CLIENT_ID")
 		}
 	}
@@ -430,7 +444,16 @@ func Run(ctx context.Context, c client.Client, config *rest.Config) error {
 	}}
 	tick := b.Tick
 	if cfg.Leases != "" {
-		tick = b.TickLeases
+		tick = func(ctx context.Context) error {
+			ownerMu.Lock()
+			defer ownerMu.Unlock()
+			return b.TickLeases(ctx)
+		}
+		if !*once {
+			if err := b.serveLogins(ctx, c, config); err != nil {
+				return err
+			}
+		}
 	}
 	if *once {
 		return tick(ctx)
@@ -447,4 +470,51 @@ func Run(ctx context.Context, c client.Client, config *rest.Config) error {
 		case <-time.After(30 * time.Second):
 		}
 	}
+}
+
+// serveLogins starts the console sign-in API when the chart configured login
+// pods (PROVIDER_LOGIN_POD). Without it the broker only renews, as before.
+func (b *Broker) serveLogins(ctx context.Context, c client.Client, config *rest.Config) error {
+	raw := os.Getenv("PROVIDER_LOGIN_POD")
+	if raw == "" {
+		return nil
+	}
+	template, err := ParseLoginTemplate(raw)
+	if err != nil {
+		return err
+	}
+	caller := os.Getenv("PROVIDER_BROKER_CALLER")
+	if caller == "" {
+		return errors.New("PROVIDER_BROKER_CALLER is required with PROVIDER_LOGIN_POD")
+	}
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return err
+	}
+	pods := KubePods{Client: c, Config: config, Namespace: b.Config.Control, Template: template}
+	// A restart forgets running sign-ins; remove their pods.
+	for _, p := range b.Config.Providers {
+		cleanup, cancel := context.WithTimeout(ctx, 30*time.Second)
+		_ = pods.Delete(cleanup, p)
+		cancel()
+	}
+	server := &http.Server{Addr: env("PROVIDER_BROKER_LISTEN_ADDR", ":8443"), ReadHeaderTimeout: 10 * time.Second,
+		Handler: &Server{Logins: &Logins{Broker: b, Pods: pods}, Reviewer: forgeagent.TokenReviewer{Client: clientset, Audience: Audience}, Caller: caller}}
+	go func() {
+		<-ctx.Done()
+		_ = server.Close()
+	}()
+	go func() {
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("provider sign-in API stopped", "error", err.Error())
+		}
+	}()
+	return nil
+}
+
+func env(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }

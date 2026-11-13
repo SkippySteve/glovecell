@@ -132,16 +132,3 @@ While qualifying, run `register --watch` in the foreground or under `nohup` so m
 
 `GET /api/v1/workspaces/{name}/clients` returns the ledger. The OpenUI project overview shows registered clients when a ledger exists. It
 refreshes their state every ten seconds. Ledger errors remain visible.
-
-## Historical qualification
-
-The earlier implementation recorded the following qualification before the
-current console reconciliation. It is historical evidence, not a current
-deployment assertion.
-
-Against four Ready projects (`agent-project-controller`, `factory`,
-`opnsense-kubernetes-bgp`, `workspace-pilot`), `register --watch` mounted each
-sandbox checkout under `~/.local/share/agent-project-controller/mounts/`,
-registered each path in T3 and Orca, and wrote control-namespace ledgers with
-`t3.state=registered` and `orca.state=registered`. Git `rev-parse` succeeded on
-every mount. Dead mounts are remounted on the 30s sync tick.

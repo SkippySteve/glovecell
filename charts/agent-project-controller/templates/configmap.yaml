@@ -1,3 +1,8 @@
+{{- include "apc.telemetryValidate" . }}
+{{- $bootstrapSource := default "workspace" (index .Values.config "BOOTSTRAP_IMAGE_SOURCE") }}
+{{- if not (has $bootstrapSource (list "workspace" "proxy")) }}
+{{- fail "config.BOOTSTRAP_IMAGE_SOURCE must be workspace or proxy" }}
+{{- end }}
 {{- if not (kindIs "bool" .Values.additionalGitHub.enabled) }}
 {{- fail "additionalGitHub.enabled must be a boolean" }}
 {{- end }}
@@ -41,7 +46,7 @@
 {{- fail "t3Connect.relayURL must be an HTTPS origin" }}
 {{- end }}
 {{- end }}
-{{- range $key := list "CONTROL_NAMESPACE" "WORKSPACE_IMAGE" "PROXY_IMAGE" "LISTEN_ADDR" "FORGEJO_TOKEN_FILE" "GITHUB_APP_PRIVATE_KEY_FILE" "OIDC_CLIENT_SECRET_FILE" "API_SECRET_FILE" "WORKSPACE_SCHEDULING_JSON" "PROXY_SCHEDULING_JSON" "DATABASE_URL_FILE" "DATABASE_CA_FILE" "DATABASE_MAX_CONNS" "HISTORY_RETENTION" "DECIDED_REQUEST_RETENTION" "PROXY_SUMMARY_RETENTION" "T3_CONNECT_ENABLED" "T3_CONNECT_DATA" "T3_CONNECT_RELAY_URL" "T3_CONNECT_BINARY" "T3_CONNECT_CONNECTOR" "REGISTRAR_NAMESPACE" "WORKER_EXEC_CLUSTER_ROLE" "PROJECT_ACCESS_CLUSTER_ROLE" "CONTROLLER_SERVICE_ACCOUNT" "HUBSPOKE_ORCA_ENABLED" "ORCA_RUNTIME_IMAGE" "HUBSPOKE_ORCHESTRATOR_CLASS" "HUBSPOKE_SPOKE_DOMAIN" "HUBSPOKE_SPOKE_GATEWAY_NAME" "HUBSPOKE_SPOKE_GATEWAY_NAMESPACE" "HUBSPOKE_SPOKE_GATEWAY_SECTION" "HUBSPOKE_HUB_NAMESPACE" "HUBSPOKE_PUBLIC_ADDRESS" "HUBSPOKE_HUB_LOGS_CLUSTER_ROLE" "HUBSPOKE_HUB_SERVICE_ACCOUNT" "FORGE_AGENT_URL" "FORGE_AGENT_TOKEN_FILE" "FORGE_AGENT_CALLER" }}
+{{- range $key := list "CONTROL_NAMESPACE" "WORKSPACE_IMAGE" "PROXY_IMAGE" "LISTEN_ADDR" "FORGEJO_TOKEN_FILE" "GITHUB_APP_PRIVATE_KEY_FILE" "OIDC_CLIENT_SECRET_FILE" "API_SECRET_FILE" "WORKSPACE_SCHEDULING_JSON" "PROXY_SCHEDULING_JSON" "DATABASE_URL_FILE" "DATABASE_CA_FILE" "DATABASE_MAX_CONNS" "HISTORY_RETENTION" "DECIDED_REQUEST_RETENTION" "PROXY_SUMMARY_RETENTION" "T3_CONNECT_ENABLED" "T3_CONNECT_DATA" "T3_CONNECT_RELAY_URL" "T3_CONNECT_BINARY" "T3_CONNECT_CONNECTOR" "REGISTRAR_NAMESPACE" "WORKER_EXEC_CLUSTER_ROLE" "PROJECT_ACCESS_CLUSTER_ROLE" "CONTROLLER_SERVICE_ACCOUNT" "HUBSPOKE_ORCA_ENABLED" "ORCA_RUNTIME_IMAGE" "HUBSPOKE_ORCHESTRATOR_CLASS" "HUBSPOKE_SPOKE_DOMAIN" "HUBSPOKE_SPOKE_GATEWAY_NAME" "HUBSPOKE_SPOKE_GATEWAY_NAMESPACE" "HUBSPOKE_SPOKE_GATEWAY_SECTION" "HUBSPOKE_HUB_NAMESPACE" "HUBSPOKE_PUBLIC_ADDRESS" "HUBSPOKE_HUB_LOGS_CLUSTER_ROLE" "HUBSPOKE_HUB_SERVICE_ACCOUNT" "FORGE_AGENT_URL" "FORGE_AGENT_TOKEN_FILE" "FORGE_AGENT_CALLER" "HERDR_CORE_ENABLED" "HERDR_ORCHESTRATOR_CLASS" }}
 {{- if hasKey $.Values.config $key }}
 {{- fail (printf "config.%s is managed by the chart; use the corresponding chart setting" $key) }}
 {{- end }}
@@ -112,10 +117,13 @@
 {{- if and (eq (toString (index .Values.config "DOWNLOADS_ENABLED")) "true") (ne $provider "cilium") }}
 {{- fail "DOWNLOADS_ENABLED requires NETWORK_PROVIDER=cilium" }}
 {{- end }}
+{{- if and .Values.providerBroker.enabled (index .Values.config "PROVIDER_LEASES_SECRET") }}
+{{- fail "config.PROVIDER_LEASES_SECRET is set by the chart when providerBroker.enabled; leave it empty" }}
+{{- end }}
 {{- if and (index .Values.config "PROVIDER_LEASES_SECRET") (ne $provider "cilium") }}
 {{- fail "PROVIDER_LEASES_SECRET requires NETWORK_PROVIDER=cilium" }}
 {{- end }}
-{{- if and (index .Values.config "PROVIDER_CELL_TOKENS") (not (index .Values.config "PROVIDER_LEASES_SECRET")) }}
+{{- if and (index .Values.config "PROVIDER_CELL_TOKENS") (not (index .Values.config "PROVIDER_LEASES_SECRET")) (not .Values.providerBroker.enabled) }}
 {{- fail "PROVIDER_CELL_TOKENS requires PROVIDER_LEASES_SECRET" }}
 {{- end }}
 {{- if or (index .Values.config "SANDBOX_CONTROL_URL") (index .Values.config "SANDBOX_CONTROL_ORIGIN") (index .Values.config "SANDBOX_CONTROL_OPERATOR") }}
@@ -151,11 +159,28 @@ data:
 {{- end }}
 {{- range $key, $value := .Values.config }}
 {{- if and (eq $gitHost "github") (or (eq $key "FORGEJO_ORIGIN") (eq $key "FORGEJO_OWNER")) }}
+{{- else if and (eq $key "PROVIDER_LEASES_SECRET") $.Values.providerBroker.enabled }}
+{{- else if and $.Values.telemetry.enabled (has $key (list "OTEL_ENABLED" "OTEL_EXPORTER_OTLP_ENDPOINT" "CELL_TELEMETRY_SCRAPER_JSON")) }}
 {{- else if not (and (eq $key "PROXY_GATEWAY_JSON") $.Values.proxyGateway) }}
   {{ $key }}: {{ $value | toString | quote }}
 {{- end }}
 {{- end }}
 
+{{- if .Values.providerBroker.enabled }}
+  PROVIDER_LEASES_SECRET: {{ include "apc.providerLeasesSecret" . | quote }}
+{{- end }}
+{{- if .Values.telemetry.enabled }}
+  # From telemetry.* (the chart's telemetry section).
+  OTEL_ENABLED: {{ ternary "true" "false" (not (empty (include "apc.otlpPush" .))) | quote }}
+{{- if include "apc.otlpPush" . }}
+  OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.telemetry.otlp.endpoint | quote }}
+{{- end }}
+{{- if .Values.telemetry.cells.enabled }}
+  CELL_TELEMETRY_SCRAPER_JSON: {{ dict "namespace" .Values.telemetry.collector.namespace "selector" .Values.telemetry.collector.podLabels | toJson | quote }}
+{{- else }}
+  CELL_TELEMETRY_SCRAPER_JSON: ""
+{{- end }}
+{{- end }}
   T3_CONNECT_ENABLED: {{ .Values.t3Connect.enabled | toString | quote }}
   T3_CONNECT_DATA: "/var/lib/apc/t3-connect"
   T3_CONNECT_RELAY_URL: {{ .Values.t3Connect.relayURL | quote }}
@@ -177,4 +202,8 @@ data:
 {{- end }}
 {{- if .Values.hubspoke.hub.publicAddress }}
   HUBSPOKE_PUBLIC_ADDRESS: {{ .Values.hubspoke.hub.publicAddress | quote }}
+{{- end }}
+  HERDR_CORE_ENABLED: {{ .Values.herdrCore.enabled | toString | quote }}
+{{- if .Values.herdrCore.enabled }}
+  HERDR_ORCHESTRATOR_CLASS: {{ .Values.herdrCore.className | quote }}
 {{- end }}

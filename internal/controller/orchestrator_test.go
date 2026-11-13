@@ -208,7 +208,7 @@ func TestOrcaClassRemovalWaitsForRegistrarRevocation(t *testing.T) {
 		t.Fatal(e)
 	}
 	uid := string(w.UID)
-	ledger := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: r.Config.Namespace, Name: registration.ConfigMapName(uid), Labels: map[string]string{api.OwnerLabel: uid}}, Data: map[string]string{"purpose": "client-registration", "orca.state": registration.StateRegistered, "orca.id": "11111111-2222-3333-4444-555555555555"}}
+	ledger := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: r.Config.Namespace, Name: registration.ConfigMapName(uid), Labels: map[string]string{api.OwnerLabel: uid}}, Data: map[string]string{"purpose": "client-registration", "orca.state": string(registration.StateRegistered), "orca.id": "11111111-2222-3333-4444-555555555555"}}
 	if e := r.Create(ctx, ledger); e != nil {
 		t.Fatal(e)
 	}
@@ -222,7 +222,7 @@ func TestOrcaClassRemovalWaitsForRegistrarRevocation(t *testing.T) {
 	if e := r.Get(ctx, types.NamespacedName{Name: namespace(w)}, ns); e != nil || !ns.DeletionTimestamp.IsZero() {
 		t.Fatal("storage deleted before Orca revocation", e)
 	}
-	ledger.Data["orca.state"] = registration.StateRevoked
+	ledger.Data["orca.state"] = string(registration.StateRevoked)
 	if e := r.Update(ctx, ledger); e != nil {
 		t.Fatal(e)
 	}
