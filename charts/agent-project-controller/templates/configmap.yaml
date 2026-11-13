@@ -1,3 +1,4 @@
+{{- include "apc.telemetryValidate" . }}
 {{- if not (kindIs "bool" .Values.additionalGitHub.enabled) }}
 {{- fail "additionalGitHub.enabled must be a boolean" }}
 {{- end }}
@@ -29,6 +30,11 @@
 {{- if or (not .Values.hubspoke.spoke.gateway.name) (not .Values.hubspoke.spoke.gateway.namespace) (not .Values.hubspoke.spoke.gateway.sectionName) }}
 {{- fail "hubspoke.spoke.gateway.name/namespace/sectionName required when hubspoke.spoke.publicDomain is set" }}
 {{- end }}
+{{- end }}
+{{- end }}
+{{- if or .Values.hubspoke.orca.enabled .Values.hubspoke.hub.enabled }}
+{{- if not (regexMatch "^wss://[a-zA-Z0-9.-]+(:[0-9]+)?$" (.Values.hubspoke.hub.publicAddress | toString)) }}
+{{- fail "hubspoke.hub.publicAddress must be a wss:// host (no path) when hubspoke is enabled; set it separately from config.PUBLIC_ORIGIN" }}
 {{- end }}
 {{- end }}
 {{- if .Values.t3Connect.enabled }}
@@ -107,10 +113,13 @@
 {{- if and (eq (toString (index .Values.config "DOWNLOADS_ENABLED")) "true") (ne $provider "cilium") }}
 {{- fail "DOWNLOADS_ENABLED requires NETWORK_PROVIDER=cilium" }}
 {{- end }}
+{{- if and .Values.providerBroker.enabled (index .Values.config "PROVIDER_LEASES_SECRET") }}
+{{- fail "config.PROVIDER_LEASES_SECRET is set by the chart when providerBroker.enabled; leave it empty" }}
+{{- end }}
 {{- if and (index .Values.config "PROVIDER_LEASES_SECRET") (ne $provider "cilium") }}
 {{- fail "PROVIDER_LEASES_SECRET requires NETWORK_PROVIDER=cilium" }}
 {{- end }}
-{{- if and (index .Values.config "PROVIDER_CELL_TOKENS") (not (index .Values.config "PROVIDER_LEASES_SECRET")) }}
+{{- if and (index .Values.config "PROVIDER_CELL_TOKENS") (not (index .Values.config "PROVIDER_LEASES_SECRET")) (not .Values.providerBroker.enabled) }}
 {{- fail "PROVIDER_CELL_TOKENS requires PROVIDER_LEASES_SECRET" }}
 {{- end }}
 {{- if or (index .Values.config "SANDBOX_CONTROL_URL") (index .Values.config "SANDBOX_CONTROL_ORIGIN") (index .Values.config "SANDBOX_CONTROL_OPERATOR") }}
@@ -146,11 +155,28 @@ data:
 {{- end }}
 {{- range $key, $value := .Values.config }}
 {{- if and (eq $gitHost "github") (or (eq $key "FORGEJO_ORIGIN") (eq $key "FORGEJO_OWNER")) }}
+{{- else if and (eq $key "PROVIDER_LEASES_SECRET") $.Values.providerBroker.enabled }}
+{{- else if and $.Values.telemetry.enabled (has $key (list "OTEL_ENABLED" "OTEL_EXPORTER_OTLP_ENDPOINT" "CELL_TELEMETRY_SCRAPER_JSON")) }}
 {{- else if not (and (eq $key "PROXY_GATEWAY_JSON") $.Values.proxyGateway) }}
   {{ $key }}: {{ $value | toString | quote }}
 {{- end }}
 {{- end }}
 
+{{- if .Values.providerBroker.enabled }}
+  PROVIDER_LEASES_SECRET: {{ include "apc.providerLeasesSecret" . | quote }}
+{{- end }}
+{{- if .Values.telemetry.enabled }}
+  # From telemetry.* (the chart's telemetry section).
+  OTEL_ENABLED: {{ ternary "true" "false" (not (empty (include "apc.otlpPush" .))) | quote }}
+{{- if include "apc.otlpPush" . }}
+  OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.telemetry.otlp.endpoint | quote }}
+{{- end }}
+{{- if .Values.telemetry.cells.enabled }}
+  CELL_TELEMETRY_SCRAPER_JSON: {{ dict "namespace" .Values.telemetry.collector.namespace "selector" .Values.telemetry.collector.podLabels | toJson | quote }}
+{{- else }}
+  CELL_TELEMETRY_SCRAPER_JSON: ""
+{{- end }}
+{{- end }}
   T3_CONNECT_ENABLED: {{ .Values.t3Connect.enabled | toString | quote }}
   T3_CONNECT_DATA: "/var/lib/apc/t3-connect"
   T3_CONNECT_RELAY_URL: {{ .Values.t3Connect.relayURL | quote }}
@@ -162,9 +188,6 @@ data:
 {{- if include "apc.hubLogs" . }}
   HUBSPOKE_HUB_LOGS_CLUSTER_ROLE: {{ include "apc.hubLogsRole" . | quote }}
   HUBSPOKE_HUB_SERVICE_ACCOUNT: {{ .Values.hubspoke.hub.serviceAccount | quote }}
-{{- end }}
-{{- if .Values.hubspoke.hub.publicAddress }}
-  HUBSPOKE_PUBLIC_ADDRESS: {{ .Values.hubspoke.hub.publicAddress | quote }}
 {{- end }}
 {{- if .Values.hubspoke.spoke.publicDomain }}
   HUBSPOKE_SPOKE_DOMAIN: {{ .Values.hubspoke.spoke.publicDomain | quote }}
@@ -187,4 +210,7 @@ data:
   HUB_ADMIN_KEY_FILE: {{ .keyFile | quote }}
 {{- end }}
 {{- end }}
+{{- end }}
+{{- if .Values.hubspoke.hub.publicAddress }}
+  HUBSPOKE_PUBLIC_ADDRESS: {{ .Values.hubspoke.hub.publicAddress | quote }}
 {{- end }}

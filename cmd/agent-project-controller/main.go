@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -17,6 +18,7 @@ import (
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/auditlog"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/bootstrap"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/cellrelay"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/connect"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/controller"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/download"
@@ -364,12 +366,16 @@ func run(ctx context.Context) error {
 			return bootstrap.Credential()
 		case "reader":
 			return reader.Run(ctx)
+		case "telemetry-relay":
+			// Second container of each cell's proxy pod (decision GT A).
+			return cellrelay.Run(ctx)
 		case "proxy-ready":
 			return proxy.ReadyCLI(ctx)
 		case "hub-admin":
 			return hubadmin.Run(ctx)
 		case "proxy":
-			defer telemetry.Start(ctx, "apc-proxy")()
+			// No OTLP push from inside a cell (decision GT A): the collector
+			// will scrape the proxy and its telemetry relay instead.
 			return proxy.Run(ctx)
 		case "fetch":
 			// Run by the controller inside a project worker for "Download into sandbox".
@@ -400,6 +406,8 @@ func run(ctx context.Context) error {
 			return connectCLI(ctx, os.Args[2], os.Args[4:])
 		case "register":
 			return registerCLI(ctx, os.Args[2:])
+		case "provider":
+			return providerCLI(ctx, os.Args[2:])
 		case "hubspoke":
 			return hubspokeCLI(ctx, os.Args[2:])
 		case "forge-agent":
@@ -464,7 +472,7 @@ func run(ctx context.Context) error {
 	if e != nil {
 		return e
 	}
-	reconciler := &controller.Reconciler{LAN: lan, Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, GitHost: gitHost, ForgejoOrigin: origin, Owner: owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling, RegistrarNamespace: os.Getenv("REGISTRAR_NAMESPACE"), WorkerExecClusterRole: os.Getenv("WORKER_EXEC_CLUSTER_ROLE"), ProjectAccessClusterRole: os.Getenv("PROJECT_ACCESS_CLUSTER_ROLE"), ControllerServiceAccount: env("CONTROLLER_SERVICE_ACCOUNT", controller.DefaultControllerServiceAccount), OrcaHubSpoke: orcaHubSpoke, OrcaRuntimeImage: os.Getenv("ORCA_RUNTIME_IMAGE"), OrcaOrchestratorClass: env("HUBSPOKE_ORCHESTRATOR_CLASS", "orca"), OrcaSpokePublicDomain: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_DOMAIN")), OrcaSpokeGatewayName: env("HUBSPOKE_SPOKE_GATEWAY_NAME", "traefik-gateway"), OrcaSpokeGatewayNamespace: env("HUBSPOKE_SPOKE_GATEWAY_NAMESPACE", "traefik-system"), OrcaSpokeGatewaySection: env("HUBSPOKE_SPOKE_GATEWAY_SECTION", "websecure-cluster-aimingupward"), OrcaHubNamespace: env("HUBSPOKE_HUB_NAMESPACE", "agent-project-control-orca-hub"), HubLogsClusterRole: strings.TrimSpace(os.Getenv("HUBSPOKE_HUB_LOGS_CLUSTER_ROLE")), HubServiceAccount: strings.TrimSpace(os.Getenv("HUBSPOKE_HUB_SERVICE_ACCOUNT")), AuditAssignmentFeed: auditAssignmentFeed, AuditAssignmentFeedConfigMap: strings.TrimSpace(os.Getenv("AUDIT_ASSIGNMENT_FEED_CONFIGMAP"))}}
+	reconciler := &controller.Reconciler{LAN: lan, Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, GitHost: gitHost, ForgejoOrigin: origin, Owner: owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling, RegistrarNamespace: os.Getenv("REGISTRAR_NAMESPACE"), WorkerExecClusterRole: os.Getenv("WORKER_EXEC_CLUSTER_ROLE"), ProjectAccessClusterRole: os.Getenv("PROJECT_ACCESS_CLUSTER_ROLE"), ControllerServiceAccount: env("CONTROLLER_SERVICE_ACCOUNT", controller.DefaultControllerServiceAccount), OrcaHubSpoke: orcaHubSpoke, OrcaRuntimeImage: os.Getenv("ORCA_RUNTIME_IMAGE"), OrcaOrchestratorClass: env("HUBSPOKE_ORCHESTRATOR_CLASS", "orca"), OrcaSpokePublicDomain: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_DOMAIN")), OrcaSpokeGatewayName: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_GATEWAY_NAME")), OrcaSpokeGatewayNamespace: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_GATEWAY_NAMESPACE")), OrcaSpokeGatewaySection: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_GATEWAY_SECTION")), OrcaHubNamespace: env("HUBSPOKE_HUB_NAMESPACE", "agent-project-control-orca-hub"), HubLogsClusterRole: strings.TrimSpace(os.Getenv("HUBSPOKE_HUB_LOGS_CLUSTER_ROLE")), HubServiceAccount: strings.TrimSpace(os.Getenv("HUBSPOKE_HUB_SERVICE_ACCOUNT")), AuditAssignmentFeed: auditAssignmentFeed, AuditAssignmentFeedConfigMap: strings.TrimSpace(os.Getenv("AUDIT_ASSIGNMENT_FEED_CONFIGMAP"))}}
 	if orcaHubSpoke && reconciler.Config.OrcaRuntimeImage == "" {
 		return errors.New("HUBSPOKE_ORCA_ENABLED=true requires ORCA_RUNTIME_IMAGE")
 	}
@@ -654,6 +662,11 @@ func run(ctx context.Context) error {
 	server.Reference = web.Reference{Digest: reconciler.Config.ReferenceDigest, Rules: reconciler.Config.ReferenceRules}
 	if reconciler.ProviderLeases != nil {
 		server.Providers = &web.Providers{Status: reconciler.ProviderLeaseStatus}
+		if brokerURL := os.Getenv("PROVIDER_BROKER_URL"); brokerURL != "" {
+			if server.ProviderLogins, e = web.NewProviderLogins(brokerURL, os.Getenv("PROVIDER_BROKER_TOKEN_FILE")); e != nil {
+				return e
+			}
+		}
 	}
 	server.GitHubBrokering = reconciler.GitHubLease != nil
 	if lan.Enabled() {
@@ -880,4 +893,31 @@ func installLogger() {
 	slog.SetDefault(logger)
 	ctrl.SetLogger(logr.FromSlogHandler(logger.Handler()))
 	klog.SetSlogLogger(logger)
+}
+
+// providerCLI is `provider import <grok|cursor>`: copy the operator's own
+// provider login from this machine to the provider broker (one-shot, with
+// the operator's kubeconfig; nothing keeps running here).
+func providerCLI(ctx context.Context, args []string) error {
+	usage := errors.New("usage: agent-project-controller provider import <grok|cursor> [--file PATH] [--namespace NAMESPACE] [--replace-account]")
+	if len(args) < 2 || args[0] != "import" {
+		return usage
+	}
+	flags := flag.NewFlagSet("provider import", flag.ContinueOnError)
+	file := flags.String("file", "", "login file (default: the provider CLI's own, ~/.grok/auth.json or ~/.config/cursor/auth.json)")
+	namespace := flags.String("namespace", env("PROVIDER_NAMESPACE", env("CONTROL_NAMESPACE", "agent-project-controller")+"-providers"), "the provider broker's namespace (chart providerBroker.namespace)")
+	replace := flags.Bool("replace-account", false, "allow a different Cursor account than the one already signed in")
+	if err := flags.Parse(args[2:]); err != nil || flags.NArg() != 0 {
+		return usage
+	}
+	config := ctrl.GetConfigOrDie()
+	scheme := runtime.NewScheme()
+	if e := clientgoscheme.AddToScheme(scheme); e != nil {
+		return e
+	}
+	c, e := client.New(config, client.Options{Scheme: scheme})
+	if e != nil {
+		return e
+	}
+	return providerbroker.Import(ctx, c, providerbroker.ImportOptions{Provider: args[1], File: *file, Namespace: *namespace, ReplaceAccount: *replace}, os.Stdout)
 }

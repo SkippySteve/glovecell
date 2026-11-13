@@ -119,6 +119,9 @@ spec:
           env:
             - {name: VOICE_LISTEN_ADDR, value: ":8080"}
             - {name: VOICE_HEALTH_ADDR, value: ":8081"}
+{{- if include "apc.otlpPush" . }}
+{{- include "apc.otelEnv" (dict "root" . "optionalHeaders" false) | nindent 12 }}
+{{- end }}
             - {name: MATRIX_HOMESERVER, value: {{ $v.homeserver | quote }}}
             - {name: MATRIX_DEVICE_NAME, value: glovecell-voice}
             - {name: MATRIX_CREDENTIALS_DIR, value: /var/run/glovecell-voice/matrix}
@@ -289,7 +292,8 @@ spec:
       app.kubernetes.io/name: glovecell-voice
   policyTypes: [Ingress, Egress]
   ingress:
-{{- if or $v.networkPolicy.notifyFrom $v.networkPolicy.metricsFrom }}
+{{- $scraper := and .Values.telemetry.enabled .Values.telemetry.collector.namespace }}
+{{- if or $v.networkPolicy.notifyFrom $v.networkPolicy.metricsFrom $scraper }}
 {{- with $v.networkPolicy.notifyFrom }}
     - from:
 {{ toYaml . | indent 8 }}
@@ -300,6 +304,14 @@ spec:
 {{- with $v.networkPolicy.metricsFrom }}
     - from:
 {{ toYaml . | indent 8 }}
+      ports:
+        - protocol: TCP
+          port: 8081
+{{- end }}
+{{- if $scraper }}
+    # The telemetry collector scrapes /metrics (telemetry.collector).
+    - from:
+        - {{- include "apc.collectorPeer" . | nindent 10 }}
       ports:
         - protocol: TCP
           port: 8081
@@ -326,6 +338,14 @@ spec:
         - protocol: TCP
           port: 5432
 {{- end }}
+{{- end }}
+{{- if and (include "apc.otlpPush" .) .Values.telemetry.collector.namespace }}
+    # OTLP push to the telemetry collector (telemetry.otlp, telemetry.collector).
+    - to:
+        - {{- include "apc.collectorPeer" . | nindent 10 }}
+      ports:
+        - protocol: TCP
+          port: {{ include "apc.otlpPort" . }}
 {{- end }}
 {{- with $v.networkPolicy.egress }}
 {{ toYaml . | indent 4 }}

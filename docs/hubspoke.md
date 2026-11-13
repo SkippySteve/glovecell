@@ -10,6 +10,14 @@ Orca/T3/Herdr project registration on Local. Hubspoke public dial and the
 console mint API are for phone (and hub enrollment), not for opening a cell in
 the desktop app's Host picker.
 
+Operator pairing belongs in the console (**Hub** page), not kubectl: design in
+[hub-console-pairing](design/hub-console-pairing.md), tracked as
+[APC #113](https://git.cluster.aimingupward.com/steve/agent-project-controller/issues/113).
+
+When hubspoke is enabled, Helm requires **both** `config.PUBLIC_ORIGIN` (console)
+and `hubspoke.hub.publicAddress` (hub `wss://…` for pairing). They are separate
+settings; do not invent the hub host from the console host.
+
 This is the production phone shape for Orca. T3 and Herdr use the same Go
 interfaces when their enrollment paths are verified.
 
@@ -65,12 +73,14 @@ Controller:
 
 ```yaml
 HUBSPOKE_ORCA_ENABLED: "true"
-ORCA_RUNTIME_IMAGE: git.cluster.aimingupward.com/image-publisher/orca-pilot@sha256:…
+ORCA_RUNTIME_IMAGE: registry.example.com/orca-runtime@sha256:…
 HUBSPOKE_ORCHESTRATOR_CLASS: orca   # optional; default orca
 HUBSPOKE_SPOKE_DOMAIN: orca.cluster.example          # desktop dial suffix
-HUBSPOKE_SPOKE_GATEWAY_NAME: traefik-gateway
-HUBSPOKE_SPOKE_GATEWAY_NAMESPACE: traefik-system
-HUBSPOKE_SPOKE_GATEWAY_SECTION: websecure-cluster-aimingupward
+# Your Gateway listener for the spoke hostnames. No defaults: all three are
+# required when HUBSPOKE_SPOKE_DOMAIN is set.
+HUBSPOKE_SPOKE_GATEWAY_NAME: my-gateway
+HUBSPOKE_SPOKE_GATEWAY_NAMESPACE: gateway-system
+HUBSPOKE_SPOKE_GATEWAY_SECTION: websecure
 ```
 
 Hub process (same network as the spokes, with the Orca desktop CLI that can
