@@ -37,6 +37,9 @@ func (s *Server) orcaSpokeEndpoint(name string) string {
 }
 
 func (s *Server) mintOrcaPairing(w http.ResponseWriter, r *http.Request) {
+	// Pairing offers are bearer credentials. Apply before every response path.
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
 	if !s.orcaPairingEnabled() {
 		http.Error(w, "spoke desktop pairing is not configured", http.StatusNotFound)
 		return

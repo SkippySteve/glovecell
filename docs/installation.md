@@ -69,7 +69,7 @@ docker build -t registry.example.com/agent-project-controller:dev .
 docker push registry.example.com/agent-project-controller:dev
 ```
 
-The published alpha images can be used instead of that local build. Their digests are in [examples/alpha-values.yaml](examples/alpha-values.yaml) and on the [0.1.0-alpha.1 release](https://github.com/SkippySteve/agent-project-controller/releases/tag/0.1.0-alpha.1). Those images are commit `6d754c47f223edbe5bfff399405fb1450abb0c4b`. Workspace-image replacement, the experimental NetworkPolicy provider, and the optional GitHub project host landed on `main` after that commit. A deployment that needs any of those behaviors must build that later source and deploy the resulting digest.
+The published alpha images can be used instead of that local build. Their digests are in [examples/alpha-values.yaml](examples/alpha-values.yaml) and in [release](release.md). Those images are commit `6d754c47f223edbe5bfff399405fb1450abb0c4b`. Workspace-image replacement, the experimental NetworkPolicy provider, and the optional GitHub project host landed on `main` after that commit. A deployment that needs any of those behaviors must build that later source and deploy the resulting digest.
 
 Prepare a Kustomize overlay over `config/deploy`. Set the controller Deployment image and `WORKSPACE_IMAGE` to the built digest. Replace example hosts, Forgejo owner, runtime class, storage class and OIDC settings. Set `CLUSTER_DOMAIN` if it differs from `cluster.local`. `WORKSPACE_IMAGE` is empty in the sample, so unconfigured installations fail rather than launching an arbitrary image.
 
@@ -351,7 +351,7 @@ Each long-running process sets the same switch and exports traces and metrics wi
 | provider broker | `apc-provider-broker` | `apc.loop.*` (`component`, `status`), `apc.provider.renewals` (`name`, `status`), `apc.provider.lease.active` (`name`) |
 | GitHub broker | `apc-github-broker` | `apc.loop.*`, `apc.github.lease.status` (`status`) |
 | forge agent | `apc-forge-agent` | `apc.http.*` (`type` = endpoint, `code`) |
-| cell proxy | `apc-proxy` | `apc.proxy.requests` (`reason`, `code`); recorded but not exported yet. Nothing in a cell pushes telemetry: the collector will scrape the proxy's `/metrics`, and a separate telemetry relay container in the proxy pod will take the worker's OTLP and reduce it to fixed counters (see below) |
+| cell proxy | `apc-proxy` | not exported over OTLP: nothing in a cell pushes telemetry. With cell telemetry on, the proxy's request counter (`glovecell_cell_proxy_requests_total{reason,code}`) and the worker agents' reduced counters are scraped from the telemetry relay in the proxy pod (see below) |
 | voice | `glovecell-voice` | traces; its metrics stay on the Prometheus `/metrics` endpoint |
 
 ### Cell telemetry

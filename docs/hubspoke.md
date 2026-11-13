@@ -12,7 +12,7 @@ the desktop app's Host picker.
 
 Operator pairing belongs in the console (**Hub** page), not kubectl: design in
 [hub-console-pairing](design/hub-console-pairing.md), tracked as
-[APC #113](https://git.cluster.aimingupward.com/steve/agent-project-controller/issues/113).
+[APC #113](https://git.cluster.aimingupward.com/steve/glovecell/issues/113).
 
 When hubspoke is enabled, Helm requires **both** `config.PUBLIC_ORIGIN` (console)
 and `hubspoke.hub.publicAddress` (hub `wss://…` for pairing). They are separate

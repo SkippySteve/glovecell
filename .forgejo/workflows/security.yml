@@ -98,7 +98,7 @@ jobs:
       # Promotion: only from main, only after the gate and the CI checks.
       # The steps come from the monorepo so both repos promote the same way:
       # push by digest as image-publisher, then add the pin to the one rolling
-      # promotion PR for this repository (promote/agent-project-controller).
+      # promotion PR for this repository (promote/glovecell).
       # Both matrix legs (runtime: controller and proxy; workspace) land in the
       # same PR and the same commit, so one Deployment rollout moves all three.
       # promote-merger in the monorepo merges it when promote-guard passes

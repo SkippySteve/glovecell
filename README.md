@@ -139,11 +139,12 @@ Published alpha images (rebuild from this tree for current features):
 - `ghcr.io/skippysteve/agent-project-workspace@sha256:caf59a3dac5b216aa670f02cc4db857cf7b214d346fc844722f7a7c602ba9892`
 
 (Release `0.1.0-alpha.1` predated the Glovecell name; current `main` is ahead
-of that tag.)
+of that tag. The tag is on GitHub, but its CLI and chart files are not attached
+there at the moment: see [quickstart](docs/quickstart.md).)
 
 ## Development
 
-Use Go 1.27.4 or later, Git and kubectl for manifest rendering. Run `make test vet build render`. Install the published CLI from the release rather than `go install` of this module. Contribution rules are in [CONTRIBUTING.md](CONTRIBUTING.md). Optional local Kubernetes API and disposable Forgejo qualification are described in [qualification](docs/qualification.md).
+Use Go 1.27.4 or later, Git and kubectl for manifest rendering. Run `make test vet build render`. Use the release CLI (or build it from the tag, see [quickstart](docs/quickstart.md)) rather than `go install` of this module. Contribution rules are in [CONTRIBUTING.md](CONTRIBUTING.md). Optional local Kubernetes API and disposable Forgejo qualification are described in [qualification](docs/qualification.md).
 
 ## License
 

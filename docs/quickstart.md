@@ -2,14 +2,16 @@
 
 Install public release `0.1.0-alpha.1` on a cluster you already administer. These commands use the Linux amd64 CLI and Helm chart from that release, and the images built from commit `6d754c47f223edbe5bfff399405fb1450abb0c4b`.
 
+**Release files are not on GitHub (checked 2026-11-12).** The repository moved to [https://github.com/SkippySteve/glovecell](https://github.com/SkippySteve/glovecell). Its tag `0.1.0-alpha.1` exists, but the CLI, chart and `SHA256SUMS` files below are not attached to it, so the download step fails. The images are still anonymously pullable. Until the files are published again, build the CLI and package the chart from the tag (`git checkout 0.1.0-alpha.1`, then `make release VERSION=0.1.0-alpha.1`, see [release](release.md)) or follow [installation](installation.md).
+
 The chart does not install Kubernetes, Agent Sandbox, Cilium, gVisor, Forgejo, or an identity provider. The qualified combination is recorded in [installation](installation.md). Another cluster still needs its own qualification. Workspace-image replacement, the experimental NetworkPolicy provider, and the optional GitHub project host are on current `main` and are not in this release. Leave `NETWORK_PROVIDER` at `cilium` and leave the project host on Forgejo.
 
 ## Download
 
 ```sh
-curl -fsSL -O https://github.com/SkippySteve/agent-project-controller/releases/download/0.1.0-alpha.1/SHA256SUMS
-curl -fsSL -O https://github.com/SkippySteve/agent-project-controller/releases/download/0.1.0-alpha.1/agent-project-controller-0.1.0-alpha.1-linux-amd64
-curl -fsSL -O https://github.com/SkippySteve/agent-project-controller/releases/download/0.1.0-alpha.1/agent-project-controller-0.1.0-alpha.1.tgz
+curl -fsSL -O https://github.com/SkippySteve/glovecell/releases/download/0.1.0-alpha.1/SHA256SUMS
+curl -fsSL -O https://github.com/SkippySteve/glovecell/releases/download/0.1.0-alpha.1/agent-project-controller-0.1.0-alpha.1-linux-amd64
+curl -fsSL -O https://github.com/SkippySteve/glovecell/releases/download/0.1.0-alpha.1/agent-project-controller-0.1.0-alpha.1.tgz
 sha256sum -c SHA256SUMS --ignore-missing
 install -m 0755 agent-project-controller-0.1.0-alpha.1-linux-amd64 "$HOME/.local/bin/agent-project-controller"
 ```

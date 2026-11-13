@@ -38,6 +38,18 @@ possible. When custom code is still the better choice, say why in the PR under
 "Alternatives considered" (what was evaluated and why it didn't fit). Proposals
 that replace existing custom code with such a project are welcome.
 
+## Glovecell runs in the cluster
+
+Steve's rule (2026-11-10), for every component: whatever Glovecell needs to work
+runs in the cluster and is installed by the Glovecell Helm chart. An operator
+machine is only a client (browser, Orca/T3 app, one-shot CLI with the operator's
+own identity): never add a desktop daemon, `systemctl --user` unit, timer, FUSE
+mount, port-forward or Glovecell credential on it. A credential the controller
+should not hold goes in its own pod with its own narrow ServiceAccount, still in
+the chart. Classify every new subcommand in `docs/components.json`; the
+exception list may only shrink. `internal/installation/incluster_test.go`
+enforces this. Details and the current exceptions: `docs/in-cluster.md`.
+
 ## Forgejo author and reviewer identities
 
 Create automation pull requests with a dedicated automation account. Before
@@ -53,7 +65,7 @@ Steve merges once per change. Make one PR per change, code and tests together;
 do not stack PRs unless unavoidable (say why). Do not open pin or promotion PRs
 in the private deployment repository: after merge, this repository's CI builds the
 images from main and adds them to the single rolling promotion PR there
-(`promote/agent-project-controller`), which that repository's promote-merger
+(`promote/glovecell`), which that repository's promote-merger
 merges once promote-guard passes. Keep new behaviour compatible with the
 deployed config so no companion config PR is needed; when one is, say so in the
 PR, make the config PR safe to merge first, and link the two. See docs/one-merge-delivery.md in the deployment repository.
