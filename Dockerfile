@@ -1,6 +1,6 @@
 # Update these pinned references as part of reviewed dependency upgrades.
 ARG WORKSPACE_IMAGE=debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
-ARG GO_IMAGE=golang:1.27.3-alpine3.23@sha256:8a5046497cda39860b832ffdbe8dd66018a0f05bb01352f533a36e7e2ced66a0
+ARG GO_IMAGE=golang:1.27.4-alpine3.23@sha256:146e3b9c7c1e2ec3d3f5348c8a686151a75e1976e50efac9fc022ebe446a9a82
 ARG RUNTIME_IMAGE=alpine:3.23@sha256:ff7f0c727dd796aa36787bfcd9a64bf35a6ce72a73451b3359fde849b6703d63
 ARG NODE_IMAGE=node:24.22.2-alpine3.23@sha256:9b69af715c7f9d038150b54ccccbaeffa9064bbc93e2904c29591ca097316af1
 
@@ -25,7 +25,9 @@ COPY --from=console /src/internal/web/dist/ internal/web/dist/
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${SOURCE_REVISION}" -o /agent-project-controller ./cmd/agent-project-controller
 
 FROM ${RUNTIME_IMAGE} AS runtime
-RUN apk add --no-cache ca-certificates git openssh-client \
+# git >= 2.52.1-r0: CVE-2026-105437, CVE-2026-111760, CVE-2026-114466 (HIGH). The
+# minimum also keeps a cached layer or a stale mirror from shipping an older git.
+RUN apk add --no-cache ca-certificates 'git>=2.52.1-r0' openssh-client \
     && apk upgrade --no-cache openssh-client openssh-client-common openssh-keygen \
     && addgroup -g 1000 agent && adduser -D -u 1000 -G agent agent
 COPY --from=build /agent-project-controller /usr/local/bin/agent-project-controller
@@ -85,7 +87,7 @@ RUN curl -fsSL https://github.com/pingdotgg/t3code/releases/download/v0.0.45/t3-
     && rm /tmp/t3.tar.gz
 COPY scripts/apc-codex /usr/local/bin/apc-codex
 # Stock Forgejo client. The wrapper supplies the enrolled Git identity per call.
-RUN curl -fsSL https://codeberg.org/forgejo-contrib/forgejo-cli/releases/download/v0.6.0/forgejo-cli-x86_64-linux.tar.gz -o /tmp/fj.tar.gz \
+RUN curl --http1.1 --retry 3 -fsSL https://codeberg.org/forgejo-contrib/forgejo-cli/releases/download/v0.6.0/forgejo-cli-x86_64-linux.tar.gz -o /tmp/fj.tar.gz \
     && echo 'ea559da5449b6dd7e0dd9f7ea51c906b575696f782edd606b52adcf773602742  /tmp/fj.tar.gz' | sha256sum -c - \
     && mkdir /opt/fj && tar xzf /tmp/fj.tar.gz -C /opt/fj \
     && rm /tmp/fj.tar.gz

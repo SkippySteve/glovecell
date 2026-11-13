@@ -706,6 +706,11 @@ func Run(ctx context.Context) error {
 		s.health.pinned["/tls/ca.crt"] = sha256.Sum256(cert)
 		s.health.pinned["/tls/ca.key"] = sha256.Sum256(key)
 	}
+	if addr := os.Getenv(MetricsAddressEnv); addr != "" {
+		if e = serveMetrics(ctx, addr); e != nil {
+			return e
+		}
+	}
 	server := &http.Server{Addr: ":3128", Handler: s, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 32 << 10}
 	control := &http.Server{Addr: ControlAddress, Handler: s.ControlHandler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, MaxHeaderBytes: 8 << 10}
 	listener, err := net.Listen("tcp", ControlAddress)

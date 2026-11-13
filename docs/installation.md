@@ -11,6 +11,7 @@ Deploy first in a disposable qualification cluster. This initial implementation 
 - Forgejo 15.0.9. Repository-scoped personal access tokens and protected `main` are required. Git over HTTPS on port 443 must use a server certificate trusted by the container. The qualified identity provider is Authentik 2026.5.6.
 - One Forgejo owner, one operator group and one controller replica. This is not a multi-tenant hosted service.
 - A storage class and provisioner with `Delete` reclaim behavior. The controller checks both the class and bound volume. The provisioner must actually delete its backing data. Snapshots and backups need a separate operator retention policy.
+- PostgreSQL for history and approvals: the [CloudNativePG](https://cloudnative-pg.io/) operator (the chart's default `database.mode`, which renders a one-instance cluster), or an existing server with `database.mode: external` ([database](database.md)).
 - An HTTPS dashboard origin and OIDC provider. Register a confidential client with the exact redirect URI `<PUBLIC_ORIGIN>/auth/callback`. Request group claims or explicitly allow issuer-local subject IDs.
 
 Approved operators share one trust boundary and can manage every project under that owner.
@@ -100,6 +101,9 @@ OIDC environment variables:
 - `OIDC_GROUPS_CLAIM`, default `groups`. Supply a top-level array claim through your provider's mapper.
 - `OIDC_SCOPES`, default `profile,groups`. Adjust scopes to the provider; `openid` is always included.
 - `PUBLIC_ORIGIN`, the exact HTTPS origin without a trailing slash or path.
+- With hub-and-spoke enabled: also set chart `hubspoke.hub.publicAddress` to the
+  hub’s public `wss://` origin (pairing). That value is independent of
+  `PUBLIC_ORIGIN`; see [hubspoke](hubspoke.md) and the chart README.
 
 For automation, optionally mount an additional authentication secret and set `API_SECRET_FILE` to its path. Requests use `Authorization: Bearer <secret>`. The secret must contain at least 32 bytes. Static browser login additionally requires `ALLOW_STATIC_LOGIN=true`; it is disabled in the sample.
 
@@ -216,9 +220,128 @@ Model credentials stay out of the image. Create a Secret named `model-access` in
 
 Add other HTTPS destinations through the dashboard, API or custom resource at project creation, or through a paused access update afterward. Extra host access is never inferred from package files. Package registries often redirect to additional hosts, which must be explicitly authorized. See [the combined console workflow](console.md) for editing access and including existing sandboxes.
 
-## Optional telemetry
+## Telemetry
 
-Set `OTEL_ENABLED=true` and `OTEL_EXPORTER_OTLP_ENDPOINT` to a trusted endpoint. Standard OTLP HTTP exporter environment variables configure authentication and TLS, and `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES` and `OTEL_TRACES_SAMPLER` override the defaults (10% of root traces). No Collector, OpenTelemetry Operator or particular monitoring vendor is required. The chart passes the controller's `OTEL_ENABLED` and `OTEL_EXPORTER_OTLP_ENDPOINT` to the forge agent.
+Telemetry is off by default; off means nothing is sent or scraped. Turning it on is one section of Helm values. Point it at the collector you already run and the chart wires every Glovecell process to it and opens the network paths itself:
+
+```yaml
+telemetry:
+  enabled: true
+  otlp:
+    endpoint: http://otel-collector.monitoring.svc:4318   # OTLP/HTTP
+    headersSecret: otlp-auth        # optional collector auth
+  collector:                        # where the collector/Prometheus pods run
+    namespace: monitoring
+    podLabels: {app.kubernetes.io/name: opentelemetry-collector}
+  cells:
+    enabled: true                   # per-sandbox agent counters (scraped)
+  prometheus:
+    podMonitors: false              # true with the Prometheus Operator
+    labels: {}                      # e.g. {release: kube-prometheus-stack}
+  dashboards:
+    enabled: true                   # ConfigMap for Grafana's dashboard sidecar
+```
+
+| Setting | What it does |
+| --- | --- |
+| `otlp.endpoint` | The controller, forge agent, voice and (when installed) the brokers push traces and metrics there over OTLP/HTTP. Empty: no push |
+| `otlp.headersSecret` | A Secret in the release namespace whose `headers` key holds `OTEL_EXPORTER_OTLP_HEADERS`, e.g. `Authorization=Basic …`. Create it from a file: `kubectl -n <namespace> create secret generic otlp-auth --from-file=headers=/secure/path/otlp-headers`. Components in their own namespace (the forge agent, the provider broker) use a copy with the same name there when one exists |
+| `collector` | Lets those pods scrape voice and each cell, and lets voice push to them. Leave empty for a collector outside the cluster (then add voice's egress with `voice.networkPolicy.egress`) |
+| `cells.enabled` | Each sandbox's proxy serves fixed agent counters (tokens, cost, sessions, lines, commits; never prompts, IDs or hosts) on `:9464` for `collector` to scrape ("Cell telemetry" below). Needs `collector` and Cilium |
+| `prometheus.podMonitors` | PodMonitors for cells, voice and the CloudNativePG database |
+| `dashboards.enabled` | The Glovecell dashboard (`files/dashboards/glovecell.json`, a Prometheus datasource picker) labelled `grafana_dashboard: "1"`; set `dashboards.namespace` to Grafana's namespace if its sidecar watches only that one |
+
+The older `config.OTEL_ENABLED`, `config.OTEL_EXPORTER_OTLP_ENDPOINT` and `config.CELL_TELEMETRY_SCRAPER_JSON` keys still work while `telemetry.enabled` is false; the chart refuses them alongside the section.
+
+### Collector recipes
+
+These are minimal starting points; `monitoring` and the Prometheus address are placeholders.
+
+**OpenTelemetry Collector** (contrib image). Receives OTLP, scrapes the cells, writes metrics to Prometheus. Its ServiceAccount needs `get`/`list`/`watch` on pods cluster-wide for discovery.
+
+```yaml
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: glovecell-cells
+          kubernetes_sd_configs: [{role: pod}]
+          relabel_configs:
+            - {source_labels: [__meta_kubernetes_pod_label_projects_agentwork_dev_role], regex: proxy, action: keep}
+            - {source_labels: [__meta_kubernetes_pod_container_port_name], regex: metrics, action: keep}
+            - {source_labels: [__meta_kubernetes_namespace], target_label: namespace}
+exporters:
+  prometheusremotewrite:
+    endpoint: http://prometheus.monitoring.svc:9090/api/v1/write
+    resource_to_telemetry_conversion: {enabled: true}
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp, prometheus]
+      exporters: [prometheusremotewrite]
+```
+
+Add a `traces` pipeline to your trace store (for example `otlp` to Tempo) if you keep traces.
+
+**Grafana Alloy.** The same in Alloy syntax:
+
+```alloy
+otelcol.receiver.otlp "glovecell" {
+  http {
+    endpoint = "0.0.0.0:4318"
+  }
+  output {
+    metrics = [otelcol.exporter.prometheus.glovecell.input]
+  }
+}
+
+otelcol.exporter.prometheus "glovecell" {
+  forward_to = [prometheus.remote_write.default.receiver]
+}
+
+discovery.kubernetes "pods" {
+  role = "pod"
+}
+
+discovery.relabel "cells" {
+  targets = discovery.kubernetes.pods.targets
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_projects_agentwork_dev_role"]
+    regex         = "proxy"
+    action        = "keep"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_container_port_name"]
+    regex         = "metrics"
+    action        = "keep"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_namespace"]
+    target_label  = "namespace"
+  }
+}
+
+prometheus.scrape "cells" {
+  targets    = discovery.relabel.cells.output
+  forward_to = [prometheus.remote_write.default.receiver]
+}
+
+prometheus.remote_write "default" {
+  endpoint {
+    url = "http://prometheus.monitoring.svc:9090/api/v1/write"
+  }
+}
+```
+
+**OpenObserve.** It receives OTLP/HTTP directly. Set `otlp.endpoint: http://openobserve.<namespace>.svc:5080/api/<organization>` (the exporters append `/v1/traces` and `/v1/metrics`) and put `Authorization=Basic <base64 of user:token>` in the headers Secret. OpenObserve does not scrape, so for `cells.enabled` run one of the collectors above as the scraper and export to OpenObserve with its `otlphttp` exporter.
+
+### Process telemetry details
+
+Set `OTEL_ENABLED=true` and `OTEL_EXPORTER_OTLP_ENDPOINT` to a trusted endpoint (the `telemetry` section does this). Standard OTLP HTTP exporter environment variables configure authentication and TLS, and `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES` and `OTEL_TRACES_SAMPLER` override the defaults (10% of root traces). No Collector, OpenTelemetry Operator or particular monitoring vendor is required. The chart passes the controller's `OTEL_ENABLED` and `OTEL_EXPORTER_OTLP_ENDPOINT` to the forge agent and the chart's provider broker (`providerBroker`), and with `telemetry.collector` set it also opens the broker's network policy to that collector.
 
 Each long-running process sets the same switch and exports traces and metrics with `service.namespace=glovecell`:
 
@@ -228,8 +351,22 @@ Each long-running process sets the same switch and exports traces and metrics wi
 | provider broker | `apc-provider-broker` | `apc.loop.*` (`component`, `status`), `apc.provider.renewals` (`name`, `status`), `apc.provider.lease.active` (`name`) |
 | GitHub broker | `apc-github-broker` | `apc.loop.*`, `apc.github.lease.status` (`status`) |
 | forge agent | `apc-forge-agent` | `apc.http.*` (`type` = endpoint, `code`) |
-| cell proxy | `apc-proxy` | `apc.proxy.requests` (`reason`, `code`); exported only when the proxy pod has `OTEL_ENABLED=true` and a network path to the collector, which the controller does not add yet |
+| cell proxy | `apc-proxy` | `apc.proxy.requests` (`reason`, `code`); recorded but not exported yet. Nothing in a cell pushes telemetry: the collector will scrape the proxy's `/metrics`, and a separate telemetry relay container in the proxy pod will take the worker's OTLP and reduce it to fixed counters (see below) |
 | voice | `glovecell-voice` | traces; its metrics stay on the Prometheus `/metrics` endpoint |
+
+### Cell telemetry
+
+Cell telemetry is pulled, never pushed. A worker reaches only its proxy, so it gets no path to a shared collector, and a sender can't name itself. Set `CELL_TELEMETRY_SCRAPER_JSON` to `{"namespace": "<collector namespace>", "selector": {<collector pod labels>}}` to switch it on; empty (the default) is off. It needs the Cilium provider.
+
+When on, each cell's proxy pod gets a second container, `telemetry-relay` (same image, `agent-project-controller telemetry-relay`):
+
+- **Intake, port 4318.** OTLP/HTTP protobuf (gzip allowed) from the cell's worker only. JSON is refused (415). The relay walks the protobuf wire format and reads only the fields it keeps, so a request can't make it allocate per element. The worker's workspace container gets `OTEL_EXPORTER_OTLP_ENDPOINT=http://proxy:4318`, metrics and logs exporters, delta temporality, traces off, `CLAUDE_CODE_ENABLE_TELEMETRY=1` and `NO_PROXY=proxy`.
+- **Reduction.** Only known agent counters are kept: tokens, cost, sessions, lines, commits, pull requests, edit decisions and active time. Known events are counted by name and success (API request and error, tool result and decision, user prompt). Labels are `component`, `type`, `name` and `status`, from finite sets: model names must match known model families (Claude, GPT, o-series, Grok), and tools must be Edit, Write, MultiEdit or NotebookEdit. Anything else becomes `other` or is dropped, so a worker can't put an ID or secret into a label. Values must be finite, positive and at most 10^12. The relay never keeps spans, log bodies, prompts, tool arguments, session or account IDs, or the sender's resource attributes.
+- **Limits.** 1 MiB per decompressed request, 4096 records per request, 2 requests decoded at once, 20 requests/s (burst 40), at most 256 series. Every drop is counted in `glovecell_cell_relay_dropped_total{reason}`.
+- **Metrics, port 9464, `GET /metrics` only.** Relay series (`glovecell_cell_agent_*`, `glovecell_cell_relay_*`) plus the proxy's `glovecell_cell_proxy_requests_total{reason,code}`. The proxy serves its counter on `127.0.0.1:9465` (loopback only, `APC_PROXY_METRICS_ADDR`), and the relay merges only families with that prefix. Pod annotations `prometheus.io/scrape|port|path` let the collector discover it. The cell's identity is the scrape target's namespace and pod.
+- **Network.** The worker policy gains egress to its own proxy pod on 4318. The proxy policy gains ingress from the worker on 4318, and from the configured collector pods on 9464 with an L7 `GET ^/metrics$` rule. The proxy gains no egress. The worker cannot reach 9464.
+
+Switching it on or off migrates existing cells. The controller patches the proxy Deployment and the worker and proxy policies only when the difference is exactly the telemetry parts; any other difference is still drift. A running worker is never restarted for it: the controller applies or removes the worker's telemetry settings only while no worker pod runs, for example after a pause. Worker telemetry settings other than "none" or exactly the expected set are drift. A relay container changed in anything but its image is drift; a changed relay image, or a changed or emptied proxy metrics address, is restored.
 
 Metric attributes are a fixed set (component, name, status, reason, code, type, phase). They never carry hosts, paths, identities, owners or tokens. Spans carry workspace UIDs, never actors.
 

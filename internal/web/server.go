@@ -58,6 +58,9 @@ type Server struct {
 	Downloads *Downloads
 	// Providers enables brokered provider opt-in (providers.go).
 	Providers *Providers
+	// ProviderLogins enables signing a provider in from the console
+	// (provider_logins.go).
+	ProviderLogins *ProviderLogins
 	// GitHubBrokering enables per-project GitHub opt-in (github_access.go).
 	GitHubBrokering bool
 	// Reference is the deployment's reference rules, shown read only next to
@@ -159,6 +162,7 @@ func (s *Server) Handler() (http.Handler, error) {
 		if s.Providers != nil {
 			session["providers"] = []string{"grok", "cursor"}
 		}
+		session["providerLogins"] = s.ProviderLogins != nil
 		db := s.Database.status()
 		session["database"] = map[string]any{"configured": db.Configured, "ready": db.Ready, "reason": db.Reason}
 		approver, _ := r.Context().Value(approverKey{}).(string)
@@ -210,6 +214,9 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.HandleFunc("POST /api/v1/workspaces/{name}/lan-hosts", s.addLANHost)
 	mux.HandleFunc("DELETE /api/v1/workspaces/{name}/lan-hosts/{address}", s.removeLANHost)
 	mux.HandleFunc("GET /api/v1/provider-leases", s.providerLeases)
+	mux.HandleFunc("GET /api/v1/provider-logins", s.providerLoginsStatus)
+	mux.HandleFunc("POST /api/v1/provider-logins/{provider}", s.startProviderLogin)
+	mux.HandleFunc("DELETE /api/v1/provider-logins/{provider}", s.cancelProviderLogin)
 	mux.HandleFunc("GET /api/v1/reference-rules", func(w http.ResponseWriter, r *http.Request) {
 		out := s.Reference
 		if out.Rules == nil {

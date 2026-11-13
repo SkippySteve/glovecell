@@ -88,6 +88,22 @@ spec:
 {{- end }}
             - name: OIDC_CLIENT_SECRET_FILE
               value: /control-secrets/oidc-client-secret
+{{- if and (include "apc.otlpPush" .) .Values.telemetry.otlp.headersSecret }}
+            # Collector auth (telemetry.otlp.headersSecret).
+            - name: OTEL_EXPORTER_OTLP_HEADERS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.telemetry.otlp.headersSecret | quote }}
+                  key: {{ .Values.telemetry.otlp.headersKey | quote }}
+{{- end }}
+{{- if include "apc.providerConsoleSignIn" . }}
+            # Console provider sign-in (provider-broker.yaml): the controller
+            # proves itself to the broker with a projected token.
+            - name: PROVIDER_BROKER_URL
+              value: {{ printf "http://provider-broker.%s.svc:8443" (include "apc.providerBrokerNamespace" .) | quote }}
+            - name: PROVIDER_BROKER_TOKEN_FILE
+              value: /var/run/apc/provider-broker/token
+{{- end }}
             # Controller database (docs/database.md): verify-full TLS.
             - name: DATABASE_URL_FILE
               value: /var/run/apc/database/uri
@@ -147,6 +163,11 @@ spec:
               mountPath: /var/run/apc/forge-agent
               readOnly: true
 {{- end }}
+{{- if include "apc.providerConsoleSignIn" . }}
+            - name: provider-broker-token
+              mountPath: /var/run/apc/provider-broker
+              readOnly: true
+{{- end }}
             - name: database
               mountPath: /var/run/apc/database
               readOnly: true
@@ -197,6 +218,16 @@ spec:
             sources:
               - serviceAccountToken:
                   audience: agent-project-controller-forge-agent
+                  expirationSeconds: 3600
+                  path: token
+{{- end }}
+{{- if include "apc.providerConsoleSignIn" . }}
+        - name: provider-broker-token
+          projected:
+            defaultMode: 0440
+            sources:
+              - serviceAccountToken:
+                  audience: agent-project-controller-provider-broker
                   expirationSeconds: 3600
                   path: token
 {{- end }}

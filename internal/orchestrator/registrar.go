@@ -42,8 +42,7 @@ type Registrar struct {
 // NewOrca returns the legacy Orca adapter for the control-host registrar
 // (desktop FUSE mounts). Prefer hub-and-spoke when HUBSPOKE_ORCA_ENABLED=true:
 // internal/hubspoke.NewOrcaAccess, with orcad in each gVisor spoke and
-// `agent-project-controller hubspoke --watch` on the hub (docs/hubspoke.md,
-// docs/design/project-orca-runtime.md).
+// `agent-project-controller hubspoke --watch` on the hub (docs/hubspoke.md).
 func NewOrca(c client.Reader, namespace string) *Registrar {
 	return &Registrar{Name: api.OrchestratorOrca, Kind: "orca", Client: c, Namespace: namespace}
 }

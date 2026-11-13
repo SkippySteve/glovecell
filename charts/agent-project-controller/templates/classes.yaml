@@ -31,9 +31,9 @@ spec:
   parameters:
     owner: {{ index .Values.config "FORGEJO_OWNER" | quote }}
 {{- end }}
-{{- $leases := index .Values.config "PROVIDER_LEASES_SECRET" | default "" | toString }}
+{{- $leases := include "apc.providerLeasesSecret" . }}
 {{- if $leases }}
-{{- range $provider := list "grok" "cursor" }}
+{{- range $provider := ternary .Values.providerBroker.providers (list "grok" "cursor") .Values.providerBroker.enabled }}
 ---
 # Default ProviderClass for bare spec.providers[] entries named {{ $provider }}:
 # the broker's lease Secret and the one-minute minimum, as before classes.

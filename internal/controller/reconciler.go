@@ -864,9 +864,16 @@ func (r *Reconciler) apply(ctx context.Context, w *api.ProjectWorkspace, obj cli
 			wantCopy, _ := cloneValue(want).(map[string]any)
 			normalizeSandboxNameservers(gotCopy)
 			normalizeSandboxNameservers(wantCopy)
+			// Worker telemetry settings arrive with the next worker replacement;
+			// they never force a running worker to restart.
+			stripTelemetryEnv(gotCopy)
+			stripTelemetryEnv(wantCopy)
 			gotCopy["operatingMode"] = want["operatingMode"]
 			if !contains(gotCopy, wantCopy) {
 				return r.replaceWorkspaceImage(ctx, w, current, got, want)
+			}
+			if e := r.reconcileTelemetryEnv(ctx, w, current, got, want); e != nil {
+				return e
 			}
 			gotNS, _, e := unstructured.NestedStringSlice(got, "podTemplate", "spec", "dnsConfig", "nameservers")
 			if e != nil {
@@ -921,6 +928,15 @@ func (r *Reconciler) apply(ctx context.Context, w *api.ProjectWorkspace, obj cli
 			}
 			return r.Patch(ctx, current, client.MergeFrom(old))
 		}
+		// Cell telemetry switched on or off changes only the worker and proxy
+		// policies' telemetry-port rules; patch those to the expected spec.
+		if !same(got, want) && (expected.GetName() == "worker" || expected.GetName() == "proxy") && same(network.StripTelemetry(got), network.StripTelemetry(want)) {
+			old := current.DeepCopy()
+			if e := unstructured.SetNestedMap(current.Object, want, "spec"); e != nil {
+				return e
+			}
+			return r.Patch(ctx, current, client.MergeFrom(old))
+		}
 		if !same(got, want) {
 			return errors.New("network policy drift detected")
 		}
@@ -965,7 +981,10 @@ func (r *Reconciler) apply(ctx context.Context, w *api.ProjectWorkspace, obj cli
 		}
 		normalizeProxyDrift(gotSpec)
 		normalizeProxyDrift(wantSpec)
-		if !contains(*gotSpec, *wantSpec) || current.Spec.Template.Spec.DNSConfig == nil || expected.Spec.Template.Spec.DNSConfig == nil {
+		// Both directions: a field the controller never sets (an added env,
+		// command, probe, init container, host alias or annotation) is drift,
+		// not just a changed one. API-server defaults are cleared first.
+		if !same(*gotSpec, *wantSpec) || current.Spec.Template.Spec.DNSConfig == nil || expected.Spec.Template.Spec.DNSConfig == nil {
 			return errors.New("proxy deployment drift detected")
 		}
 		if gotGuard != wantGuard {
@@ -996,11 +1015,21 @@ func (r *Reconciler) apply(ctx context.Context, w *api.ProjectWorkspace, obj cli
 			return errors.New("proxy deployment drift detected")
 		}
 		dnsChanged := !reflect.DeepEqual(current.Spec.Template.Spec.DNSConfig.Nameservers, expected.Spec.Template.Spec.DNSConfig.Nameservers)
-		imageChanged := gotImage != wantImage
+		imageChanged := gotImage != wantImage || relayImageDiffers(current.Spec.Template, wantImage)
 		replicasChanged := !reflect.DeepEqual(current.Spec.Replicas, expected.Spec.Replicas)
+		// Cell telemetry switched on or off: everything else already matched,
+		// so take the expected containers and pod annotations whole.
+		if !relayMatches(current.Spec.Template, expected.Spec.Template) {
+			return errors.New("proxy deployment drift detected")
+		}
+		telemetryChanged := !telemetryPartsEqual(current.Spec.Template, expected.Spec.Template)
 		revisionChanged := current.Spec.Template.Annotations[proxyRevisionAnnotation] != expected.Spec.Template.Annotations[proxyRevisionAnnotation]
-		if dnsChanged || imageChanged || replicasChanged || revisionChanged {
+		if dnsChanged || imageChanged || replicasChanged || telemetryChanged || revisionChanged {
 			old := current.DeepCopy()
+			if telemetryChanged {
+				current.Spec.Template.Spec.Containers = append([]corev1.Container{}, expected.Spec.Template.Spec.Containers...)
+				current.Spec.Template.Annotations = withScrapeAnnotations(current.Spec.Template.Annotations, expected.Spec.Template.Annotations)
+			}
 			current.Spec.Replicas = expected.Spec.Replicas
 			if revisionChanged {
 				if current.Spec.Template.Annotations == nil {
@@ -1013,7 +1042,7 @@ func (r *Reconciler) apply(ctx context.Context, w *api.ProjectWorkspace, obj cli
 			}
 			if imageChanged {
 				for i := range current.Spec.Template.Spec.Containers {
-					if current.Spec.Template.Spec.Containers[i].Name == "proxy" {
+					if name := current.Spec.Template.Spec.Containers[i].Name; name == "proxy" || name == relayContainer {
 						current.Spec.Template.Spec.Containers[i].Image = wantImage
 					}
 				}
@@ -1076,6 +1105,8 @@ func (r *Reconciler) replaceWorkspaceImage(ctx context.Context, w *api.ProjectWo
 	normalizeSandboxNameservers(wantCopy)
 	normalizeSandboxWorkloadImages(gotCopy)
 	normalizeSandboxWorkloadImages(wantCopy)
+	stripTelemetryEnv(gotCopy)
+	stripTelemetryEnv(wantCopy)
 	if r.usesOrchestrator(w) {
 		existing, _, e := unstructured.NestedString(gotCopy, "podTemplate", "spec", "hostname")
 		if e != nil || existing != "" && existing != w.Name {
@@ -1117,6 +1148,11 @@ func (r *Reconciler) replaceWorkspaceImage(ctx context.Context, w *api.ProjectWo
 				container["image"] = r.Config.Image
 			case "workspace":
 				container["image"] = r.orcaSpokeImage(w)
+				// The comparison above ignored only telemetry settings in env,
+				// so the expected env is safe to take with the new image.
+				if env, ok := wantWorkspace["env"].([]any); ok && hasWantWorkspace {
+					container["env"] = env
+				}
 				if r.usesOrcaSpoke(w) && hasWantWorkspace {
 					if cmd, ok := wantWorkspace["command"].([]any); ok {
 						container["command"] = cmd
@@ -1234,6 +1270,8 @@ func normalizeSandboxWorkloadImages(spec map[string]any) {
 	}
 }
 func normalizeProxyDrift(spec *appsv1.DeploymentSpec) {
+	stripCellTelemetry(spec)
+	clearAPIDefaults(spec)
 	spec.Replicas = nil
 	if spec.Template.Spec.DNSConfig != nil {
 		spec.Template.Spec.DNSConfig.Nameservers = []string{"normalized"}
@@ -1678,6 +1716,10 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 	if r.Config.ProxyRuntimeGuard {
 		configureProxyRuntimeHealth(proxyDeployment, raw, s.Data["ca.crt"])
 	}
+	cellTelemetry := network.CellTelemetry(r.Network) != nil
+	if cellTelemetry {
+		addCellTelemetry(proxyDeployment, r.Config.proxyImage(), security)
+	}
 	r.Config.ProxyScheduling.Apply(&proxyDeployment.Spec.Template.Spec)
 	if w.Spec.DesiredState == "Paused" {
 		proxyDeployment.Spec.Replicas = int32p(0)
@@ -1691,6 +1733,10 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 	env := []corev1.EnvVar{{Name: "HOME", Value: "/workspace/home"}, {Name: "GIT_ORIGIN", Value: origin}, {Name: "GIT_HOST", Value: u.Host}, {Name: "GIT_REPOSITORY", Value: w.Spec.Repository}, {Name: "GIT_WORK_BRANCH", Value: "agent/" + identity(w)}, {Name: "GIT_TERMINAL_PROMPT", Value: "0"}, {Name: "HTTPS_PROXY", Value: "http://proxy:3128"}, {Name: "https_proxy", Value: "http://proxy:3128"}, {Name: "HTTP_PROXY", Value: "http://proxy:3128"}, {Name: "http_proxy", Value: "http://proxy:3128"}, {Name: "SSL_CERT_FILE", Value: "/workspace/home/ca-bundle.crt"}, {Name: "NODE_EXTRA_CA_CERTS", Value: "/trust/ca.crt"}, {Name: "REQUESTS_CA_BUNDLE", Value: "/workspace/home/ca-bundle.crt"}}
 	env = r.orcaSpokeEnv(w, env)
 	mounts := []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "identity", MountPath: "/identity", ReadOnly: true}, {Name: "trust", MountPath: "/trust", ReadOnly: true}, {Name: "model", MountPath: "/run/model", ReadOnly: true}, {Name: "scratch", MountPath: "/tmp"}}
+	workerEnv := env
+	if cellTelemetry {
+		workerEnv = append(append([]corev1.EnvVar{}, env...), telemetryEnv...)
+	}
 	workerlabels := labels(w)
 	workerlabels["projects.agentwork.dev/role"] = "worker"
 	workerImage := r.orcaSpokeImage(w)
@@ -1698,7 +1744,7 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 	if r.usesOrcaSpoke(w) {
 		workerPorts = []corev1.ContainerPort{{Name: "orca", ContainerPort: 6768}}
 	}
-	spec := corev1.PodSpec{DNSPolicy: corev1.DNSNone, DNSConfig: dns, RuntimeClassName: &r.Config.RuntimeClass, AutomountServiceAccountToken: boolp(false), ServiceAccountName: "worker", TerminationGracePeriodSeconds: int64p(5), SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: boolp(true), RunAsUser: int64p(1000), RunAsGroup: int64p(1000), FSGroup: int64p(1000)}, InitContainers: []corev1.Container{{Name: "clone", Image: r.Config.Image, Args: []string{"bootstrap"}, Env: env, SecurityContext: security, Resources: workerResources, VolumeMounts: mounts}}, Containers: []corev1.Container{{Name: "workspace", Image: workerImage, Command: r.orcaSpokeCommand(w), Env: env, WorkingDir: "/workspace/repo", SecurityContext: security, Resources: workerResources, VolumeMounts: mounts, Ports: workerPorts, ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{"test", "-f", "/workspace/.ready"}}}}}}, Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "workspace"}}}, {Name: "identity", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "git-identity", DefaultMode: int32p(0440)}}}, {Name: "trust", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: "trust"}}}}, {Name: "model", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "model-access", Optional: boolp(true), DefaultMode: int32p(0440)}}}, {Name: "scratch", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}}
+	spec := corev1.PodSpec{DNSPolicy: corev1.DNSNone, DNSConfig: dns, RuntimeClassName: &r.Config.RuntimeClass, AutomountServiceAccountToken: boolp(false), ServiceAccountName: "worker", TerminationGracePeriodSeconds: int64p(5), SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: boolp(true), RunAsUser: int64p(1000), RunAsGroup: int64p(1000), FSGroup: int64p(1000)}, InitContainers: []corev1.Container{{Name: "clone", Image: r.Config.Image, Args: []string{"bootstrap"}, Env: env, SecurityContext: security, Resources: workerResources, VolumeMounts: mounts}}, Containers: []corev1.Container{{Name: "workspace", Image: workerImage, Command: r.orcaSpokeCommand(w), Env: workerEnv, WorkingDir: "/workspace/repo", SecurityContext: security, Resources: workerResources, VolumeMounts: mounts, Ports: workerPorts, ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{"test", "-f", "/workspace/.ready"}}}}}}, Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "workspace"}}}, {Name: "identity", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "git-identity", DefaultMode: int32p(0440)}}}, {Name: "trust", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: "trust"}}}}, {Name: "model", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "model-access", Optional: boolp(true), DefaultMode: int32p(0440)}}}, {Name: "scratch", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}}
 	if serviceProxy {
 		spec.HostAliases = []corev1.HostAlias{{IP: proxyAddress, Hostnames: []string{"proxy"}}}
 	}
