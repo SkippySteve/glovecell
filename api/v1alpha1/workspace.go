@@ -25,14 +25,14 @@ type HTTPSRule struct {
 }
 type WorkspaceSpec struct {
 	Repository   string              `json:"repository"`
-	DesiredState string              `json:"desiredState"`
+	DesiredState DesiredState        `json:"desiredState"`
 	HTTPS        []HTTPSRule         `json:"https,omitempty"`
 	Repositories []RepositoryProject `json:"repositories,omitempty"`
 	// LANHosts grants the project's worker direct TCP to single IPv4 hosts on the
 	// operator's LAN. Unlike HTTPS rules they change while the project runs.
 	LANHosts []LANHost `json:"lanHosts,omitempty"`
 	// Providers opts the project into brokered subscription providers (Grok,
-	// Cursor). Off by default. Like LAN hosts they change while the project
+	// Cursor, Codex, Claude). Off by default. Like LAN hosts they change while the project
 	// runs: removing an entry revokes that provider for this project only.
 	// The controller needs a configured provider lease source.
 	Providers []ProviderGrant `json:"providers,omitempty"`
@@ -133,7 +133,7 @@ type AuditEvent struct {
 	Generation int64       `json:"generation"`
 }
 type WorkspaceStatus struct {
-	Phase              string `json:"phase,omitempty"`
+	Phase              Phase  `json:"phase,omitempty"`
 	Namespace          string `json:"namespace,omitempty"`
 	ObservedGeneration int64  `json:"observedGeneration,omitempty"`
 	// Conditions carry the current state; each records the generation it

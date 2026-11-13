@@ -47,7 +47,7 @@ func (s *Server) setGitHub(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if obj.Spec.DesiredState == "Removed" {
+	if obj.Spec.DesiredState == api.DesiredRemoved {
 		http.Error(w, "removed projects cannot receive GitHub access", http.StatusConflict)
 		return
 	}

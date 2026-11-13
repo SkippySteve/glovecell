@@ -119,7 +119,7 @@ func (r *Reconciler) enrollRepositories(ctx context.Context, w *api.ProjectWorks
 			return false, errors.New("individual repository removal requires verified revocation and storage cleanup")
 		}
 	}
-	if len(w.Spec.Repositories) != len(previous) && w.Spec.DesiredState != "Paused" && w.Spec.DesiredState != "Running" {
+	if len(w.Spec.Repositories) != len(previous) && w.Spec.DesiredState != api.DesiredPaused && w.Spec.DesiredState != api.DesiredRunning {
 		return false, errors.New("sandbox must be Running or Paused to enroll repositories")
 	}
 	var entries []projects.Entry
@@ -177,7 +177,7 @@ func (r *Reconciler) enrollRepositories(ctx context.Context, w *api.ProjectWorks
 			return false, err
 		}
 		// Defer worker refresh until after objects() so clone sees widened Git access.
-		if w.Spec.DesiredState == "Running" {
+		if w.Spec.DesiredState == api.DesiredRunning {
 			return true, nil
 		}
 	}

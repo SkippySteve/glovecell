@@ -51,7 +51,7 @@ spec:
                   maxLength: 63
                   pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
                 provider:
-                  description: The provider this class serves (grok, cursor, ...). Must equal the name of each grant that references the class.
+                  description: The provider this class serves (grok, cursor, codex, claude). Must equal the name of each grant that references the class.
                   type: string
                   maxLength: 63
                   pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'

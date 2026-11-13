@@ -1,30 +1,5 @@
-/* Console layout on top of OpenUI tokens. Component styling comes from @openuidev/react-ui. */
-:root {
-  --openui-font-body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --openui-font-heading: var(--openui-font-body);
-  --openui-font-label: var(--openui-font-body);
-  --openui-font-numbers: var(--openui-font-body);
-  --console-open: oklch(0.6 0.2 25);
-}
-* { box-sizing: border-box; }
-html, body { margin: 0; }
-body {
-  background: var(--openui-background);
-  color: var(--openui-text-neutral-primary);
-  font: var(--openui-text-body-default);
-  font-family: var(--openui-font-body);
-  -webkit-font-smoothing: antialiased;
-}
-a { color: var(--openui-text-accent-primary); }
-h1, h2, h3 { margin: 0; font-family: var(--openui-font-heading); }
-h1 { font: var(--openui-text-heading-lg); letter-spacing: var(--openui-text-heading-lg-letter-spacing); }
-h2 { font: var(--openui-text-heading-sm); letter-spacing: var(--openui-text-heading-sm-letter-spacing); }
-p { margin: 0; }
-code { font-family: var(--openui-font-code); font-size: 0.9em; }
-.muted { color: var(--openui-text-neutral-secondary); }
-.subtle { color: var(--openui-text-neutral-tertiary); }
-.block { display: block; }
-.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* Console layout on top of the theme tokens (theme.css, generated) and the base
+   element and primitive styles in base.css. Colours only through tokens. */
 
 .console-bar {
   position: sticky; top: 0; z-index: 10;
@@ -34,9 +9,11 @@ code { font-family: var(--openui-font-code); font-size: 0.9em; }
   border-bottom: 1px solid var(--openui-border-default);
 }
 .console-brand { display: inline-flex; align-items: center; gap: var(--openui-space-s); color: inherit; text-decoration: none; font-weight: 600; }
-.console-logo { width: 18px; height: 18px; border-radius: 5px; background: linear-gradient(135deg, var(--openui-interactive-accent-default), var(--console-open)); }
+.console-logo { width: 18px; height: 18px; border-radius: 5px; background: var(--console-accent); box-shadow: inset -6px -6px 0 var(--console-accent-soft); }
 /* A long OIDC subject (issuer#sub) must not push Sign out off a phone screen. */
 .console-actor { margin-left: auto; font: var(--openui-text-body-sm); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Phones: the theme switcher needs the room more than the actor name does. */
+@media (max-width: 480px) { .console-actor { visibility: hidden; } }
 
 .page { max-width: 1120px; margin: 0 auto; padding: var(--openui-space-2xl) var(--openui-space-xl) 96px; display: flex; flex-direction: column; gap: var(--openui-space-xl); outline: none; }
 .page-head, .detail-head { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--openui-space-l); flex-wrap: wrap; }
@@ -76,6 +53,8 @@ code { font-family: var(--openui-font-code); font-size: 0.9em; }
 .row-projects { display: block; margin-top: 2px; color: var(--openui-text-neutral-secondary); font: var(--openui-text-body-xs); text-decoration: none; overflow-wrap: anywhere; }
 .row-projects:hover { text-decoration: underline; }
 .row-actions { white-space: nowrap; }
+/* workspace.css gives .row-actions inline-flex for its own lists; inside the table it must stay a cell. */
+@media (min-width: 721px) { .sandbox-table td.row-actions { display: table-cell; } }
 .count { display: inline-flex; min-width: 1.5em; justify-content: center; padding: 0 6px; margin-right: 4px; border-radius: 999px; background: var(--openui-alert-background); color: var(--openui-text-alert-primary); font-weight: 600; }
 .count-link { color: inherit; text-decoration: none; }
 .attention { color: var(--openui-text-alert-primary); }
@@ -105,9 +84,10 @@ code { font-family: var(--openui-font-code); font-size: 0.9em; }
   appearance: none; width: 100%; min-height: 36px; padding: 6px 32px 6px 12px;
   font: var(--openui-text-body-default); color: var(--openui-text-neutral-primary);
   border: 1px solid var(--openui-border-interactive); border-radius: var(--openui-radius-l);
-  background: var(--openui-highlight-subtle) linear-gradient(45deg, transparent 50%, currentColor 50%) no-repeat right 14px center / 5px 5px;
+  background: var(--console-surface-sunk);
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: right 16px center, right 11px center; background-size: 5px 5px; background-repeat: no-repeat;
 }
-.select:focus-visible { outline: 2px solid var(--openui-border-accent-emphasis); outline-offset: 1px; }
 .rules { display: flex; flex-direction: column; gap: var(--openui-space-m); }
 .rule { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: var(--openui-space-m); align-items: end; padding: var(--openui-space-m); border: 1px solid var(--openui-border-default); border-radius: var(--openui-radius-l); background: var(--openui-foreground); }
 .rule .methods { grid-column: 1 / -1; }
@@ -156,13 +136,9 @@ code { font-family: var(--openui-font-code); font-size: 0.9em; }
 
 /* Native sandbox pages */
 .egress-secondary { display: flex; gap: var(--openui-space-s); justify-content: flex-end; flex-wrap: wrap; }
-.chip-list { display: flex; flex-wrap: wrap; gap: var(--openui-space-xs); }
-.chip-list code { padding: 2px 8px; border: 1px solid var(--openui-border-default); border-radius: var(--openui-radius-m); }
 .check { display: inline-flex; align-items: center; gap: 6px; font: var(--openui-text-body-sm); }
 .service { display: flex; flex-direction: column; gap: var(--openui-space-s); padding: var(--openui-space-m) 0; border-top: 1px solid var(--openui-border-default); }
 .service:first-of-type { border-top: 0; }
-.observation-filter { display: flex; gap: var(--openui-space-m); align-items: flex-end; flex-wrap: wrap; }
-.observation-filter .field { flex: 1 1 280px; }
 .request { display: flex; gap: var(--openui-space-s); align-items: baseline; min-width: 0; }
 .request code { overflow-wrap: anywhere; }
 .method { font: var(--openui-text-body-xs-heavy, var(--openui-text-body-xs)); color: var(--openui-text-neutral-secondary); min-width: 4.5em; }

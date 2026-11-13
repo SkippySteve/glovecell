@@ -162,6 +162,9 @@ func (b *Broker) owner(ctx context.Context, provider string) (Access, error) {
 	if provider == "codex" || provider == "cursor" {
 		return b.oauthOwner(ctx, provider)
 	}
+	if provider == "claude" {
+		return b.claudeOwner(ctx)
+	}
 	owner, ok := b.Config.Owners[provider]
 	if !ok {
 		return Access{}, errors.New("credential owner not configured")
@@ -303,7 +306,7 @@ func (b *Broker) refresh(ctx context.Context, refresh, id string) (oauthResponse
 // provider from renewing. Leases expire if this trusted publisher is unavailable.
 func (b *Broker) Tick(ctx context.Context) error {
 	var work api.ProjectWorkspace
-	if b.Client.Get(ctx, types.NamespacedName{Namespace: b.Config.Control, Name: b.Config.Workspace}, &work) != nil || string(work.UID) != b.Config.UID || work.Spec.DesiredState == "Removed" || !work.DeletionTimestamp.IsZero() {
+	if b.Client.Get(ctx, types.NamespacedName{Namespace: b.Config.Control, Name: b.Config.Workspace}, &work) != nil || string(work.UID) != b.Config.UID || work.Spec.DesiredState == api.DesiredRemoved || !work.DeletionTimestamp.IsZero() {
 		return errors.New("workbench unavailable or removed")
 	}
 	namespace := "apc-" + strings.ReplaceAll(b.Config.UID, "-", "")
@@ -343,7 +346,7 @@ func (b *Broker) Tick(ctx context.Context) error {
 	// Re-read lifecycle and projection before publication. Never undo a revocation
 	// made while a refresh request was in flight or replace another provider's data.
 	var current api.ProjectWorkspace
-	if b.Client.Get(ctx, client.ObjectKeyFromObject(&work), &current) != nil || current.UID != work.UID || current.Spec.DesiredState == "Removed" || !current.DeletionTimestamp.IsZero() {
+	if b.Client.Get(ctx, client.ObjectKeyFromObject(&work), &current) != nil || current.UID != work.UID || current.Spec.DesiredState == api.DesiredRemoved || !current.DeletionTimestamp.IsZero() {
 		return errors.New("workbench changed during renewal")
 	}
 	var latest corev1.Secret
@@ -381,7 +384,7 @@ func configFromEnv() (Config, error) {
 		}
 		for _, name := range strings.Split(os.Getenv("PROVIDER_BROKER_PROVIDERS"), ",") {
 			if !slices.Contains(LeaseProviders, name) || slices.Contains(cfg.Providers, name) {
-				return Config{}, errors.New("PROVIDER_BROKER_PROVIDERS must list grok and/or cursor")
+				return Config{}, errors.New("PROVIDER_BROKER_PROVIDERS must list some of grok, cursor, codex and claude, once each")
 			}
 			cfg.Providers = append(cfg.Providers, name)
 		}
@@ -399,7 +402,7 @@ func configFromEnv() (Config, error) {
 			return Config{}, errors.New("explicit credential owner required")
 		}
 		cfg.Owners[name] = owner
-		if name != "grok" {
+		if name == "codex" || name == "cursor" {
 			cfg.OAuthClientIDs[name] = os.Getenv(strings.ToUpper(name) + "_OAUTH_CLIENT_ID")
 		}
 	}

@@ -14,7 +14,7 @@ export function rulesError(drafts: RuleDraft[]) {
   return missing ? (missing.host || 'Each destination') + ': choose at least one method.' : '';
 }
 
-function RuleEditor({rule, disabled, onChange, onRemove}: {rule: RuleDraft; disabled: boolean; onChange: (rule: RuleDraft) => void; onRemove: () => void}) {
+export function RuleEditor({rule, disabled, onChange, onRemove}: {rule: RuleDraft; disabled: boolean; onChange: (rule: RuleDraft) => void; onRemove: () => void}) {
   const id = useId();
   return (
     <div className="rule">

@@ -19,13 +19,19 @@ import (
 var BrokeredProviders = map[string][]string{
 	"grok":   {"cli-chat-proxy.grok.com"},
 	"cursor": {"api2.cursor.sh", "agentn.global.api5.cursor.sh"},
+	"codex":  {"chatgpt.com"},
+	"claude": {"api.anthropic.com"},
 }
 
 // brokeredRoutes are the methods and literal path prefixes a brokered
 // provider's CLI uses. Grok's CLI API lives under /v1. Cursor uses Connect RPC
 // service paths, so its whole host is listed; providerAuthorization still
 // refuses Cursor's account and renewal routes (/auth, /oauth) on every request.
+// Codex uses the ChatGPT backend's Codex and account (wham) APIs. Claude's
+// prefixes are narrowed further to exact routes by claudeRoutes.
 var brokeredRoutes = map[string]api.HTTPSRule{
+	"chatgpt.com":                  {Host: "chatgpt.com", Methods: []string{"GET", "POST"}, Paths: []string{"/backend-api/codex", "/backend-api/wham"}},
+	"api.anthropic.com":            {Host: "api.anthropic.com", Methods: []string{"GET", "POST"}, Paths: []string{"/v1/messages", "/api/hello", "/api/oauth", "/api/claude_code"}},
 	"cli-chat-proxy.grok.com":      {Host: "cli-chat-proxy.grok.com", Methods: []string{"GET", "POST"}, Paths: []string{"/v1"}},
 	"api2.cursor.sh":               {Host: "api2.cursor.sh", Methods: []string{"GET", "POST"}, Paths: []string{"/"}},
 	"agentn.global.api5.cursor.sh": {Host: "agentn.global.api5.cursor.sh", Methods: []string{"GET", "POST"}, Paths: []string{"/"}},

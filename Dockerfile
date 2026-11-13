@@ -113,6 +113,16 @@ RUN curl -fsSL https://downloads.cursor.com/lab/2026.10.19-6bbf2c4/linux/x64/age
 RUN curl -fsSL 'https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.7-R6101.1&file=muse-x86-linux' -o /tmp/muse \
     && echo '36e3dac91f56c15572b95be55d70ee9fd9685cd9ab49f747bab4746c8d7c2518  /tmp/muse' | sha256sum -c - \
     && mkdir /opt/muse && mv /tmp/muse /opt/muse/muse && chmod 0755 /opt/muse/muse
+# herdr-core (hc): headless runtime for Android/PC Herdr via a hub (docs/herdr.md).
+# Inert until HERDR_CORE_ENABLED=true and OrchestratorClass herdr.
+RUN curl -fsSL https://releases.herdr.dev/core/0.1.19/herdr-core-linux-x86_64.tar.gz -o /tmp/herdr-core.tar.gz \
+    && echo '4adcfb423d52f24c5cc4a1e2cd2fcad1f62d28bb77876ac472c29082a3eaa424  /tmp/herdr-core.tar.gz' | sha256sum -c - \
+    && mkdir /opt/herdr-core \
+    && tar xzf /tmp/herdr-core.tar.gz -C /opt/herdr-core \
+    && ln -s /opt/herdr-core/herdr-core /usr/local/bin/herdr-core \
+    && ln -s /opt/herdr-core/herdr-core /usr/local/bin/hc \
+    && rm /tmp/herdr-core.tar.gz \
+    && hc --version
 COPY scripts/apc-provider.py /usr/local/bin/apc-provider
 RUN ln -s apc-provider /usr/local/bin/grok \
     && ln -s apc-provider /usr/local/bin/cursor-agent \
@@ -125,17 +135,32 @@ USER 1000:1000
 RUN /usr/local/bin/apc-check-go-toolchain
 CMD ["controller"]
 
+# cloudflared for T3 Connect, built from the pinned upstream tag/commit. The
+# 2026.10.7 release binary still links golang.org/x/net v0.61.0
+# (CVE-2026-78661, fixed in v0.62.0), so the image gate would fail on it.
+# Drop the `go get` once an upstream release ships x/net >= v0.62.0 and go
+# back to the release binary with its published SHA-256.
+FROM ${GO_IMAGE} AS cloudflared-build
+ARG CLOUDFLARED_VERSION=2026.10.7
+ARG UPSTREAM_REV=872b241f94871665c1c157adefcf90c11f0ead96
+RUN apk add --no-cache git \
+    && git clone --depth 1 --branch "${CLOUDFLARED_VERSION}" https://github.com/cloudflare/cloudflared /src \
+    && test "$(git -C /src rev-parse HEAD)" = "${UPSTREAM_REV}"
+WORKDIR /src
+RUN go get golang.org/x/net@v0.62.0 \
+    && CGO_ENABLED=0 GOFIPS140=off go build -trimpath \
+       -ldflags "-X main.Version=${CLOUDFLARED_VERSION}" -o /cloudflared ./cmd/cloudflared
+
 # Trusted T3 Connect registrar. Project T3 servers and agent CLIs stay in workers.
 FROM ${WORKSPACE_IMAGE} AS t3-controller
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+    && apt-get install -y --only-upgrade zlib1g \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -g 1000 agent && useradd -m -u 1000 -g 1000 agent
 COPY --from=build /agent-project-controller /usr/local/bin/agent-project-controller
 COPY --from=workspace /opt/t3 /opt/t3
 COPY third_party/licenses/ /usr/share/agent-project-controller/licenses/
-RUN curl -fsSL https://github.com/cloudflare/cloudflared/releases/download/2026.5.2/cloudflared-linux-amd64 -o /opt/t3/cloudflared \
-    && echo '5286698547f03df745adb2355f04c12dde52ef425491e81f433642d695521886  /opt/t3/cloudflared' | sha256sum -c - \
-    && chmod 0755 /opt/t3/cloudflared
+COPY --from=cloudflared-build --chmod=0755 /cloudflared /opt/t3/cloudflared
 USER 1000:1000
 ENTRYPOINT ["/usr/local/bin/agent-project-controller"]
 CMD ["controller"]

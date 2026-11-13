@@ -65,7 +65,7 @@ func workerNamespace(w *api.ProjectWorkspace) string {
 }
 func instance(w *api.ProjectWorkspace) string { return strings.ReplaceAll(string(w.UID), "-", "") }
 func (m *Managed) Ensure(ctx context.Context, w *api.ProjectWorkspace) error {
-	if w.Spec.DesiredState != "Running" || !w.DeletionTimestamp.IsZero() {
+	if w.Spec.DesiredState != api.DesiredRunning || !w.DeletionTimestamp.IsZero() {
 		return errors.New("T3 registration requires a running project")
 	}
 	var pods corev1.PodList

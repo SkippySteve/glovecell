@@ -1,5 +1,5 @@
-{{- $controllers := dict "t3" "projects.agentwork.dev/t3" "orca" "projects.agentwork.dev/orca" "command" "projects.agentwork.dev/command" }}
-{{- range $key := list "t3" "orca" "command" }}
+{{- $controllers := dict "t3" "projects.agentwork.dev/t3" "orca" "projects.agentwork.dev/orca" "command" "projects.agentwork.dev/command" "herdr" "projects.agentwork.dev/herdr" }}
+{{- range $key := list "t3" "orca" "command" "herdr" }}
 {{- $class := index $.Values.orchestratorClasses $key }}
 {{- if not (kindIs "bool" $class.enabled) }}
 {{- fail (printf "orchestratorClasses.%s.enabled must be a boolean" $key) }}
@@ -7,6 +7,9 @@
 {{- if $class.enabled }}
 {{- if and (eq $key "t3") (not $.Values.t3Connect.enabled) }}
 {{- fail "orchestratorClasses.t3.enabled requires t3Connect.enabled" }}
+{{- end }}
+{{- if and (eq $key "herdr") (not $.Values.herdrCore.enabled) }}
+{{- fail "orchestratorClasses.herdr.enabled requires herdrCore.enabled" }}
 {{- end }}
 {{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" $class.name) }}
 {{- fail (printf "orchestratorClasses.%s.name must be a DNS subdomain name" $key) }}

@@ -4,7 +4,7 @@ import {describe, expect, it} from 'vitest';
 import type {AgentReport, DevLink, Observation, Revision} from '../../api';
 import {parse} from '../../router';
 import {toClusterView} from './credentials';
-import {mergeHistory} from './history';
+import {auditToHistory, DEFAULT_FILTER, filterHistory, mergeAudit, toAuditEntries, filterQuery, hostIn, mergeHistory, readFilter, type HistoryFilter} from './history';
 import {decideRequest, paginate, webAccess} from './internet';
 import {chosenPorts, lanExtend, lanForget, lanOpen, lanRestrict, portChips, toLanView, windowLabel, type LanApi} from './lan';
 import {packageRequests} from './packages';
@@ -124,8 +124,8 @@ describe('history and credentials', () => {
     const reports = [{...report('192.168.1.50:1337‮'), last: '2030-01-02T11:20:00Z', count: 2}];
     const events = mergeHistory({lan, devlinks, revisions, reports});
     expect(events.map(e => e.type)).toEqual(['lan', 'report', 'devlink', 'lan', 'lan', 'policy']);
-    expect(events[0].title).toBe('LAN access opened · 192.168.1.70');
-    expect(events[1].detail).toBe('192.168.1.50:1337 · reported 2 times');
+    expect(events[0].title).toBe('LAN access opened: 192.168.1.70');
+    expect(events[1].detail).toBe('192.168.1.50:1337, reported 2 times');
   });
   it('reads the cluster identity and grants', () => {
     const v = toClusterView({Identity: {Namespace: 'agent-workspace-a', Name: 'agent'}, Grants: [{Namespace: 'app', Capability: 'debug', Reason: 'crash', GrantedBy: 'operator', Expires: '2030-01-01T00:00:00Z', ThisSandbox: true}, null]});
@@ -143,5 +143,47 @@ describe('routes', () => {
     expect(parse('#/projects/p/repositories')).toEqual({view: 'project', name: 'p', section: 'credentials'});
     expect(parse('#/projects/p/bogus')).toMatchObject({section: 'overview'});
     expect(parse('#/sandboxes/%E0%A4%A')).toMatchObject({view: 'sandbox'});
+  });
+});
+
+describe('history filters', () => {
+  const NOW = Date.parse('2030-01-02T12:00:00Z');
+  const events = mergeHistory({
+    lan: toLanView({hosts: [], history: [{at: '2030-01-02T11:30:00Z', event: 'opened', host: '192.168.1.70', ports: '22', by: 'operator', deadline: '', detail: ''}, {at: '2029-12-20T10:00:00Z', event: 'expired', host: '192.168.1.70', ports: '', by: 'sandbox-control', deadline: '', detail: ''}]}),
+    revisions: [{id: 4, status: 'Rejected', error: 'bad profile', at: Date.parse('2030-01-02T09:00:00Z') / 1000}],
+    reports: [{id: 1, kind: 'web', resource: 'https://blocked.example.com/x', reason: '', count: 1, first: '2030-01-02T11:00:00Z', last: '2030-01-02T11:00:00Z'}],
+    rules: [{at: '2030-01-01T12:00:00Z', action: 'added', rule: 'r1', description: 'GET on api.github.com/repos/example/**', by: 'operator', expires: '', detail: ''}],
+    downloads: [{at: Date.parse('2030-01-02T11:50:00Z'), action: 'download-done', id: 'd', by: 'operator', detail: 'https://files.example.com/a.tgz to ~/downloads/a.tgz'}],
+  });
+  const ids = (f: Partial<HistoryFilter>) => filterHistory(events, {...DEFAULT_FILTER, ...f}, NOW).map(e => e.type + ':' + e.outcome + ':' + e.host);
+
+  it('tags each event with a host and an outcome', () => {
+    expect(ids({})).toEqual(['download:done:files.example.com', 'lan:granted:192.168.1.70', 'report:blocked:blocked.example.com', 'policy:failed:', 'web:granted:api.github.com', 'lan:ended:192.168.1.70']);
+  });
+  it('filters by type, host, outcome and time range', () => {
+    expect(ids({type: 'lan'})).toEqual(['lan:granted:192.168.1.70', 'lan:ended:192.168.1.70']);
+    expect(ids({host: '192.168.1.70', outcome: 'ended'})).toEqual(['lan:ended:192.168.1.70']);
+    expect(ids({host: 'GITHUB'})).toEqual(['web:granted:api.github.com']);
+    expect(ids({range: '1h'})).toEqual(['download:done:files.example.com', 'lan:granted:192.168.1.70', 'report:blocked:blocked.example.com']);
+    expect(ids({range: '7d', outcome: 'failed'})).toEqual(['policy:failed:']);
+  });
+  it('reads filters from the URL query and writes only what is set', () => {
+    const f = readFilter(new URLSearchParams('type=lan&host=192.168&outcome=bogus&range=7d'));
+    expect(f).toEqual({type: 'lan', host: '192.168', outcome: 'all', range: '7d'});
+    expect(filterQuery(f)).toEqual({type: 'lan', host: '192.168', outcome: undefined, range: '7d'});
+    expect(readFilter(new URLSearchParams('type=<x>'))).toEqual(DEFAULT_FILTER);
+    expect(hostIn('TCP connect to 192.168.1.50:1337 times out')).toBe('192.168.1.50');
+    expect(hostIn('nothing here')).toBe('');
+  });
+});
+
+describe('project history sources', () => {
+  it('reads audit records from any source, de-duplicated, newest first', () => {
+    const one = toAuditEntries([{time: '2030-01-02T10:00:00Z', action: 'lan-host-granted', message: '192.168.1.31 TCP 22 by operator'}, {time: 'garbage', action: 'x'}, null, {action: 'no-time'}]);
+    const two = toAuditEntries({items: [{time: '2030-01-02T11:00:00Z', action: 'paused', message: 'paused by operator'}, {time: '2030-01-02T10:00:00Z', action: 'lan-host-granted', message: '192.168.1.31 TCP 22 by operator'}]});
+    const merged = mergeAudit([one, two]);
+    expect(merged.map(e => e.action)).toEqual(['paused', 'lan-host-granted']);
+    expect(auditToHistory(merged).map(e => [e.type, e.outcome, e.host])).toEqual([['policy', 'info', ''], ['lan', 'granted', '192.168.1.31']]);
+    expect(toAuditEntries(null)).toEqual([]);
   });
 });

@@ -14,18 +14,58 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
-// Ledger states for one spoke enrollment. Pairing URLs are never stored here.
+// State is where one spoke enrollment stands. Pairing URLs are never stored
+// in the ledger.
+type State string
+
 const (
-	StateAbsent   = "absent"
-	StatePending  = "pending"
-	StateEnrolled = "enrolled"
-	StateRevoked  = "revoked"
+	StateAbsent   State = "absent"
+	StatePending  State = "pending"
+	StateEnrolled State = "enrolled"
+	StateRevoked  State = "revoked"
 )
+
+// Valid reports whether s is one of the four ledger states.
+func (s State) Valid() bool {
+	switch s {
+	case StateAbsent, StatePending, StateEnrolled, StateRevoked:
+		return true
+	}
+	return false
+}
+
+// transitions are the moves the enrollment flow (watch.go) makes. Pending is
+// "enrollment under way"; enrolled may stay enrolled while projects are
+// added; revoked is final, so a revoked spoke never re-enrolls on its own.
+var transitions = map[State][]State{
+	StateAbsent:   {StatePending},
+	StatePending:  {StatePending, StateEnrolled, StateRevoked},
+	StateEnrolled: {StateEnrolled, StatePending, StateRevoked},
+	StateRevoked:  {},
+}
+
+// To returns r moved to next. It keeps the hub identity (ID, Name) and the
+// registered project paths, so a step that fails part-way never forgets what
+// the hub already holds. A move the flow never makes is an error.
+func (r LedgerRecord) To(next State) (LedgerRecord, error) {
+	from := r.State
+	if from == "" {
+		from = StateAbsent
+	}
+	for _, allowed := range transitions[from] {
+		if allowed == next {
+			r.State = next
+			r.Projects = append([]string(nil), r.Projects...)
+			return r, nil
+		}
+	}
+	return r, fmt.Errorf("hubspoke %s cannot move from %s to %s", r.Kind, from, next)
+}
 
 // LedgerRecord is the hubspoke enrollment ack for one workspace and kind.
 type LedgerRecord struct {
 	Kind  string
-	State string
+	State State
 	ID    string
 	Name  string
 	// Projects are absolute spoke paths already registered with the enroller
@@ -53,7 +93,7 @@ func DecodeLedger(data map[string]string) map[string]LedgerRecord {
 		rec.Kind = kind
 		switch field {
 		case "state":
-			rec.State = v
+			rec.State = State(v)
 		case "id":
 			rec.ID = v
 		case "name":
@@ -98,7 +138,7 @@ func encodeLedger(records map[string]LedgerRecord) map[string]string {
 	data := map[string]string{"purpose": "hubspoke-enrollment"}
 	for kind, rec := range records {
 		if rec.State != "" {
-			data[kind+".state"] = rec.State
+			data[kind+".state"] = string(rec.State)
 		}
 		if rec.ID != "" {
 			data[kind+".id"] = rec.ID
@@ -118,7 +158,7 @@ func SetState(ctx context.Context, c client.Client, controlNS, uid, kind string,
 	if c == nil || controlNS == "" || uid == "" || kind == "" {
 		return errors.New("hubspoke ledger write requires client, namespace, uid and kind")
 	}
-	if rec.State != StatePending && rec.State != StateEnrolled && rec.State != StateRevoked && rec.State != StateAbsent {
+	if !rec.State.Valid() {
 		return fmt.Errorf("invalid hubspoke state %q", rec.State)
 	}
 	rec.Kind = kind

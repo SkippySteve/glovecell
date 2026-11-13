@@ -160,7 +160,7 @@ func (s *Server) Handler() (http.Handler, error) {
 			session["lanAllowed"] = s.LAN.Config.AllowedStrings()
 		}
 		if s.Providers != nil {
-			session["providers"] = []string{"grok", "cursor"}
+			session["providers"] = []string{"grok", "cursor", "codex", "claude"}
 		}
 		session["providerLogins"] = s.ProviderLogins != nil
 		db := s.Database.status()
@@ -379,7 +379,7 @@ func (s *Server) releaseRemovedName(ctx context.Context, name string) error {
 		}
 		return e
 	}
-	if existing.Spec.DesiredState != "Removed" || existing.Status.Phase != "Removed" || !existing.DeletionTimestamp.IsZero() {
+	if existing.Spec.DesiredState != api.DesiredRemoved || existing.Status.Phase != api.PhaseRemoved || !existing.DeletionTimestamp.IsZero() {
 		return errNameInUse
 	}
 	original := append([]string(nil), existing.Finalizers...)
@@ -438,7 +438,7 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	obj := &api.ProjectWorkspace{TypeMeta: metav1.TypeMeta{APIVersion: api.GroupVersion.String(), Kind: "ProjectWorkspace"}, ObjectMeta: metav1.ObjectMeta{Name: request.Name, Namespace: s.Namespace, Annotations: map[string]string{"projects.agentwork.dev/requested-by": actor}}, Spec: api.WorkspaceSpec{Repository: request.Repository, DesiredState: "Running", HTTPS: rules, AccessProfileName: profile}}
+	obj := &api.ProjectWorkspace{TypeMeta: metav1.TypeMeta{APIVersion: api.GroupVersion.String(), Kind: "ProjectWorkspace"}, ObjectMeta: metav1.ObjectMeta{Name: request.Name, Namespace: s.Namespace, Annotations: map[string]string{"projects.agentwork.dev/requested-by": actor}}, Spec: api.WorkspaceSpec{Repository: request.Repository, DesiredState: api.DesiredRunning, HTTPS: rules, AccessProfileName: profile}}
 	if e := s.Client.Create(r.Context(), obj); e != nil {
 		if apierrors.IsAlreadyExists(e) {
 			http.Error(w, "project name already exists", 409)
@@ -452,10 +452,10 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) change(w http.ResponseWriter, r *http.Request) {
 	var request struct {
-		DesiredState    string `json:"desiredState"`
-		ResourceVersion string `json:"resourceVersion"`
+		DesiredState    api.DesiredState `json:"desiredState"`
+		ResourceVersion string           `json:"resourceVersion"`
 	}
-	if e := decode(w, r, &request); e != nil || request.ResourceVersion == "" || (request.DesiredState != "Running" && request.DesiredState != "Paused" && request.DesiredState != "Removed") {
+	if e := decode(w, r, &request); e != nil || request.ResourceVersion == "" || !request.DesiredState.Valid() {
 		http.Error(w, "state and resourceVersion required", 400)
 		return
 	}
@@ -470,12 +470,12 @@ func (s *Server) change(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "project unavailable", 404)
 			return
 		}
-		if !obj.DeletionTimestamp.IsZero() || obj.Spec.DesiredState == "Removed" {
+		if !obj.DeletionTimestamp.IsZero() || !obj.Spec.DesiredState.CanMoveTo(request.DesiredState) {
 			http.Error(w, "removed projects cannot be reopened; create a new project", 409)
 			return
 		}
-		if request.DesiredState == "Running" && obj.Spec.DesiredState == "Paused" && obj.UID != "" {
-			if obj.Status.ObservedGeneration != obj.Generation || obj.Status.Phase != "Paused" || !s.accessApplied(r, obj) {
+		if request.DesiredState == api.DesiredRunning && obj.Spec.DesiredState == api.DesiredPaused && obj.UID != "" {
+			if !obj.Settled(api.PhasePaused) || !s.accessApplied(r, obj) {
 				http.Error(w, "wait for the paused project and access update to reconcile before resuming", 409)
 				return
 			}
@@ -528,7 +528,7 @@ func (s *Server) clients(w http.ResponseWriter, r *http.Request) {
 	}
 	clients := []map[string]string{}
 	for kind, rec := range ledger.Clients {
-		clients = append(clients, map[string]string{"kind": kind, "state": rec.State, "id": rec.ID, "path": rec.Path})
+		clients = append(clients, map[string]string{"kind": kind, "state": string(rec.State), "id": rec.ID, "path": rec.Path})
 	}
 	writeJSON(w, map[string]any{"clients": clients, "owners": ledger.Owners})
 }

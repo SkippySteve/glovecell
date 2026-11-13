@@ -33,7 +33,7 @@ spec:
 {{- end }}
 {{- $leases := include "apc.providerLeasesSecret" . }}
 {{- if $leases }}
-{{- range $provider := ternary .Values.providerBroker.providers (list "grok" "cursor") .Values.providerBroker.enabled }}
+{{- range $provider := ternary .Values.providerBroker.providers (list "grok" "cursor" "codex" "claude") .Values.providerBroker.enabled }}
 ---
 # Default ProviderClass for bare spec.providers[] entries named {{ $provider }}:
 # the broker's lease Secret and the one-minute minimum, as before classes.

@@ -1,0 +1,211 @@
+/* Hallmark · checked: 2026-10-29 · genre: modern-minimal (inferred) · shape: app screen
+ * theme: Dusk (dark, default) + Cobalt (light), modes: light+dark+system · type: system-ui at 14px, 1.125 to 1.2 scale
+ * built: the project · redesign: polish (tokens, base, shared primitives; no page restructured) · v2.0.0 */
+
+/* Base elements and the shared OpenUI primitives, restyled once for every page.
+   Colours, fonts and sizes come only from theme.css (scripts/theme-css.mjs);
+   token names are listed in docs/console.md and the TOKENS note. Loaded after
+   OpenUI's components.css and before the page stylesheets, which may refine it. */
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; overflow-x: clip; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; scrollbar-color: var(--console-border-strong) transparent; }
+body {
+  background: var(--console-bg);
+  color: var(--console-text);
+  font: 400 var(--console-text-base)/var(--console-leading) var(--console-font);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-synthesis-weight: none;
+}
+::selection { background: var(--console-accent-soft); color: var(--console-text); }
+
+a { color: var(--console-text-link); text-underline-offset: 0.2em; text-decoration-thickness: 1px; }
+a:hover { text-decoration-thickness: 2px; }
+h1, h2, h3, h4 { margin: 0; font-family: var(--console-font); font-weight: var(--console-weight-bold); color: var(--console-text); overflow-wrap: break-word; min-width: 0; }
+h1 { font-size: var(--console-text-xl); line-height: 1.2; letter-spacing: -0.012em; }
+h2 { font-size: var(--console-text-lg); line-height: 1.25; letter-spacing: -0.006em; }
+h3 { font-size: var(--console-text-md); line-height: 1.3; }
+h4 { font-size: var(--console-text-base); line-height: 1.3; }
+p { margin: 0; }
+code, kbd, samp, pre { font-family: var(--console-font-mono); font-size: 0.92em; }
+small { font-size: var(--console-text-xs); }
+hr { border: 0; border-top: 1px solid var(--console-border); margin: 0; }
+strong, b { font-weight: var(--console-weight-bold); }
+
+/* Helpers any page may use. */
+.muted { color: var(--console-text-muted); }
+.subtle { color: var(--console-text-subtle); }
+.num { font-variant-numeric: tabular-nums; }
+.mono { font-family: var(--console-font-mono); }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+
+/* Focus: one visible ring on everything that takes focus, drawn at once. */
+:where(a, button, input, select, textarea, summary, [tabindex], [role="button"], [role="tab"], [role="radio"], [role="checkbox"]):focus-visible {
+  outline: var(--console-focus-ring);
+  outline-offset: 2px;
+}
+:where(#view, main)[tabindex="-1"]:focus { outline: none; }
+
+/* Motion is state only, and none at all when the reader asks for less. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}
+
+/* ---------- Buttons (OpenUI Button and the console's link buttons) ---------- */
+.openui-button-base {
+  min-height: var(--console-control-h);
+  justify-content: center;
+  font-weight: var(--console-weight-medium);
+  white-space: nowrap;
+  box-shadow: none;
+  transition: background-color var(--console-dur-micro) var(--console-ease), border-color var(--console-dur-micro) var(--console-ease), color var(--console-dur-micro) var(--console-ease);
+}
+.openui-button-base-medium { padding: 0 var(--console-space-3); border-radius: var(--console-radius); }
+.openui-button-base-large { min-height: 36px; padding: 0 var(--console-space-4); border-radius: var(--console-radius); }
+.openui-button-base-small { min-height: var(--console-control-h-sm); padding: 0 10px; border-radius: var(--console-radius); }
+.openui-button-base-extra-small { min-height: 24px; padding: 0 var(--console-space-2); border-radius: var(--console-radius-sm); }
+.openui-button-base-primary { background-color: var(--console-accent); border-color: var(--console-accent); color: var(--console-on-accent); box-shadow: var(--console-shadow-1); }
+.openui-button-base-primary:not(:disabled):hover, .openui-button-base-primary:not(:disabled):active { background-color: var(--console-accent-hover); border-color: var(--console-accent-hover); }
+.openui-button-base-secondary { background-color: var(--console-surface); border-color: var(--console-border-strong); color: var(--console-text); box-shadow: none; }
+.openui-button-base-secondary:not(:disabled):hover, .openui-button-base-secondary:not(:disabled):active { background-color: var(--console-surface-2); border-color: var(--console-text-subtle); }
+.openui-button-base-tertiary { color: var(--console-text); }
+.openui-button-base-tertiary:not(:disabled):hover, .openui-button-base-tertiary:not(:disabled):active { background-color: var(--openui-highlight); }
+.openui-button-base-destructive-primary { background-color: var(--console-danger-solid); border-color: var(--console-danger-solid); color: var(--console-on-danger); }
+.openui-button-base-destructive-primary:not(:disabled):hover, .openui-button-base-destructive-primary:not(:disabled):active { background-color: var(--console-danger-solid-hover); border-color: var(--console-danger-solid-hover); }
+.openui-button-base-destructive-secondary { background-color: transparent; border-color: var(--console-danger-border); color: var(--console-danger); }
+.openui-button-base-destructive-secondary:not(:disabled):hover, .openui-button-base-destructive-secondary:not(:disabled):active { background-color: var(--console-danger-bg); }
+.openui-button-base-destructive-tertiary { color: var(--console-danger); }
+.openui-button-base:disabled, .openui-button-base:disabled:hover { opacity: 0.55; cursor: not-allowed; }
+/* OpenUI greys disabled text further; opacity already says it, so keep the text readable. */
+.openui-button-base-secondary:disabled, .openui-button-base-tertiary:disabled { color: var(--console-text-muted); }
+.openui-button-base-primary:disabled { background-color: var(--console-accent); }
+.openui-button-base-destructive-primary:disabled { background-color: var(--console-danger-solid); }
+.openui-button-base-destructive-secondary:disabled, .openui-button-base-destructive-tertiary:disabled { color: var(--console-danger); }
+
+.link-button { min-height: var(--console-control-h); padding: 0 var(--console-space-3); border-radius: var(--console-radius); border: 1px solid var(--console-border-strong); background: var(--console-surface); color: var(--console-text); font-weight: var(--console-weight-medium); transition: background-color var(--console-dur-micro) var(--console-ease); }
+.link-button:hover { background: var(--console-surface-2); }
+.link-button.subtle-link { background: transparent; border-color: transparent; color: var(--console-text-muted); }
+.link-button.subtle-link:hover { color: var(--console-text); background: var(--openui-highlight); }
+
+/* Bigger hit targets on touch screens. */
+@media (pointer: coarse) {
+  .openui-button-base-medium, .openui-button-base-large, .link-button { min-height: 40px; }
+  .openui-button-base-small { min-height: 36px; }
+}
+
+/* ---------- Inputs ---------- */
+.openui-input, .openui-textarea, .openui-select-trigger, .select, .text-input,
+:where(input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"], [type="color"], [type="hidden"]), textarea, select):not([class*="openui-"]) {
+  background-color: var(--console-surface-sunk);
+  border: 1px solid var(--console-border-strong);
+  border-radius: var(--console-radius);
+  color: var(--console-text);
+  font: 400 var(--console-text-base)/var(--console-leading) var(--console-font);
+}
+.openui-input, .openui-select-trigger, .text-input, .select, :where(input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"], [type="color"], [type="hidden"]), select):not([class*="openui-"]) { min-height: var(--console-control-h); }
+.openui-input-medium, .openui-input-large { padding: 4px 10px; }
+.openui-input-small { min-height: var(--console-control-h-sm); padding: 2px 8px; }
+.openui-textarea { padding: 6px 10px; }
+.select { padding-right: 32px; }
+.openui-input::placeholder, .openui-textarea::placeholder, .text-input::placeholder, :where(input, textarea)::placeholder { color: var(--console-text-subtle); opacity: 1; }
+.openui-input:not(:focus):not(:disabled):not(.openui-input-error):hover, .openui-textarea:not(:focus):not(:disabled):hover, .text-input:hover, .select:hover { border-color: var(--console-text-subtle); }
+.openui-input:focus, .openui-textarea:focus { box-shadow: none; }
+.openui-input:focus-visible, .openui-textarea:focus-visible, .text-input:focus-visible, .select:focus-visible,
+:where(input, textarea, select):focus-visible { outline: var(--console-focus-ring); outline-offset: -1px; border-color: var(--console-focus); }
+.openui-input:disabled, .openui-textarea:disabled, .text-input:disabled, .select:disabled, :where(input, textarea, select):disabled { opacity: 0.55; cursor: not-allowed; background-color: var(--console-surface-sunk); }
+.openui-input-error, .openui-input-error:focus, .text-input[aria-invalid="true"], :where(input, textarea)[aria-invalid="true"] { border-color: var(--console-danger); box-shadow: none; }
+.field-label, .openui-label { color: var(--console-text-muted); font: var(--console-weight-medium) var(--console-text-sm)/1.3 var(--console-font); }
+:where(input[type="checkbox"], input[type="radio"]) { accent-color: var(--console-accent); width: 16px; height: 16px; }
+
+/* OpenUI check boxes */
+.openui-checkbox-item-root { border-color: var(--console-border-strong); background-color: var(--console-surface-sunk); }
+.openui-checkbox-item-root[data-state="checked"] { background-color: var(--console-accent); border-color: var(--console-accent); color: var(--console-on-accent); }
+.openui-checkbox-item-label { color: var(--console-text); }
+.openui-checkbox-item-description { color: var(--console-text-muted); }
+
+/* Toggle groups (the duration pickers) and segmented buttons */
+.openui-toggle-item {
+  min-height: var(--console-control-h); padding: 0 var(--console-space-3); border: 1px solid var(--console-border-strong); border-radius: var(--console-radius);
+  background: var(--console-surface); color: var(--console-text); font: var(--console-weight-medium) var(--console-text-base)/1.2 var(--console-font);
+  transition: background-color var(--console-dur-micro) var(--console-ease), border-color var(--console-dur-micro) var(--console-ease), color var(--console-dur-micro) var(--console-ease);
+}
+.openui-toggle-item:hover { background: var(--console-surface-2); }
+.openui-toggle-item[data-state="on"], .openui-toggle-item[data-state="on"]:hover { background: var(--console-accent); border-color: var(--console-accent); color: var(--console-on-accent); }
+.openui-toggle-group { gap: var(--console-space-1); }
+
+/* ---------- Tables ---------- */
+.openui-table-container { border: 1px solid var(--console-border); border-radius: var(--console-radius-lg); background: var(--console-surface); box-shadow: var(--console-shadow-1); }
+.openui-table { font: 400 var(--console-text-base)/var(--console-leading) var(--console-font); }
+.openui-table-head { padding: 8px var(--console-space-3); background: var(--console-surface-2); border-bottom: 1px solid var(--console-border); text-align: left; white-space: nowrap; }
+.openui-table-head .openui-table-head-label { font: var(--console-weight-medium) var(--console-text-sm)/1.3 var(--console-font); color: var(--console-text-muted); }
+.openui-table-cell { padding: 10px var(--console-space-3); color: var(--console-text); }
+.openui-table-row:nth-child(even) { background-color: transparent; }
+.openui-table-row { border-bottom: 1px solid var(--console-border); transition: background-color var(--console-dur-micro) var(--console-ease); }
+.openui-table-body .openui-table-row:hover, tbody > .openui-table-row:hover { background-color: var(--openui-highlight); }
+:where(table):not(.openui-table) { border-collapse: collapse; width: 100%; font-size: var(--console-text-base); }
+:where(table):not(.openui-table) :where(th) { text-align: left; font-weight: var(--console-weight-medium); font-size: var(--console-text-sm); color: var(--console-text-muted); padding: 8px var(--console-space-3); border-bottom: 1px solid var(--console-border); white-space: nowrap; }
+:where(table):not(.openui-table) :where(td) { padding: 8px var(--console-space-3); border-bottom: 1px solid var(--console-border); }
+
+/* ---------- Tags (status badges) ---------- */
+.openui-tag { border: 1px solid transparent; font: var(--console-weight-medium) var(--console-text-xs)/1.2 var(--console-font); white-space: nowrap; }
+.openui-tag-sm { height: 22px; padding: 0 7px; border-radius: var(--console-radius-sm); }
+.openui-tag-md { height: 26px; padding: 0 9px; border-radius: var(--console-radius-sm); font-size: var(--console-text-sm); }
+.openui-tag-lg { height: 30px; padding: 0 11px; border-radius: var(--console-radius); font-size: var(--console-text-sm); }
+.openui-tag-neutral { background-color: var(--console-neutral-bg); border-color: var(--console-neutral-border); color: var(--console-neutral); }
+.openui-tag-info { background-color: var(--console-info-bg); border-color: var(--console-info-border); color: var(--console-info); }
+.openui-tag-success { background-color: var(--console-ok-bg); border-color: var(--console-ok-border); color: var(--console-ok); }
+.openui-tag-warning { background-color: var(--console-warn-bg); border-color: var(--console-warn-border); color: var(--console-warn); }
+.openui-tag-danger { background-color: var(--console-danger-bg); border-color: var(--console-danger-border); color: var(--console-danger); }
+
+/* ---------- Cards ---------- */
+.openui-card { gap: var(--console-space-4); font: 400 var(--console-text-base)/var(--console-leading) var(--console-font); }
+.openui-card-sunk, .openui-card-card {
+  padding: var(--console-space-5);
+  background-color: var(--console-surface);
+  border: 1px solid var(--console-border);
+  border-radius: var(--console-radius-lg);
+  box-shadow: var(--console-shadow-1);
+}
+.openui-card-clear { border-radius: var(--console-radius-lg); }
+.card, .health-card, .facts div, .factory-facts div { border-color: var(--console-border); }
+.card { box-shadow: var(--console-shadow-1); }
+
+/* ---------- Callouts ---------- */
+.openui-callout { border-left-width: 3px; padding: 10px 14px; border-radius: 0 var(--console-radius) var(--console-radius) 0; gap: 2px; }
+.openui-callout-info { background: var(--console-info-bg); }
+.openui-callout-success { background: var(--console-ok-bg); }
+.openui-callout-warning { background: var(--console-warn-bg); }
+.openui-callout-danger { background: var(--console-danger-bg); }
+.openui-callout-neutral { background: var(--console-surface-2); border-color: var(--console-border-strong); }
+.openui-callout-title { font: var(--console-weight-bold) var(--console-text-base)/1.4 var(--console-font); }
+.openui-callout-description { font: 400 var(--console-text-base)/var(--console-leading) var(--console-font); color: var(--console-text); }
+
+/* ---------- Tabs ---------- */
+.openui-tabs-list { background-color: var(--console-surface-sunk); border-radius: var(--console-radius); }
+.openui-tabs-trigger { color: var(--console-text-muted); font: var(--console-weight-medium) var(--console-text-base)/1.3 var(--console-font); }
+.openui-tabs-trigger[data-state="active"] { background-color: var(--console-surface-2); color: var(--console-text); box-shadow: none; }
+.openui-tabs-clear .openui-tabs-list { background: none; }
+.openui-tabs-clear .openui-tabs-trigger { color: var(--console-text-muted); }
+.openui-tabs-clear .openui-tabs-trigger[data-state="active"] { color: var(--console-text); font: var(--console-weight-bold) var(--console-text-base)/1.3 var(--console-font); }
+.openui-tabs-indicator { height: 2px; background-color: var(--console-accent); }
+.openui-tabs-list-container::after { border-bottom-color: var(--console-border); }
+.openui-separator { background-color: var(--console-border); }
+
+/* Native dialogs and disclosure */
+dialog { color: var(--console-text); }
+dialog::backdrop { background: var(--console-overlay); }
+summary { cursor: pointer; }
+
+/* ---------- Theme switcher (header) ---------- */
+.theme-switcher { display: inline-flex; flex: none; gap: 2px; padding: 2px; border: 1px solid var(--console-border); border-radius: var(--console-radius); background: var(--console-surface-sunk); }
+.theme-option {
+  display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 26px; padding: 0;
+  border: 0; border-radius: var(--console-radius-sm); background: transparent; color: var(--console-text-subtle); cursor: pointer;
+  transition: background-color var(--console-dur-micro) var(--console-ease), color var(--console-dur-micro) var(--console-ease);
+}
+.theme-option svg { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.theme-option:hover { color: var(--console-text); }
+.theme-option[aria-pressed="true"] { background: var(--console-surface-2); color: var(--console-text); box-shadow: inset 0 0 0 1px var(--console-border-strong); }
+.theme-option:focus-visible { outline-offset: 0; }
+@media (pointer: coarse) { .theme-option { width: 36px; height: 34px; } }

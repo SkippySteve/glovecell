@@ -52,9 +52,9 @@ func TestCellTokenIsSwappedForTheRealToken(t *testing.T) {
 }
 
 func TestCellTokenOnlyForReviewedProviders(t *testing.T) {
-	grants := `{"codex":{"enabled":true,"access":{"accessToken":"real","cellToken":"cell","expiresAt":` + jsonNumber(time.Now().Add(time.Hour).Unix()) + `}}}`
-	s := &Server{Config: Config{BrokeredProviders: true, IndependentCodex: true}, ProviderGrants: func() ([]byte, error) { return []byte(grants), nil }}
-	r := httptest.NewRequest("POST", "https://chatgpt.com/backend-api/codex/responses", nil)
+	grants := `{"muse":{"enabled":true,"access":{"accessToken":"apc-muse-subscription-gateway","cellToken":"cell","expiresAt":` + jsonNumber(time.Now().Add(time.Hour).Unix()) + `}}}`
+	s := &Server{Config: Config{BrokeredProviders: true}, ProviderGrants: func() ([]byte, error) { return []byte(grants), nil }}
+	r := httptest.NewRequest("POST", "https://api.meta.ai/v1/chat", nil)
 	r.Header.Set("Authorization", "Bearer cell")
 	if s.providerAuthorization(r) == nil {
 		t.Fatal("cell token accepted for an unreviewed provider")

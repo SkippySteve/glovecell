@@ -18,6 +18,9 @@ const (
 	OrchestratorT3      = OrchestratorControllerPrefix + "t3"
 	OrchestratorOrca    = OrchestratorControllerPrefix + "orca"
 	OrchestratorCommand = OrchestratorControllerPrefix + "command"
+	// OrchestratorHerdr is herdr-core in the worker, reached from a hub via
+	// `agent-project-controller herdr-via` (docs/herdr.md). Not the Herdr GUI.
+	OrchestratorHerdr = OrchestratorControllerPrefix + "herdr"
 )
 
 // OrchestratorClassAccepted is the condition type the owning controller sets
