@@ -55,6 +55,16 @@ class RefusalTest(unittest.TestCase):
         for value in (node('edge', '01'), node('build', 3), node('edge', 12)):
             self.assertIn('node-name', findings(f'nodeName: {value}')[0], value)
 
+    def test_personal_mailbox_addresses_are_refused(self):
+        for domain in ('gmail.com', 'GoogleMail.com', 'outlook.com', 'icloud.com', 'proton.me', 'yahoo.co.uk'):
+            value = 'someone.42' + '@' + domain
+            self.assertIn('personal-email', findings(f'Reviewed-by: someone <{value}>')[0], domain)
+
+    def test_project_and_noreply_addresses_pass(self):
+        for value in ('steve@example.invalid', 'orca-agent@noreply.git.example.com',
+                      '69158610+someone@users.noreply.github.com', 'user@k8s.io', 'x@mail.example.com'):
+            self.assertEqual(findings(f'Author: a <{value}>'), [], value)
+
     def test_values_are_masked(self):
         line = 'ghp_' + 'S3cr3t' * 6
         self.assertNotIn('S3cr3t', ''.join(findings(line)))
@@ -101,6 +111,30 @@ class RangeTest(unittest.TestCase):
             self.assertEqual(sorted(o.split(': ')[1].split()[0] for o in out), ['node-name', 'private-ip'])
             self.assertTrue(any('message' in o for o in out))
             self.assertEqual(tree, [], 'the tip is clean, but history still publishes the address')
+
+    def test_commit_identities_and_trailers_are_scanned(self):
+        personal = 'someone' + '@' + 'gmail.com'
+        with tempfile.TemporaryDirectory() as d:
+            def git(*args, email='t@example.com'):
+                subprocess.run(['git', '-c', 'user.name=t', '-c', f'user.email={email}', *args],
+                               cwd=d, check=True, capture_output=True)
+            git('init', '-q', '-b', 'main')
+            Path(d, 'a.txt').write_text('clean\n')
+            git('add', '.'); git('commit', '-q', '-m', 'base')
+            git('commit', '-q', '--allow-empty', '-m', 'merge', email=personal)
+            git('commit', '-q', '--allow-empty', '-m', f'fix\n\nReviewed-by: s <{personal}>')
+            with patch.object(cp, 'ROOT', Path(d)):
+                ranged, last = [], []
+                cp.scan_range('HEAD~2..HEAD', ALLOW, ranged)
+                cp.scan_commit_meta(cp.git('rev-parse', 'HEAD').strip(), ALLOW, last)
+                base = []
+                cp.scan_commit_meta(cp.git('rev-parse', 'HEAD~2').strip(), ALLOW, base)
+        kinds = sorted(line.split(' ')[2].split(':')[0] for line in ranged)
+        self.assertEqual(kinds, ['author', 'committer', 'message'])
+        self.assertTrue(all('personal-email' in line for line in ranged))
+        self.assertNotIn('gmail', ''.join(ranged))
+        self.assertEqual(len(last), 1)
+        self.assertEqual(base, [])
 
     def test_path_exceptions_apply_to_commit_ranges(self):
         with tempfile.TemporaryDirectory() as d:

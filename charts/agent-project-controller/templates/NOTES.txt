@@ -24,3 +24,16 @@ Sign in to the same T3 account on each receiving device, then select its project
 {{- if .Values.tailscaleIngress.enabled }}
 The Tailscale operator must be installed. Set PUBLIC_ORIGIN and the identity-provider callback for the private endpoint.
 {{- end }}
+{{- if .Values.providerBroker.enabled }}
+{{- $pns := include "apc.providerBrokerNamespace" . }}
+
+Subscription providers ({{ join ", " .Values.providerBroker.providers }}) are on, in namespace {{ $pns }}.
+Sign each provider in once:
+{{- if .Values.providerBroker.consoleSignIn }}
+  - in the console: open any sandbox > Credentials > Connect, then approve in your browser; or
+{{- end }}
+  - from a machine where you are already signed in to that provider's CLI:
+      agent-project-controller provider import <provider> --namespace {{ $pns }}
+Then enable a provider per sandbox (Credentials > Enable).
+Check renewals: kubectl -n {{ $pns }} logs deploy/provider-broker --tail=20
+{{- end }}

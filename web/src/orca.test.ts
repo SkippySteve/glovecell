@@ -48,7 +48,7 @@ describe('Orca projects per sandbox', () => {
     expect(existingKind(existing[1], undefined)).toBe('Coding sandbox');
   });
   it('previews the projects Orca holds, sorted, then a count', () => {
-    const names = ['opnsense-kubernetes-bgp', 'factory', 'agent-project-controller', 'agent-workplace', 'herdr', 'library', 'voice', 'audio'];
+    const names = ['platform', 'factory', 'agent-project-controller', 'agent-workplace', 'herdr', 'library', 'voice', 'audio'];
     const records: OrcaProject[] = names.map(name => ({name, repo: '', status: 'registered'}));
     records.push({...record('failed'), name: 'broken'}, {...record('preparing'), name: 'new'}, {...record('published'), name: 'factory'});
     expect(projectPreview(records)).toEqual({names: ['agent-project-controller', 'agent-workplace', 'audio', 'factory', 'herdr', 'library'], more: 2, total: 8});

@@ -165,6 +165,80 @@ out. Pausing or removing the project stops the worker.
 
 ## Deployment
 
+### With the Helm chart
+
+```yaml
+providerBroker:
+  enabled: true
+  providers: [grok, cursor]   # only the subscriptions you have
+```
+
+This adds one namespace (`<release namespace>-providers`, or
+`providerBroker.namespace`) with:
+
+- `owners-0`, the offline owner (a one-replica StatefulSet, so its name is
+  fixed): the workspace image running `sleep`, no service account token, a
+  Cilium policy that denies all traffic, and one retained volume per listed
+  provider (`<provider>-identity`, kept on `helm uninstall`;
+  `providerBroker.owner.existingClaims` adopts claims you already have);
+- `provider-broker`, the controller image in lease mode, allowed to reach only
+  the API server and the listed providers' token endpoints;
+- three admission policies: the broker may exec only into `owners-0` and its
+  `<provider>-login` pods (never attach or port-forward); the only pods it may
+  create are those login pods with the chart's template (workspace image, no
+  token, emptyDir only, no host access); and the controller may not create,
+  change, exec or delete anything in this namespace. Its only rights here are
+  `get` on `provider-leases` and calls to the sign-in API.
+
+The chart sets the controller's `PROVIDER_LEASES_SECRET` itself (leave
+`config.PROVIDER_LEASES_SECRET` empty) and creates default provider classes
+only for the listed providers.
+
+**Sign in** once per provider, and again whenever the broker log says a login
+needs renewal. There are two ways; both end in the same checked install into
+the owner (the broker validates the file, refuses a different Cursor account
+unless you choose to replace it, clears any interrupted renewal first, writes
+the file atomically and reads it back through the renewal path before saying done).
+
+1. **Console (Connect).** Open any sandbox, **Credentials**, *Your
+   subscription logins*, **Connect**. The broker starts a short-lived
+   `<provider>-login` pod (the workspace image, no service account token,
+   emptyDir volumes only, no login volume, network only to that provider's
+   sign-in hosts), runs the provider's own sign-in (`grok login
+   --device-auth`, `cursor-agent login`) and the console shows its link, plus
+   Grok's code. Approve in your browser; the broker copies the new login from
+   that pod into the owner and deletes the pod. One sign-in runs at a time and
+   each ends after 15 minutes. Only a signed-in OIDC operator can start one or
+   see its code. This gives Glovecell its own session, separate from any on
+   your machine. `providerBroker.consoleSignIn: false` turns this path off.
+2. **Copy from your machine.** If the provider's CLI is already signed in on
+   your computer:
+
+   ```sh
+   agent-project-controller provider import grok     # ~/.grok/auth.json
+   agent-project-controller provider import cursor   # ~/.config/cursor/auth.json
+   # --file PATH, --namespace <release namespace>-providers, --replace-account
+   ```
+
+   It checks the file locally, hands it to the broker as a one-shot Secret
+   `provider-import-<provider>` (with your own kubeconfig), waits for the
+   broker to install it (normally within 30 seconds) and removes the Secret
+   whether it worked or not. Nothing keeps running on your machine.
+   **Caveat:** your machine and Glovecell then share one sign-in session. If
+   the provider rotates its refresh token, whichever side renews first can sign
+   the other out: your local CLI asks you to sign in again, or the broker log
+   reports `credential owner renewal unavailable` and you import or Connect
+   again. Connect avoids this.
+
+The broker's sign-in API listens on 8443 inside the cluster. It accepts only
+the controller's ServiceAccount, through a projected token with its own
+audience checked by TokenReview (like the forge agent), and network policy
+admits only the controller's pod. The controller relays
+`GET/POST/DELETE /api/v1/provider-logins[/{provider}]` from the console and
+logs who started or canceled each sign-in.
+
+### By hand
+
 `config/samples/provider-broker.yaml` is a generic example: namespace,
 ServiceAccount, Roles, the broker Deployment and one owner pod. Replace the
 image digests and owner names, sign each provider in once with a temporary
