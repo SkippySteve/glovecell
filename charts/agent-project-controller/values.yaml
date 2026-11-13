@@ -136,6 +136,8 @@ accessGrants:
     lan: 24h
     package: 720h
 config:
+  # Opt into the lean runtime for repository clone init containers after qualification.
+  BOOTSTRAP_IMAGE_SOURCE: workspace
   # network-policy is experimental and requires independent dataplane qualification.
   NETWORK_PROVIDER: cilium
   NETWORK_POLICY_ENFORCEMENT_ACKNOWLEDGED: 'false'
@@ -210,6 +212,12 @@ config:
   # {"namespace": ..., "selector": {...}} naming the collector pods allowed to
   # scrape each cell's relay. Empty = off. Cilium provider only.
   CELL_TELEMETRY_SCRAPER_JSON: ''
+  # Platform floors (APC #106). Empty CSVs are inert. Deployment-specific
+  # hosts belong in the deployment repository, not upstream defaults.
+  PROXY_PLATFORM_DENY_ALWAYS: ''
+  PROXY_PLATFORM_ALLOW_ALWAYS: ''
+  PROXY_PLATFORM_PORTS: ''
+
   # Publish apc-*/project host audit assignments into ConfigMap
   # glovecell-audit-assignments (inert until true). Host sync/RBAC stay off
   # until a separate one-way enable in the deployment repository (#217).
@@ -432,6 +440,18 @@ orchestratorClasses:
   command:
     enabled: false
     name: command
+  # projects.agentwork.dev/herdr: herdr-core in the worker (docs/herdr.md).
+  # Requires herdrCore.enabled so the controller registers the adapter.
+  herdr:
+    enabled: false
+    name: herdr
+# herdr-core in Glovecell workers (docs/herdr.md). Off by default. When
+# enabled, workspaces with OrchestratorClass herdr run `hc server` and publish
+# a hub `--via` recipe ConfigMap. Phone/PC still use a hub herdr-core over
+# LAN/WireGuard; this does not open public SSH.
+herdrCore:
+  enabled: false
+  className: herdr
 # ProviderClass and ForgeClass (docs/classes.md). The chart generates the
 # defaults from the settings above, so an upgrade changes nothing: a ForgeClass
 # for the configured Forgejo (GIT_HOST=forgejo) and, when PROVIDER_LEASES_SECRET

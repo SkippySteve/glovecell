@@ -120,7 +120,7 @@ spec:
 | --- | --- | --- | --- |
 | `orca` | `OrcaRuntime` | `OrcaEnroller` | Implemented; phone relay needs Orca desktop (or #40040) |
 | `t3` | `T3Runtime` | `T3Enroller` | Stub; candidate `t3 environment link` |
-| `herdr` | `HerdrRuntime` | — | Stub; no pairing API yet |
+| `herdr` | `HerdrRuntime` | — | Unused here; use herdr-core + `herdr-via` ([herdr.md](herdr.md)) |
 
 ## Local spike
 

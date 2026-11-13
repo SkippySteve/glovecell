@@ -63,7 +63,10 @@ func (r *Reconciler) policyConfiguration(ctx context.Context, w *api.ProjectWork
 			return proxy.Config{}, errors.New("a project's HTTPS rules cannot carry a source label; reference rules come from the controller")
 		}
 	}
-	cfg := proxy.Config{Rules: append(append([]api.HTTPSRule{}, rules...), https...), PrivateHosts: private, PrivateGitHubRepositories: privateGitHub}
+	if err := proxy.ProjectRulesConflictWithDeny(r.Config.PlatformFloors, https); err != nil {
+		return proxy.Config{}, err
+	}
+	cfg := proxy.Config{Rules: append(append([]api.HTTPSRule{}, rules...), https...), PrivateHosts: private, PrivateGitHubRepositories: privateGitHub, Platform: r.Config.PlatformFloors}
 	cfg.IndependentCodex = r.IndependentCodexWorkspaceUID != "" && r.IndependentCodexWorkspaceUID == string(w.UID)
 	if cfg.IndependentCodex {
 		cfg.BrokeredProviders = true
