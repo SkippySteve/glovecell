@@ -723,6 +723,7 @@ func Run(ctx context.Context) error {
 		}
 	}
 	if s.health != nil {
+		s.health.requireConfiguredInputs(cfg)
 		s.health.pinned["/policy/policy.json"] = sha256.Sum256(raw)
 		s.health.pinned["/tls/ca.crt"] = sha256.Sum256(cert)
 		s.health.pinned["/tls/ca.key"] = sha256.Sum256(key)
@@ -742,12 +743,12 @@ func Run(ctx context.Context) error {
 		s.health.startControl()
 		if !s.health.check() {
 			_ = listener.Close()
-			return errors.New("proxy recovery required")
+			return s.health.quarantineError()
 		}
 	}
 	go func() {
 		defer func() {
-			if s.health != nil {
+			if s.health != nil && ctx.Err() == nil {
 				s.health.stopControl()
 			}
 		}()
@@ -762,7 +763,11 @@ func Run(ctx context.Context) error {
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
-					s.runtimeReady()
+					if !s.runtimeReady() {
+						_ = server.Close()
+						_ = control.Close()
+						return
+					}
 				}
 			}
 		}()
@@ -770,6 +775,9 @@ func Run(ctx context.Context) error {
 
 	go func() { <-ctx.Done(); _ = server.Close(); _ = control.Close() }()
 	e = server.ListenAndServe()
+	if s.health != nil && s.health.reasonCode() != "" {
+		return s.health.quarantineError()
+	}
 	if errors.Is(e, http.ErrServerClosed) {
 		return nil
 	}

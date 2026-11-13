@@ -136,6 +136,8 @@ accessGrants:
     lan: 24h
     package: 720h
 config:
+  # Runtime failure quarantine and exec readiness, off until disposable qualification.
+  PROXY_RUNTIME_GUARD_ENABLED: 'false'
   # Opt into the lean runtime for repository clone init containers after qualification.
   BOOTSTRAP_IMAGE_SOURCE: workspace
   # network-policy is experimental and requires independent dataplane qualification.

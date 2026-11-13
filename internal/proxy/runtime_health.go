@@ -20,15 +20,16 @@ import (
 // live on a pod-scoped volume, not a container filesystem or persistent PVC.
 // Only replacement of the pod may clear a quarantine.
 type runtimeHealth struct {
-	mu          sync.Mutex
-	dir, marker string
-	pinned      map[string][32]byte
-	seen        map[string]bool
-	reason      string
-	control     bool
-	connections map[net.Conn]bool
-	ctx         context.Context
-	cancel      context.CancelFunc
+	mu           sync.Mutex
+	dir, marker  string
+	pinned       map[string][32]byte
+	seen         map[string]bool
+	activePolicy bool
+	reason       string
+	control      bool
+	connections  map[net.Conn]bool
+	ctx          context.Context
+	cancel       context.CancelFunc
 }
 
 func newRuntimeHealth(policyDir, tlsDir, stateDir string) (*runtimeHealth, error) {
@@ -126,6 +127,11 @@ func (h *runtimeHealth) check() bool {
 	if !h.control {
 		return false
 	}
+	marker, err := os.ReadFile(h.marker)
+	if err != nil || string(marker) != "armed\n" {
+		h.quarantineLocked("runtime-state-invalid")
+		return false
+	}
 	for path, digest := range h.pinned {
 		raw, err := os.ReadFile(path)
 		if err != nil || sha256.Sum256(raw) != digest {
@@ -150,7 +156,14 @@ func (h *runtimeHealth) check() bool {
 		case BrokeredProviderKey:
 			_, err = ParseBrokeredProviders(raw)
 		case GitHubPolicyKey:
-			_, err = githubpolicy.Parse(raw)
+			var policy *githubpolicy.Policy
+			policy, err = githubpolicy.Parse(raw)
+			if err == nil && policy != nil {
+				h.activePolicy = true
+			}
+			if err == nil && policy == nil && h.activePolicy {
+				err = errors.New("active GitHub policy disappeared")
+			}
 		case GitHubAccessKey:
 			_, err = ParseGitHubLease(raw)
 		default:
@@ -200,4 +213,29 @@ func ReadyCLI(ctx context.Context) error {
 		return errors.New("proxy recovery required")
 	}
 	return nil
+}
+
+// Quarantine messages use a closed reason-code vocabulary, never file contents.
+func (h *runtimeHealth) reasonCode() string { h.mu.Lock(); defer h.mu.Unlock(); return h.reason }
+func (h *runtimeHealth) quarantineError() error {
+	reason := h.reasonCode()
+	if reason == "" {
+		reason = "runtime-health-unavailable"
+	}
+	_ = os.WriteFile("/dev/termination-log", []byte("proxy-quarantine:"+reason+"\n"), 0600)
+	return errors.New("proxy recovery required: " + reason)
+}
+
+// Inputs that are part of the loaded route configuration must be readable on
+// first readiness, not just after the first successful read.
+func (h *runtimeHealth) requireConfiguredInputs(c Config) {
+	if c.BrokeredProviders {
+		h.seen["provider-access"] = true
+	}
+	if c.MuseSubscriptionGateway {
+		h.seen["muse-subscription-key"] = true
+	}
+	if len(c.PrivateGitHubRepositories) > 0 {
+		h.seen["github-token"] = true
+	}
 }
