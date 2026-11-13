@@ -8,7 +8,7 @@ with the service that owns them; no worker or credential migration is required.
 
 ## Instant web access
 
-When sandbox-control is mounted, the Sandboxes page starts with a **Web access**
+When sandbox-control is mounted, Home and the Sandboxes page show a **Web access**
 panel. **Open all** lets every enrolled sandbox-control workspace reach any
 public HTTP or HTTPS destination for the chosen window (15 minutes to 24
 hours). **Lock all** returns them to their approved requests. Each row also has
@@ -31,26 +31,103 @@ paused, as described below.
 The UI is a React app built with OpenUI components (`@openuidev/react-ui`) in
 `web/`. `npm ci && npm run build` there writes `internal/web/dist`, which the
 Go binary embeds; the container build regenerates it from the lockfile.
-Dependencies are pinned exactly. The OpenUI theme tokens are generated into
-static CSS because the console's CSP forbids injected styles, and dark mode
-follows the operating system.
+Dependencies are pinned exactly. The theme is generated into static CSS
+(`web/scripts/theme-css.mjs` writes `web/src/theme.css`) because the console's
+CSP forbids injected styles.
+
+### Theme
+
+The console is dark by default. The switcher at the right of the header picks
+**Dark**, **Light** or **System** (follows the operating system) and keeps the
+choice in the browser's local storage (`console-theme`). It sets
+`<html data-theme>`; `web/public/assets/theme-init.js`, a separate same-origin
+file because the CSP allows no inline script, applies the saved choice before
+the first paint so the page never flashes the other theme.
+
+`theme-css.mjs` holds the palette for both themes, re-derives every OpenUI
+variable from it and adds the console's own `--console-*` tokens (surfaces,
+text, accent, ok/warn/danger/info/neutral status colours, focus ring, type
+scale, spacing, radii, control sizes and motion). The build fails if any
+checked text, status, focus or control-border pair falls below WCAG AA in
+either theme; `node scripts/theme-css.mjs --check` prints every ratio.
+`web/src/base.css` styles the base elements and the shared OpenUI primitives
+(buttons, inputs, tables, tags, cards, callouts, tabs) once for every page,
+with a visible focus ring and no motion under `prefers-reduced-motion`. Page
+stylesheets use only these tokens and never their own colour values or
+`prefers-color-scheme` queries.
+
+### Navigation
+
+Every page shares one shell. The top bar holds the brand, a **Search or jump
+to** button, the theme switcher and Sign out. On desktop a sidebar lists
+**Home**, **Needs attention** (with the inbox's count of what waits on you,
+shown in the danger colour when something needs action now),
+**Sandboxes** and **Projects** with each workspace under them (counts of what
+waits on you, a **LAN** badge while LAN access is open, and the state of a
+stopped or paused one), then **Runs**, **Orca projects** and **New sandbox**.
+Under the workspace on screen it lists that workspace's sections. Below 60rem
+the sidebar becomes a menu behind the **Menu** button. Breadcrumbs above each
+page lead back, for example Home / Sandboxes / orca-pilot / Internet.
+
+**Ctrl-K** (**⌘K** on a Mac), or the search button, opens a command palette.
+Type part of a page, workspace or section name, or a word for a section
+(`egress`, `upload`, `audit`, `ssh`), in any order: `orca-pilot internet`
+goes straight to that sandbox's Internet section. Arrow keys move, Enter opens,
+Esc closes and returns focus. With nothing typed it lists recent picks, the
+sections of the workspace on screen, pages and workspaces. The palette only
+navigates; it holds no action that changes a sandbox.
+
+**Home** shows every sandbox and project at a glance: how many run, how many are
+open or learning on the web, how many requests wait on you and how many need
+attention (each also a filter), the Web access panel, and a table with state,
+access, what waits on you and the last recorded activity. A text filter, kind,
+state and sort order (most urgent, name, running first, widest access, recent
+activity) are kept in the address (`#/?q=…&show=…&sort=…`). Access shows each
+workspace's access level (Locked, Ask, Standard, Open with its countdown, or
+Custom; **Fixed policy** for sandboxes without learning egress). Levels come
+from `accessLevel()`, read from each sandbox's own web rules and approvals and
+each project's AccessProfile; until those are read a closed sandbox shows
+**Closed**. Recent activity
+merges policy revisions (including start and stop) and LAN grant history for
+sandboxes and the audit trail for projects. `#/sandboxes` and `#/projects` are
+the same view for one kind. Home's Access column, a sandbox's Overview and the
+command palette (which also finds workspaces by level, e.g. `standard`) name
+access through `web/src/access/summary.ts`, so they match the Internet page.
+
+**Needs attention** (`#/attention`) collects everything across sandboxes,
+projects and runs that waits on you, most urgent first: **Act now** (errors,
+agents that report being blocked, and grants ending within 15 minutes),
+**Waiting on your decision** (requests, packages, previews, dev links and run
+decisions), **Failed or stuck runs** (from the last 3 days) and **Open access**
+(grants that end on their own). A kind filter is kept in the address
+(`?show=approvals|blocked|grants|errors|runs`). The inbox and the sidebar badge
+share one poller that reads the existing APIs every 30 seconds while the tab is
+visible; open access that is not ending soon is listed but not counted.
 
 ### Sandbox workspace view
 
-Opening a sandbox shows one workspace at a time. A sidebar lists every
-workspace (sandbox-control sandboxes and console projects, with counts of what
-waits on you and a **LAN** badge while LAN access is open) and the sections of
-the current one: **Overview**, **Internet**, **LAN devices**, **Packages**,
-**Files**, **Previews & dev links**, **Credentials**, **History**, plus **Runs** and
-**Settings** for sandbox-control sandboxes. A sticky header shows the workspace
-state, its pod, and every open grant with a countdown: web access (with Lock),
-each LAN grant (with Restrict) and live dev links. On narrow screens the sidebar
-becomes a workspace picker and a row of section links, and the header scrolls
-away.
+Opening a sandbox shows one workspace at a time. Its sections are
+**Overview**, **Internet**, **LAN devices**, **Packages**, **Files**,
+**Previews & dev links**, **Credentials**, **History**, plus **Runs** and
+**Settings** for sandbox-control sandboxes; the sidebar lists them with badges
+for what waits on you. A sticky header shows the workspace state, its pod, and
+every open grant with a countdown: web access (with Lock), each LAN grant (with
+Restrict) and live dev links. On narrow screens a row of section links stays
+at the top of the page and the header scrolls away.
+
+**Previews & dev links** opens with one list of everything the sandbox serves:
+each dev link and detected server with its status (pending approval, serving,
+approved but not serving, stale, or inactive), its address with **Copy**, an
+**Open** button for links that are serving, and when sandbox-control last saw
+or scanned it. The list refreshes every 30 seconds (every 5 while a scan runs).
+Decisions stay in the cards below it. **Open browser session** is shown
+disabled with its reason: no console view of a sandbox's page exists yet.
+**Settings** groups the policy (revisions and profiles), shared services, and
+links to the sections where each kind of access is changed.
 
 Routes are `#/sandboxes/<id>/<section>` and `#/projects/<name>/<section>`. The
-earlier tab names (`access`, `devlinks`, `activity`, `repositories`) still land
-on the matching section.
+earlier tab names (`access`, `devlinks`, `activity`, `repositories`), and
+`files`, `uploads` and `web`, still land on the matching section.
 
 Each section reads its data through one module in
 `web/src/workspace/sources/` (`internet.ts`, `lan.ts`, `packages.ts`,

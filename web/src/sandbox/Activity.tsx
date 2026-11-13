@@ -2,6 +2,7 @@ import {useCallback, useEffect, useState} from 'react';
 import {sandboxActivity, sandboxReports, type Activity, type ActivityItem, type AgentReport} from '../api';
 import {plainText, reportKind, REASON_LIMIT, RESOURCE_LIMIT} from '../orca';
 import {Button, Callout, Card, CardHeader, Tag, ToggleGroup, ToggleItem} from '../ui';
+import {reportTime} from '../workspace/sources/reports';
 import type {SandboxContext} from './Sandbox';
 
 const WINDOWS: [string, string][] = [['5', '5 min'], ['15', '15 min'], ['30', '30 min'], ['60', '1 hour']];
@@ -29,10 +30,10 @@ function Report({report, dismiss}: {report: AgentReport; dismiss: (report: Agent
   const reason = plainText(report.reason, REASON_LIMIT);
   return (
     <li className="activity-item" data-report={report.id}>
-      <div className="activity-heading"><strong>{reportKind(report.kind)}</strong><Tag size="sm" variant="warning" text="Agent blocked" /><time>{plainText(report.last, 40)}</time></div>
+      <div className="activity-heading"><strong>{reportKind(report.kind)}</strong><Tag size="sm" variant="warning" text="Agent blocked" /><time dateTime={plainText(report.last, 40)}>{reportTime(report.last)}</time></div>
       <p className="request-target"><code>{plainText(report.resource, RESOURCE_LIMIT)}</code></p>
       {reason ? <blockquote className="agent-reason">{reason}</blockquote> : null}
-      <p className="subtle">{report.count > 1 ? `Reported ${report.count.toLocaleString()} times since ${plainText(report.first, 40)}. ` : ''}Written by the agent; it cannot approve anything. Grant access on the Web access tab or in Access if it is needed.</p>
+      <p className="subtle">{report.count > 1 ? `Reported ${report.count.toLocaleString()} times since ${reportTime(report.first)}. ` : ''}Written by the agent; it cannot approve anything. Grant access on the Internet or LAN devices page if it is needed.</p>
       <div><Button size="small" variant="secondary" disabled={busy} onClick={async () => { setBusy(true); await dismiss(report); setBusy(false); }}>Dismiss</Button></div>
     </li>
   );
@@ -68,8 +69,8 @@ export function ActivityTab({detail, act}: SandboxContext) {
           </ToggleGroup></div>
         <div className="actions">
           <Button variant="secondary" size="small" disabled={loading} onClick={load}>{loading ? 'Loading…' : 'Refresh'}</Button>
-          {data?.links.grafana ? <a className="link-button" href={data.links.grafana} target="_blank" rel="noopener noreferrer">Grafana ↗</a> : null}
-          {data?.links.openlit ? <a className="link-button" href={data.links.openlit} target="_blank" rel="noopener noreferrer">OpenLIT ↗</a> : null}
+          {data?.links.grafana ? <a className="link-button" href={data.links.grafana} target="_blank" rel="noopener noreferrer">Grafana<span className="visually-hidden"> (opens in a new tab)</span></a> : null}
+          {data?.links.openlit ? <a className="link-button" href={data.links.openlit} target="_blank" rel="noopener noreferrer">OpenLIT<span className="visually-hidden"> (opens in a new tab)</span></a> : null}
         </div>
       </div>
       {reportError ? <Callout variant="danger" title="Agent reports unavailable" description={reportError} /> : null}

@@ -60,25 +60,25 @@ var errHelperEnded = errors.New("the sandbox helper ended")
 
 // Upload is the console's view of one upload.
 type Upload struct {
-	ID             string     `json:"id"`
-	Workspace      string     `json:"workspace"`
-	Name           string     `json:"name"`
-	Destination    string     `json:"destination"`
-	Size           int64      `json:"size"`
-	Received       int64      `json:"received"`
-	Written        int64      `json:"written"`
-	Overwrite      bool       `json:"overwrite"`
-	ExpectedSHA256 string     `json:"expectedSha256,omitempty"`
-	SHA256         string     `json:"sha256,omitempty"`
-	Path           string     `json:"path,omitempty"`
-	State          string     `json:"state"` // starting, receiving, finishing, done, failed, cancelled
-	Code           string     `json:"code,omitempty"`
-	Error          string     `json:"error,omitempty"`
-	ChunkBytes     int64      `json:"chunkBytes"`
-	MaxBytes       int64      `json:"maxBytes"`
-	RequestedBy    string     `json:"requestedBy"`
-	Started        time.Time  `json:"started"`
-	Finished       *time.Time `json:"finished,omitempty"`
+	ID             string      `json:"id"`
+	Workspace      string      `json:"workspace"`
+	Name           string      `json:"name"`
+	Destination    string      `json:"destination"`
+	Size           int64       `json:"size"`
+	Received       int64       `json:"received"`
+	Written        int64       `json:"written"`
+	Overwrite      bool        `json:"overwrite"`
+	ExpectedSHA256 string      `json:"expectedSha256,omitempty"`
+	SHA256         string      `json:"sha256,omitempty"`
+	Path           string      `json:"path,omitempty"`
+	State          uploadState `json:"state"`
+	Code           string      `json:"code,omitempty"`
+	Error          string      `json:"error,omitempty"`
+	ChunkBytes     int64       `json:"chunkBytes"`
+	MaxBytes       int64       `json:"maxBytes"`
+	RequestedBy    string      `json:"requestedBy"`
+	Started        time.Time   `json:"started"`
+	Finished       *time.Time  `json:"finished,omitempty"`
 }
 
 type uploadRecord struct {
@@ -182,7 +182,7 @@ func (s *Server) startUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rec := &uploadRecord{uid: t.uid, ready: make(chan struct{}), ended: make(chan struct{}), Upload: Upload{ID: id, Workspace: t.obj.Name, Name: displayName(req.Name, req.Destination),
-		Destination: req.Destination, Size: req.Size, Overwrite: req.Overwrite, ExpectedSHA256: sha, State: "starting", ChunkBytes: UploadChunkBytes, MaxBytes: d.MaxBytes, RequestedBy: actor, Started: d.now()}}
+		Destination: req.Destination, Size: req.Size, Overwrite: req.Overwrite, ExpectedSHA256: sha, State: uploadStarting, ChunkBytes: UploadChunkBytes, MaxBytes: d.MaxBytes, RequestedBy: actor, Started: d.now()}}
 	if err := s.uploadAudit(r.Context(), t.obj, "upload-requested", rec); err != nil {
 		d.release(t.uid, id)
 		slog.ErrorContext(r.Context(), "upload refused: audit record failed", "workspace_uid", t.uid, "error", err.Error())
@@ -209,10 +209,10 @@ func (s *Server) startUpload(w http.ResponseWriter, r *http.Request) {
 		<-rec.ended
 	}
 	view := d.uploadView(rec)
-	if view.State == "receiving" && view.Size == 0 {
+	if view.State == uploadReceiving && view.Size == 0 {
 		view = d.finishUpload(rec)
 	}
-	if view.State == "failed" || view.State == "cancelled" {
+	if view.State == uploadFailed || view.State == uploadCancelled {
 		http.Error(w, view.Error, uploadErrorStatus(view.Code))
 		return
 	}
@@ -252,7 +252,7 @@ func (d *Downloads) runUpload(ctx context.Context, s *Server, t *target, rec *up
 			switch e.Event {
 			case "ready":
 				d.mu.Lock()
-				rec.State, rec.Path = "receiving", e.Path
+				rec.State, rec.Path = rec.State.to(uploadReceiving), e.Path
 				d.mu.Unlock()
 				rec.markReady()
 			case "progress":
@@ -280,19 +280,19 @@ func (d *Downloads) runUpload(ctx context.Context, s *Server, t *target, rec *up
 	rec.Finished = &now
 	switch {
 	case final.Event == "done":
-		rec.State, rec.Written, rec.SHA256, rec.Path = "done", final.Bytes, final.SHA256, final.Path
+		rec.State, rec.Written, rec.SHA256, rec.Path = rec.State.to(uploadDone), final.Bytes, final.SHA256, final.Path
 	case rec.aborted != "":
-		rec.State, rec.Code, rec.Error = "cancelled", download.CodeCancelled, rec.aborted+"; nothing was kept"
+		rec.State, rec.Code, rec.Error = rec.State.to(uploadCancelled), download.CodeCancelled, rec.aborted+"; nothing was kept"
 	case final.Event == "error":
-		rec.State, rec.Code, rec.Error = "failed", final.Code, helperMessage(final)
+		rec.State, rec.Code, rec.Error = rec.State.to(uploadFailed), final.Code, helperMessage(final)
 	case strings.Contains(stderr.String(), "unknown command"):
-		rec.State, rec.Code, rec.Error = "failed", CodeTooOld, "image too old: this sandbox's workspace image predates uploads; it gets the upload helper when the project restarts on the updated image"
+		rec.State, rec.Code, rec.Error = rec.State.to(uploadFailed), CodeTooOld, "image too old: this sandbox's workspace image predates uploads; it gets the upload helper when the project restarts on the updated image"
 	case ctx.Err() != nil:
-		rec.State, rec.Code, rec.Error = "cancelled", download.CodeCancelled, "the upload timed out; nothing was kept"
+		rec.State, rec.Code, rec.Error = rec.State.to(uploadCancelled), download.CodeCancelled, "the upload timed out; nothing was kept"
 	case execErr != nil:
-		rec.State, rec.Code, rec.Error = "failed", "exec", "could not run the upload helper in the sandbox"
+		rec.State, rec.Code, rec.Error = rec.State.to(uploadFailed), "exec", "could not run the upload helper in the sandbox"
 	default:
-		rec.State, rec.Code, rec.Error = "failed", "exec", "the sandbox helper ended without a result"
+		rec.State, rec.Code, rec.Error = rec.State.to(uploadFailed), "exec", "the sandbox helper ended without a result"
 	}
 	d.mu.Unlock()
 	// Free the sandbox for the next operation before anyone sees the result.
@@ -314,7 +314,7 @@ func (d *Downloads) watchIdle(rec *uploadRecord, stop <-chan struct{}) {
 			return
 		case <-tick.C:
 			d.mu.Lock()
-			idle := rec.State == "receiving" && d.now().Sub(rec.lastData) > uploadIdle
+			idle := rec.State == uploadReceiving && d.now().Sub(rec.lastData) > uploadIdle
 			d.mu.Unlock()
 			if idle && rec.chunk.TryLock() {
 				rec.chunk.Unlock()
@@ -340,7 +340,7 @@ func (d *Downloads) abortUpload(rec *uploadRecord, reason string) {
 // finishUpload closes stdin after the last byte and waits for the helper's result.
 func (d *Downloads) finishUpload(rec *uploadRecord) Upload {
 	d.mu.Lock()
-	rec.State = "finishing"
+	rec.State = rec.State.to(uploadFinishing)
 	d.mu.Unlock()
 	rec.stdin.Close()
 	select {
@@ -382,8 +382,8 @@ func (s *Server) uploadData(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rec.chunk.Unlock()
 	view := d.uploadView(rec)
-	if view.State != "receiving" {
-		msg := "the upload is " + view.State
+	if view.State != uploadReceiving {
+		msg := "the upload is " + string(view.State)
 		if view.Error != "" {
 			msg = view.Error
 		}
@@ -418,7 +418,7 @@ func (s *Server) uploadData(w http.ResponseWriter, r *http.Request) {
 	}
 	if received == view.Size {
 		view = d.finishUpload(rec)
-		if view.State != "done" {
+		if view.State != uploadDone {
 			msg := view.Error
 			if msg == "" {
 				msg = "the sandbox is still finishing the file; check the upload list"
@@ -489,7 +489,7 @@ func (s *Server) uploadAudit(ctx context.Context, obj *api.ProjectWorkspace, act
 	}
 	msg := fmt.Sprintf("Upload into sandbox requested by %s: %s (%d bytes) to %s", u.RequestedBy, u.Name, u.Size, u.Destination)
 	if action == "upload-finished" {
-		data["outcome"], data["bytes"] = u.State, strconv.FormatInt(u.Written, 10)
+		data["outcome"], data["bytes"] = string(u.State), strconv.FormatInt(u.Written, 10)
 		if u.SHA256 != "" {
 			data["sha256"] = u.SHA256
 		}
@@ -497,7 +497,7 @@ func (s *Server) uploadAudit(ctx context.Context, obj *api.ProjectWorkspace, act
 			data["error"] = u.Error
 		}
 		msg = fmt.Sprintf("Upload %s: %s to %s", u.State, u.Name, u.Destination)
-		if u.State == "done" {
+		if u.State == uploadDone {
 			msg += fmt.Sprintf(" (%d bytes, sha256 %s)", u.Written, u.SHA256)
 		} else if u.Error != "" {
 			msg += " (" + u.Error + ")"

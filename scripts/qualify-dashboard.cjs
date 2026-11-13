@@ -101,7 +101,7 @@ const {chromium} = require(process.env.PLAYWRIGHT_MODULE_PATH || 'playwright');
     await page.getByText('Approve web requests on the Access tab').waitFor();
     await page.getByText('4 blocked observations since Oct 19, 17:31:02 UTC').waitFor();
     await page.getByText('212.0 MiB memory in use').waitFor();
-    await page.getByRole('list', {name: 'History'}).getByText('LAN access restricted · 192.168.50.20').waitFor();
+    await page.getByRole('list', {name: 'History'}).getByText('LAN access restricted: 192.168.50.20').waitFor();
     await section('Packages');
     await page.getByText('Allowed package lists and package-policy blocks: not available yet').waitFor();
     await section('Credentials');

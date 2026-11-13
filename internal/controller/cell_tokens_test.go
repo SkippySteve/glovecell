@@ -15,11 +15,11 @@ func TestParseCellTokenProviders(t *testing.T) {
 	if got, err := ParseCellTokenProviders(""); err != nil || got != nil {
 		t.Fatal("empty setting", got, err)
 	}
-	got, err := ParseCellTokenProviders(" grok, cursor ,")
-	if err != nil || !got["grok"] || !got["cursor"] || len(got) != 2 {
+	got, err := ParseCellTokenProviders(" grok, cursor ,codex,claude")
+	if err != nil || !got["grok"] || !got["cursor"] || !got["codex"] || !got["claude"] || len(got) != 4 {
 		t.Fatal(got, err)
 	}
-	for _, bad := range []string{"codex", "muse", "grok,openai"} {
+	for _, bad := range []string{"gemini", "muse", "grok,openai"} {
 		if _, err := ParseCellTokenProviders(bad); err == nil {
 			t.Fatal("accepted", bad)
 		}

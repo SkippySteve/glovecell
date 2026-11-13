@@ -71,11 +71,11 @@ other owners renew. Disabled grants stay disabled after broker restarts. Renewal
 must retain the enrolled Codex account and Cursor subject. The publisher does
 not renew Muse's subscription credential or replay coding tasks.
 
-For Grok and Cursor in more than one project, use lease mode instead: the
-broker publishes one lease per provider to its own Secret, and the controller
-copies it only into projects that opt in with `spec.providers`. See
-[brokered providers](brokered-providers.md). The single-workspace mode below
-remains for Codex.
+For more than one project, use lease mode instead (Grok, Cursor, Codex and
+Claude): the broker publishes one lease per provider to its own Secret, and
+the controller copies it only into projects that opt in with `spec.providers`.
+See [brokered providers](brokered-providers.md). The single-workspace mode
+below is the older Codex path.
 
 Bind this broker to a specific ProjectWorkspace UID. Give its ServiceAccount
 only reads of that workspace, get/patch of its model-access projection and

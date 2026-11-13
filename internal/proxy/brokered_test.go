@@ -154,7 +154,7 @@ func TestBrokeredCursorKeepsAccountRoutesClosed(t *testing.T) {
 }
 
 func TestParseBrokeredProviders(t *testing.T) {
-	for raw, ok := range map[string]bool{"": true, "grok": true, "cursor,grok": true, "grok,grok": false, "codex": false, "grok,": false, " grok ": true} {
+	for raw, ok := range map[string]bool{"": true, "grok": true, "cursor,grok": true, "grok,grok": false, "codex,claude": true, "gemini": false, "grok,": false, " grok ": true} {
 		if _, err := ParseBrokeredProviders([]byte(raw)); (err == nil) != ok {
 			t.Error(raw, err)
 		}

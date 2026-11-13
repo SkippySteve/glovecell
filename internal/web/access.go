@@ -75,7 +75,7 @@ func (s *Server) changeAccess(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "project changed; refresh before retrying", 409)
 		return
 	}
-	if !obj.DeletionTimestamp.IsZero() || obj.Spec.DesiredState != "Paused" || obj.Status.Phase != "Paused" || obj.Status.ObservedGeneration != obj.Generation {
+	if !obj.DeletionTimestamp.IsZero() || obj.Spec.DesiredState != api.DesiredPaused || !obj.Settled(api.PhasePaused) {
 		http.Error(w, "pause the project and wait for Paused before editing access", 409)
 		return
 	}

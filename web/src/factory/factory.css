@@ -29,5 +29,3 @@
 .factory-gate-actions { display: flex; flex-wrap: wrap; gap: var(--openui-space-s); }
 .factory-confirm { gap: var(--openui-space-s); border-color: var(--openui-border-accent-emphasis); }
 .factory-confirm .copy-field code { white-space: pre-wrap; overflow-wrap: anywhere; }
-.console-nav-link { color: var(--openui-text-neutral-secondary); text-decoration: none; font: var(--openui-text-body-sm); }
-.console-nav-link:hover { color: var(--openui-text-neutral-primary); }

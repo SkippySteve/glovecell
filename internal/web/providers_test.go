@@ -53,7 +53,7 @@ func TestProviderEnableAndRevokeByOIDCOperator(t *testing.T) {
 	if code := e.enable(t, "grok"); code != 409 {
 		t.Fatal("duplicate opt-in accepted", code)
 	}
-	if code := e.enable(t, "codex"); code != 400 {
+	if code := e.enable(t, "gemini"); code != 400 {
 		t.Fatal("unreviewed provider accepted", code)
 	}
 	if got := e.audits(t, "provider-enabled"); len(got) != 1 || got[0]["provider"] != "grok" || got[0]["actor"] != "https://auth.example.com#steve" {
@@ -113,7 +113,7 @@ func TestProviderLeaseStatusHasNoTokens(t *testing.T) {
 		t.Fatal(leases)
 	}
 	session := e.do("GET", "/api/v1/session", "")
-	if !strings.Contains(session.Body.String(), `"providers":["grok","cursor"]`) {
+	if !strings.Contains(session.Body.String(), `"providers":["grok","cursor","codex","claude"]`) {
 		t.Fatal("session does not advertise providers", session.Body.String())
 	}
 }

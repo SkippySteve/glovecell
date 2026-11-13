@@ -32,7 +32,7 @@ func SyncRegisterAdapter(ledger *Ledger, a Adapter, binary, mountPath, title str
 	if existing, ok := ledger.Clients[kind]; ok && existing.State == StateRegistered && existing.Path == mountPath && existing.ID != "" {
 		return nil
 	}
-	if err := ledger.SetClient(kind, StatePending, "", mountPath); err != nil {
+	if err := ledger.Move(kind, StatePending, "", mountPath); err != nil {
 		return err
 	}
 	plan, err := a.RegisterPlan(binary, mountPath, title)
@@ -48,7 +48,7 @@ func SyncRegisterAdapter(ledger *Ledger, a Adapter, binary, mountPath, title str
 		// Keep a stable revoke handle when the tool reports already-present without an id.
 		id = mountPath
 	}
-	return ledger.SetClient(kind, StateRegistered, id, mountPath)
+	return ledger.Move(kind, StateRegistered, id, mountPath)
 }
 
 // SyncRevoke runs revoke and records revoked on success (including already gone).
@@ -71,7 +71,7 @@ func SyncRevokeAdapter(ledger *Ledger, a Adapter, binary string, run Runner) err
 	kind := a.Kind()
 	rec := ledger.Clients[kind]
 	if rec.State == StateAbsent || rec.State == StateRevoked {
-		return ledger.SetClient(kind, StateRevoked, rec.ID, rec.Path)
+		return ledger.Move(kind, StateRevoked, rec.ID, rec.Path)
 	}
 	id := rec.ID
 	if id == "" {
@@ -80,7 +80,7 @@ func SyncRevokeAdapter(ledger *Ledger, a Adapter, binary string, run Runner) err
 	if strings.TrimSpace(id) == "" {
 		return fmt.Errorf("client %q has no registration id", kind)
 	}
-	if err := ledger.SetClient(kind, StatePending, id, rec.Path); err != nil {
+	if err := ledger.Move(kind, StatePending, id, rec.Path); err != nil {
 		return err
 	}
 	plan, err := a.RevokePlan(binary, id)
@@ -91,5 +91,5 @@ func SyncRevokeAdapter(ledger *Ledger, a Adapter, binary string, run Runner) err
 	if err := a.ParseRevoke(stdout, stderr, runErr); err != nil {
 		return err
 	}
-	return ledger.SetClient(kind, StateRevoked, id, rec.Path)
+	return ledger.Move(kind, StateRevoked, id, rec.Path)
 }

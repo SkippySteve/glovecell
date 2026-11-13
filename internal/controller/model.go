@@ -73,7 +73,7 @@ func validateProviderAccess(raw []byte) error {
 		return errors.New("invalid provider grant document")
 	}
 	for provider, value := range values {
-		if provider != "codex" && provider != "grok" && provider != "cursor" && provider != "muse" {
+		if provider != "codex" && provider != "grok" && provider != "cursor" && provider != "muse" && provider != "claude" {
 			return errors.New("unreviewed provider grant")
 		}
 		if !value.Enabled {
@@ -99,6 +99,9 @@ func validateProviderAccess(raw []byte) error {
 		if provider == "grok" && value.Access.Issuer != "https://auth.x.ai" || provider != "grok" && value.Access.Issuer != "" {
 			return errors.New("invalid provider issuer")
 		}
+		if provider == "claude" && !strings.HasPrefix(value.Access.Token, "sk-ant-oat01-") {
+			return errors.New("invalid Claude subscription token")
+		}
 		if provider == "muse" && value.Access.Token != "apc-muse-subscription-gateway" {
 			return errors.New("Muse subscription credential must remain at its trusted gateway")
 		}
@@ -119,9 +122,11 @@ func independentCodex(data map[string][]byte) bool {
 }
 
 // brokeredOnly reports a Secret that carries only access-only provider grants
-// (for example the controller's brokered Grok and Cursor leases) and no Codex
-// grant. It has no whole-worker expiry: each provider entry expires on its own
-// at the launcher and the gateway, and its removal never stops the project.
+// (the controller's brokered leases, Codex included). It has no whole-worker
+// expiry: each provider entry expires on its own at the launcher and the
+// gateway, and its removal never stops the project. Operator Codex grants
+// always carry the access-token, account and expiry keys as well, so they
+// never look brokered.
 func brokeredOnly(data map[string][]byte) bool {
 	if len(data) != 1 || len(data["provider-access"]) == 0 {
 		return false
@@ -130,6 +135,5 @@ func brokeredOnly(data map[string][]byte) bool {
 	if json.Unmarshal(data["provider-access"], &grants) != nil {
 		return false
 	}
-	_, codex := grants["codex"]
-	return !codex
+	return grants != nil
 }

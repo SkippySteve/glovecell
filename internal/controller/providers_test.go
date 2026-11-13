@@ -26,6 +26,8 @@ func leaseDoc(t *testing.T, expires time.Time) []byte {
 	raw, err := json.Marshal(map[string]any{
 		"grok":   map[string]any{"enabled": true, "access": map[string]any{"accessToken": "grok-lease", "expiresAt": expires.Unix(), "issuer": "https://auth.x.ai"}},
 		"cursor": map[string]any{"enabled": true, "access": map[string]any{"accessToken": "cursor-lease", "expiresAt": expires.Unix()}},
+		"codex":  map[string]any{"enabled": true, "access": map[string]any{"accessToken": "codex-lease", "expiresAt": expires.Unix(), "chatgptAccountId": "acct-1", "chatgptPlanType": "pro"}},
+		"claude": map[string]any{"enabled": true, "access": map[string]any{"accessToken": "sk-ant-oat01-claude-lease", "expiresAt": expires.Unix()}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -138,7 +140,7 @@ func TestBrokeredProvidersOffWithoutLeaseSource(t *testing.T) {
 }
 
 func TestBrokeredProviderValidation(t *testing.T) {
-	for _, providers := range [][]api.ProviderGrant{{{Name: "codex"}}, {{Name: "grok"}, {Name: "grok"}}, {{Name: "muse"}}, {{Name: "grok"}, {Name: "cursor"}, {Name: "cursor"}}} {
+	for _, providers := range [][]api.ProviderGrant{{{Name: "gemini"}}, {{Name: "grok"}, {Name: "grok"}}, {{Name: "muse"}}, {{Name: "grok"}, {Name: "cursor"}, {Name: "cursor"}}} {
 		r, w := providerFixture(t)
 		w.Spec.Providers = providers
 		if r.validateProviders(context.Background(), w) == nil {
@@ -382,12 +384,15 @@ func TestRefusedPolicyWithdrawsBrokeredProviders(t *testing.T) {
 }
 
 func TestBrokeredOnlyModelAccess(t *testing.T) {
-	ok := map[string][]byte{"provider-access": []byte(`{"grok":{"enabled":false}}`)}
-	if err := RejectRefreshMaterial(ok); err != nil {
-		t.Fatal(err)
+	// Brokered Codex leases live in provider-access alone, like the others.
+	for _, doc := range []string{`{"grok":{"enabled":false}}`, `{"codex":{"enabled":false}}`} {
+		if err := RejectRefreshMaterial(map[string][]byte{"provider-access": []byte(doc)}); err != nil {
+			t.Fatal(doc, err)
+		}
 	}
 	for _, data := range []map[string][]byte{
-		{"provider-access": []byte(`{"codex":{"enabled":false}}`)},
+		{"provider-access": []byte(`{"codex":{"enabled":true,"access":{"accessToken":"a","expiresAt":1,"chatgptAccountId":"x","refresh_token":"r"}}}`)},
+		{"provider-access": []byte(`{"codex":{"enabled":false}}`), "access-token": []byte("legacy-without-account")},
 		{"provider-access": []byte(`{"grok":{"enabled":true,"access":{"accessToken":"a","expiresAt":1,"issuer":"https://auth.x.ai","refreshToken":"r"}}}`)},
 		{"provider-access": []byte(`{"grok":{"enabled":false}}`), "refresh_token": []byte("r")},
 	} {

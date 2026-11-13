@@ -60,6 +60,7 @@ type Config struct {
 	GitHubOwner                                                                 string
 	ProxyImage                                                                  string
 	ProxyRuntimeGuard                                                           bool
+	BootstrapImageSource                                                        string
 	StorageSize                                                                 string
 	WorkerResources, ProxyResources                                             ResourceProfile
 	WorkerScheduling, ProxyScheduling                                           Scheduling
@@ -114,6 +115,16 @@ type Config struct {
 	// HubServiceAccount is the hub's ServiceAccount name (default orca-hub).
 	HubServiceAccount string
 
+	// HerdrCoreEnabled starts herdr-core (`hc server`) in workers whose
+	// OrchestratorClassName matches HerdrOrchestratorClass (docs/herdr.md).
+	// Off by default; requires the workspace image that ships hc.
+	HerdrCoreEnabled bool
+	// HerdrOrchestratorClass is the OrchestratorClass name that selects the
+	// herdr-core worker path (default "herdr").
+	HerdrOrchestratorClass string
+	// Platform floors (APC #106). Empty is inert; copied into every proxy
+	// policy so approvals and project rules cannot override them.
+	PlatformFloors proxy.PlatformFloors
 	// AuditAssignmentFeed publishes per-cell host audit assignments into
 	// ConfigMap AuditAssignmentFeedConfigMap in Namespace (default
 	// glovecell-audit-assignments). Off by default; enabling it is the
@@ -162,6 +173,9 @@ func (c Config) Validate() error {
 	if _, _, e := c.resources(); e != nil {
 		return e
 	}
+	if c.BootstrapImageSource != "" && c.BootstrapImageSource != "workspace" && c.BootstrapImageSource != "proxy" {
+		return errors.New("BOOTSTRAP_IMAGE_SOURCE must be workspace or proxy")
+	}
 	for _, image := range []string{c.Image, c.proxyImage()} {
 		digest := strings.Split(image, "@sha256:")
 		if len(digest) != 2 || digest[0] == "" || len(digest[1]) != 64 {
@@ -191,6 +205,13 @@ func (c Config) Validate() error {
 	}
 	return nil
 }
+func (c Config) bootstrapImage() string {
+	if c.BootstrapImageSource == "proxy" {
+		return c.proxyImage()
+	}
+	return c.Image
+}
+
 func (c Config) proxyImage() string {
 	if c.ProxyImage != "" {
 		return c.ProxyImage
@@ -254,15 +275,7 @@ func (r *Reconciler) Setup(m ctrl.Manager) error {
 		}
 		counts := map[string]int64{}
 		for _, w := range list.Items {
-			phase := w.Status.Phase
-			switch phase {
-			case "Ready", "Preparing", "Pausing", "Paused", "Blocked", "Removing", "Removed":
-			case "":
-				phase = "Requested"
-			default:
-				phase = "Other"
-			}
-			counts[phase]++
+			counts[phaseLabel(w.Status.Phase)]++
 		}
 		for phase, n := range counts {
 			o.ObserveInt64(gauge, n, metric.WithAttributes(attribute.String("phase", phase)))
@@ -323,13 +336,13 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ct
 	// class does not resolve, every forge call fails: nothing is granted, and
 	// removal of a workspace that holds a grant waits for revocation.
 	r, forgeErr := r.forWorkspace(ctx, w)
-	if !w.DeletionTimestamp.IsZero() || w.Spec.DesiredState == "Removed" {
+	if !w.DeletionTimestamp.IsZero() || w.Spec.DesiredState == api.DesiredRemoved {
 		if e := r.remove(ctx, w); e != nil {
-			statusErr := r.status(ctx, w, "Removing", false, "CleanupPending", e.Error())
+			statusErr := r.status(ctx, w, api.PhaseRemoving, false, "CleanupPending", e.Error())
 			return ctrl.Result{RequeueAfter: 5 * time.Second}, errors.Join(e, statusErr)
 		}
 		if w.DeletionTimestamp.IsZero() {
-			return ctrl.Result{}, r.status(ctx, w, "Removed", false, "Removed", "Access revoked and owned Kubernetes storage removed")
+			return ctrl.Result{}, r.status(ctx, w, api.PhaseRemoved, false, "Removed", "Access revoked and owned Kubernetes storage removed")
 		}
 		controllerutil.RemoveFinalizer(w, api.Finalizer)
 		return ctrl.Result{}, r.Update(ctx, w)
@@ -354,22 +367,22 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ct
 		if _, providerErr := r.applyProviders(ctx, w, nil, nil); providerErr != nil {
 			return ctrl.Result{}, providerErr
 		}
-		if statusErr := r.status(ctx, w, "Blocked", false, classRejection(e), e.Error()); statusErr != nil {
+		if statusErr := r.status(ctx, w, api.PhaseBlocked, false, classRejection(e), e.Error()); statusErr != nil {
 			return ctrl.Result{}, statusErr
 		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 	if e := r.ensure(ctx, w); e != nil {
 		stopErr := r.suspend(ctx, w)
-		statusErr := r.status(ctx, w, "Preparing", false, "PreparationPending", e.Error())
+		statusErr := r.status(ctx, w, api.PhasePreparing, false, "PreparationPending", e.Error())
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, errors.Join(e, stopErr, statusErr)
 	}
-	phase := "Preparing"
+	phase := api.PhasePreparing
 	ready := false
 	reason := "PreparationPending"
 	message := "Waiting for inspected clone and ready Sandbox"
-	if w.Spec.DesiredState == "Paused" {
-		phase = "Pausing"
+	if w.Spec.DesiredState == api.DesiredPaused {
+		phase = api.PhasePausing
 		reason = "PausePending"
 		message = "Waiting for project processes to terminate"
 		gone, e := r.processesGone(ctx, w)
@@ -377,12 +390,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ct
 			return ctrl.Result{}, e
 		}
 		if gone {
-			phase = "Paused"
+			phase = api.PhasePaused
 			reason = "Paused"
 			message = "Project paused; files and repository credentials retained"
 		}
 	}
-	if w.Spec.DesiredState == "Running" {
+	if w.Spec.DesiredState == api.DesiredRunning {
 		u := &unstructured.Unstructured{}
 		u.SetGroupVersionKind(sandboxGVK)
 		if e := r.Get(ctx, types.NamespacedName{Namespace: namespace(w), Name: "project"}, u); e != nil {
@@ -392,7 +405,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ct
 		for _, raw := range conditions {
 			c, _ := raw.(map[string]any)
 			if c["type"] == "Ready" && c["status"] == "True" {
-				phase = "Ready"
+				phase = api.PhaseReady
 				ready = true
 				reason = "ProjectReady"
 				message = "Inspected clone completed and project environment is ready"
@@ -421,7 +434,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ct
 		if stopErr := r.suspendOrchestrators(ctx, w, nil, e); stopErr != nil {
 			return ctrl.Result{}, stopErr
 		}
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, r.status(ctx, w, "Blocked", false, classRejection(e), e.Error())
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, r.status(ctx, w, api.PhaseBlocked, false, classRejection(e), e.Error())
 	}
 	if access != nil {
 		pendingReason, readyMessage := orchestrator.Wording(access)
@@ -437,7 +450,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ct
 				}
 			}
 			if e := access.Ensure(ctx, w); e != nil {
-				phase, ready, reason, message = "Preparing", false, pendingReason, e.Error()
+				phase, ready, reason, message = api.PhasePreparing, false, pendingReason, e.Error()
 			} else {
 				message = readyMessage
 			}
@@ -475,7 +488,7 @@ func (r *Reconciler) validate(ctx context.Context, w *api.ProjectWorkspace) erro
 	if e := r.validateRepositories(w); e != nil {
 		return e
 	}
-	if w.Spec.DesiredState != "Running" && w.Spec.DesiredState != "Paused" {
+	if w.Spec.DesiredState != api.DesiredRunning && w.Spec.DesiredState != api.DesiredPaused {
 		return errors.New("unsupported desired state")
 	}
 	if !strings.Contains(r.Config.Image, "@sha256:") || r.Config.RuntimeClass == "" || r.Config.StorageClass == "" {
@@ -543,7 +556,10 @@ func (r *Reconciler) auditLog() *auditlog.Log {
 	}
 	return &auditlog.Log{Client: r.Client, Namespace: r.Config.Namespace}
 }
-func (r *Reconciler) status(ctx context.Context, w *api.ProjectWorkspace, phase string, ready bool, reason, message string) error {
+
+// status records the workspace's phase and Ready condition. It is the only
+// writer of status.phase; Reconcile picks the phase.
+func (r *Reconciler) status(ctx context.Context, w *api.ProjectWorkspace, phase api.Phase, ready bool, reason, message string) error {
 	old := w.DeepCopyObject().(*api.ProjectWorkspace)
 	previous := meta.FindStatusCondition(w.Status.Conditions, "Ready")
 	if !ready && (previous == nil || previous.Reason != reason || previous.Message != message) {
@@ -556,11 +572,11 @@ func (r *Reconciler) status(ctx context.Context, w *api.ProjectWorkspace, phase 
 	// readable, never appended). One Event per transition: a phase change,
 	// or a new reason or message on a not-ready condition in the same phase.
 	if w.Status.Phase != phase {
-		if e := r.audit(ctx, w, "phase-"+strings.ToLower(phase)); e != nil {
+		if e := r.audit(ctx, w, "phase-"+strings.ToLower(string(phase))); e != nil {
 			return e
 		}
 		slog.InfoContext(ctx, "workspace phase changed", "workspace_uid", string(w.UID), "generation", w.Generation, "phase", phase, "trace_id", trace.SpanContextFromContext(ctx).TraceID().String())
-		from := w.Status.Phase
+		from := string(w.Status.Phase)
 		if from == "" {
 			from = "Requested"
 		}
@@ -689,7 +705,7 @@ func (r *Reconciler) ensure(ctx context.Context, w *api.ProjectWorkspace) error 
 	if e != nil {
 		return e
 	}
-	if w.Spec.DesiredState != "Paused" {
+	if w.Spec.DesiredState != api.DesiredPaused {
 		if e = r.modelAccess(ctx, w); e != nil {
 			return e
 		}
@@ -798,7 +814,7 @@ func (r *Reconciler) modelAccess(ctx context.Context, w *api.ProjectWorkspace) e
 	if e = owner(w, s); e != nil {
 		return e
 	}
-	if independentCodex(s.Data) && r.IndependentCodexWorkspaceUID != string(w.UID) {
+	if independentCodex(s.Data) && !brokeredOnly(s.Data) && r.IndependentCodexWorkspaceUID != string(w.UID) {
 		return errors.New("independent Codex requires its inspecting gateway binding")
 	}
 	if e = RejectRefreshMaterial(s.Data); e != nil {
@@ -1721,7 +1737,7 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 		addCellTelemetry(proxyDeployment, r.Config.proxyImage(), security)
 	}
 	r.Config.ProxyScheduling.Apply(&proxyDeployment.Spec.Template.Spec)
-	if w.Spec.DesiredState == "Paused" {
+	if w.Spec.DesiredState == api.DesiredPaused {
 		proxyDeployment.Spec.Replicas = int32p(0)
 	}
 	objects = append(objects, proxyDeployment)
@@ -1744,7 +1760,7 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 	if r.usesOrcaSpoke(w) {
 		workerPorts = []corev1.ContainerPort{{Name: "orca", ContainerPort: 6768}}
 	}
-	spec := corev1.PodSpec{DNSPolicy: corev1.DNSNone, DNSConfig: dns, RuntimeClassName: &r.Config.RuntimeClass, AutomountServiceAccountToken: boolp(false), ServiceAccountName: "worker", TerminationGracePeriodSeconds: int64p(5), SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: boolp(true), RunAsUser: int64p(1000), RunAsGroup: int64p(1000), FSGroup: int64p(1000)}, InitContainers: []corev1.Container{{Name: "clone", Image: r.Config.Image, Args: []string{"bootstrap"}, Env: env, SecurityContext: security, Resources: workerResources, VolumeMounts: mounts}}, Containers: []corev1.Container{{Name: "workspace", Image: workerImage, Command: r.orcaSpokeCommand(w), Env: workerEnv, WorkingDir: "/workspace/repo", SecurityContext: security, Resources: workerResources, VolumeMounts: mounts, Ports: workerPorts, ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{"test", "-f", "/workspace/.ready"}}}}}}, Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "workspace"}}}, {Name: "identity", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "git-identity", DefaultMode: int32p(0440)}}}, {Name: "trust", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: "trust"}}}}, {Name: "model", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "model-access", Optional: boolp(true), DefaultMode: int32p(0440)}}}, {Name: "scratch", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}}
+	spec := corev1.PodSpec{DNSPolicy: corev1.DNSNone, DNSConfig: dns, RuntimeClassName: &r.Config.RuntimeClass, AutomountServiceAccountToken: boolp(false), ServiceAccountName: "worker", TerminationGracePeriodSeconds: int64p(5), SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: boolp(true), RunAsUser: int64p(1000), RunAsGroup: int64p(1000), FSGroup: int64p(1000)}, InitContainers: []corev1.Container{{Name: "clone", Image: r.Config.bootstrapImage(), Args: []string{"bootstrap"}, Env: env, SecurityContext: security, Resources: workerResources, VolumeMounts: mounts}}, Containers: []corev1.Container{{Name: "workspace", Image: workerImage, Command: r.workerCommand(w), Env: workerEnv, WorkingDir: "/workspace/repo", SecurityContext: security, Resources: workerResources, VolumeMounts: mounts, Ports: workerPorts, ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{"test", "-f", "/workspace/.ready"}}}}}}, Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "workspace"}}}, {Name: "identity", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "git-identity", DefaultMode: int32p(0440)}}}, {Name: "trust", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: "trust"}}}}, {Name: "model", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "model-access", Optional: boolp(true), DefaultMode: int32p(0440)}}}, {Name: "scratch", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}}
 	if serviceProxy {
 		spec.HostAliases = []corev1.HostAlias{{IP: proxyAddress, Hostnames: []string{"proxy"}}}
 	}
@@ -1769,8 +1785,8 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 	if e = json.Unmarshal(b, &podspec); e != nil {
 		return e
 	}
-	sandbox := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "agents.x-k8s.io/v1beta1", "kind": "Sandbox", "metadata": map[string]any{"name": "project", "namespace": ns, "labels": map[string]any{api.OwnerLabel: string(w.UID)}}, "spec": map[string]any{"operatingMode": w.Spec.DesiredState, "podTemplate": map[string]any{"metadata": map[string]any{"labels": stringMap(workerlabels)}, "spec": podspec}}}}
-	if w.Spec.DesiredState == "Paused" {
+	sandbox := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "agents.x-k8s.io/v1beta1", "kind": "Sandbox", "metadata": map[string]any{"name": "project", "namespace": ns, "labels": map[string]any{api.OwnerLabel: string(w.UID)}}, "spec": map[string]any{"operatingMode": string(w.Spec.DesiredState), "podTemplate": map[string]any{"metadata": map[string]any{"labels": stringMap(workerlabels)}, "spec": podspec}}}}
+	if w.Spec.DesiredState == api.DesiredPaused {
 		_ = unstructured.SetNestedField(sandbox.Object, "Suspended", "spec", "operatingMode")
 	}
 	objects = append(objects, sandbox)
