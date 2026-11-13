@@ -9,6 +9,7 @@ import './workspace/workspace.css';
 import './shell/shell.css';
 import {DataProvider, useData} from './data';
 import {Home} from './Home';
+import {Hub} from './Hub';
 import {Attention} from './attention/Attention';
 import {NewSandbox} from './NewSandbox';
 import {OrcaProjects} from './OrcaProjects';
@@ -36,6 +37,7 @@ function App() {
       <AppShell route={route} workspace={workspace}>
         {route.view === 'new' ? <NewSandbox />
           : route.view === 'orca' ? <OrcaProjects />
+          : route.view === 'hub' ? <Hub />
           : route.view === 'attention' ? <Attention />
           : route.view === 'project' ? <ProjectWorkspace name={route.name} section={route.section} />
           : route.view === 'sandbox' ? <SandboxWorkspace id={route.id} section={route.section} />

@@ -200,6 +200,21 @@ data:
   HUBSPOKE_SPOKE_GATEWAY_SECTION: {{ .Values.hubspoke.spoke.gateway.sectionName | quote }}
 {{- end }}
 {{- end }}
+{{- with .Values.hubspoke.hubAdmin }}
+{{- if .url }}
+  HUB_ADMIN_URL: {{ .url | quote }}
+  HUB_PUBLIC_ADDRESS: {{ default $.Values.hubspoke.hub.publicAddress .publicAddress | quote }}
+{{- if .caFile }}
+  HUB_ADMIN_CA_FILE: {{ .caFile | quote }}
+{{- end }}
+{{- if .certFile }}
+  HUB_ADMIN_CERT_FILE: {{ .certFile | quote }}
+{{- end }}
+{{- if .keyFile }}
+  HUB_ADMIN_KEY_FILE: {{ .keyFile | quote }}
+{{- end }}
+{{- end }}
+{{- end }}
 {{- if .Values.hubspoke.hub.publicAddress }}
   HUBSPOKE_PUBLIC_ADDRESS: {{ .Values.hubspoke.hub.publicAddress | quote }}
 {{- end }}

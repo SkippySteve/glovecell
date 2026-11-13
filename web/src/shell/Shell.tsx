@@ -4,7 +4,7 @@
 import {useEffect, useRef, useState, type MouseEvent, type ReactNode, type RefObject} from 'react';
 import {useAttentionCount} from '../attention/store';
 import {useData} from '../data';
-import {attentionHref, breadcrumbs, homeHref, newSandboxHref, orcaHref, projectHref, projectsHref, sandboxesHref, sandboxHref, sectionsFor, type Route, type Section} from '../router';
+import {attentionHref, breadcrumbs, homeHref, hubHref, newSandboxHref, orcaHref, projectHref, projectsHref, sandboxesHref, sandboxHref, sectionsFor, type Route, type Section} from '../router';
 import {existingState, projectState} from '../state';
 import {ThemeSwitcher} from '../ThemeSwitcher';
 import {Button} from '../ui';
@@ -98,6 +98,7 @@ export function SideNav({route}: {route: Route}) {
       <ul className="side-list">
         {session.runRecords ? <li><a className="side-link" href="#/runs" aria-current={route.view === 'runs' || route.view === 'run' ? 'page' : undefined}>Runs</a></li> : null}
         {session.orcaProjects ? <li><a className="side-link" href={orcaHref()} aria-current={page('orca')}>Orca projects</a></li> : null}
+        {session.hubPairing ? <li><a className="side-link" href={hubHref()} aria-current={page('hub')}>Hub</a></li> : null}
         <li><a className="side-link" href={newSandboxHref()} aria-current={page('new')}>New sandbox</a></li>
       </ul>
     </nav>

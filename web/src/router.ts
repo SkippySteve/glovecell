@@ -19,7 +19,7 @@ export type WorkspaceKind = 'sandbox' | 'project';
 export const sectionsFor = (kind: WorkspaceKind, runs: boolean) => SECTIONS.filter(([key]) => kind === 'sandbox' ? key !== 'runs' || runs : key !== 'runs' && key !== 'settings');
 
 export type Route = {view: 'home'} | {view: 'new'} | {view: 'attention'} | {view: 'sandboxes'} | {view: 'projects'}
-  | {view: 'project'; name: string; section: Section} | {view: 'sandbox'; id: string; section: Section} | {view: 'runs'} | {view: 'run'; id: string} | {view: 'orca'};
+  | {view: 'project'; name: string; section: Section} | {view: 'sandbox'; id: string; section: Section} | {view: 'runs'} | {view: 'run'; id: string} | {view: 'orca'} | {view: 'hub'};
 
 export const homeHref = () => '#/';
 export const attentionHref = () => '#/attention';
@@ -29,6 +29,7 @@ export const newSandboxHref = () => '#/new';
 export const projectHref = (name: string, section?: Section) => '#/projects/' + encodeURIComponent(name) + (section && section !== 'overview' ? '/' + section : '');
 export const sandboxHref = (id: string, section?: Section) => '#/sandboxes/' + encodeURIComponent(id) + (section && section !== 'overview' ? '/' + section : '');
 export const orcaHref = () => '#/orca';
+export const hubHref = () => '#/hub';
 export const navigate = (hash: string) => { location.hash = hash; };
 
 // A section may keep view state (filter, page, page size) in a query after the
@@ -48,6 +49,7 @@ export function parse(hash: string): Route {
   const parts = hash.replace(/^#\/?/, '').split('?')[0].split('/').filter(Boolean).map(part => { try { return decodeURIComponent(part); } catch { return part; } });
   if (parts[0] === 'new') return {view: 'new'};
   if (parts[0] === 'orca') return {view: 'orca'};
+  if (parts[0] === 'hub') return {view: 'hub'};
   if (parts[0] === 'attention' || parts[0] === 'inbox') return {view: 'attention'};
   if (parts[0] === 'projects') return parts[1] ? {view: 'project', name: parts[1], section: toSection(parts[2])} : {view: 'projects'};
   if (parts[0] === 'sandboxes') return parts[1] ? {view: 'sandbox', id: parts[1], section: toSection(parts[2])} : {view: 'sandboxes'};
@@ -68,6 +70,7 @@ export function hrefOf(route: Route): string {
     case 'runs': return '#/runs';
     case 'run': return '#/runs/' + encodeURIComponent(route.id);
     case 'orca': return orcaHref();
+    case 'hub': return hubHref();
   }
 }
 
@@ -86,6 +89,7 @@ export function breadcrumbs(route: Route): Crumb[] {
     case 'runs': return [home, {label: 'Runs'}];
     case 'run': return [home, {label: 'Runs', href: '#/runs'}, {label: route.id}];
     case 'orca': return [home, {label: 'Orca projects'}];
+    case 'hub': return [home, {label: 'Hub'}];
   }
 }
 

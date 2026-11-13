@@ -412,6 +412,15 @@ hubspoke:
     # hubspoke.hub.enabled. Independent of config.PUBLIC_ORIGIN and of
     # spoke.publicDomain.
     publicAddress: ''
+  # Private mTLS hub-admin client for the console Hub page (APC #113/#126).
+  # Empty url keeps Hub off. Deployment repo owns certs + Cilium enable pack.
+  hubAdmin:
+    url: ''
+    # WSS origin phones dial; defaults to hub.publicAddress when empty.
+    publicAddress: ''
+    caFile: ''
+    certFile: ''
+    keyFile: ''
   # Per-project spoke dial for desktops: wss://<project>.<publicDomain>
   # (docs/hubspoke.md, APC #113 follow-up). Requires Gateway listener + DNS.
   spoke:
