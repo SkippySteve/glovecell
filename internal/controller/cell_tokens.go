@@ -32,10 +32,16 @@ import (
 // stored secret. A JWT keeps its header and claims (the CLI may read the
 // expiry) with the signature replaced; anything else becomes an opaque token.
 
-// CellTokenProviders lists the providers that may use cell tokens.
-var CellTokenProviders = map[string]bool{"grok": true, "cursor": true}
+// CellTokenProviders lists the providers that may use cell tokens. Claude
+// always uses one, whatever PROVIDER_CELL_TOKENS says: its subscription token
+// is long-lived and must never enter a worker.
+var CellTokenProviders = map[string]bool{"grok": true, "cursor": true, "codex": true, "claude": true}
 
 const cellTokenPrefix = "apc-cell-"
+
+// claudeCellTokenPrefix keeps Claude Code treating the stand-in as a
+// subscription (OAuth) token rather than an API key.
+const claudeCellTokenPrefix = "sk-ant-oat01-apc-cell-"
 
 // ParseCellTokenProviders reads PROVIDER_CELL_TOKENS (comma-separated).
 func ParseCellTokenProviders(raw string) (map[string]bool, error) {
@@ -46,7 +52,7 @@ func ParseCellTokenProviders(raw string) (map[string]bool, error) {
 			continue
 		}
 		if !CellTokenProviders[name] {
-			return nil, fmt.Errorf("PROVIDER_CELL_TOKENS: %q is not a provider that supports cell tokens (grok, cursor)", name)
+			return nil, fmt.Errorf("PROVIDER_CELL_TOKENS: %q is not a provider that supports cell tokens (grok, cursor, codex, claude)", name)
 		}
 		out[name] = true
 	}
@@ -72,6 +78,9 @@ func cellToken(key []byte, provider, real string) string {
 	m.Write([]byte{0})
 	m.Write([]byte(real))
 	sig := base64.RawURLEncoding.EncodeToString(m.Sum(nil))
+	if provider == "claude" {
+		return claudeCellTokenPrefix + sig
+	}
 	if parts := strings.Split(real, "."); len(parts) == 3 && parts[0] != "" && parts[1] != "" {
 		return parts[0] + "." + parts[1] + "." + sig
 	}
@@ -99,7 +108,7 @@ func (r *Reconciler) withCellTokens(ctx context.Context, w *api.ProjectWorkspace
 	var key []byte
 	var keyErr error
 	for name, g := range grants {
-		if !r.Config.CellTokens[name] || !g.Enabled || g.Access == nil {
+		if !r.Config.CellTokens[name] && name != "claude" || !g.Enabled || g.Access == nil {
 			worker[name], gateway[name] = g, g
 			continue
 		}

@@ -160,7 +160,7 @@ func (s *Server) Handler() (http.Handler, error) {
 			session["lanAllowed"] = s.LAN.Config.AllowedStrings()
 		}
 		if s.Providers != nil {
-			session["providers"] = []string{"grok", "cursor"}
+			session["providers"] = []string{"grok", "cursor", "codex", "claude"}
 		}
 		session["providerLogins"] = s.ProviderLogins != nil
 		db := s.Database.status()

@@ -797,7 +797,7 @@ func (r *Reconciler) modelAccess(ctx context.Context, w *api.ProjectWorkspace) e
 	if e = owner(w, s); e != nil {
 		return e
 	}
-	if independentCodex(s.Data) && r.IndependentCodexWorkspaceUID != string(w.UID) {
+	if independentCodex(s.Data) && !brokeredOnly(s.Data) && r.IndependentCodexWorkspaceUID != string(w.UID) {
 		return errors.New("independent Codex requires its inspecting gateway binding")
 	}
 	if e = RejectRefreshMaterial(s.Data); e != nil {

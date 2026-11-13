@@ -162,6 +162,9 @@ func (b *Broker) owner(ctx context.Context, provider string) (Access, error) {
 	if provider == "codex" || provider == "cursor" {
 		return b.oauthOwner(ctx, provider)
 	}
+	if provider == "claude" {
+		return b.claudeOwner(ctx)
+	}
 	owner, ok := b.Config.Owners[provider]
 	if !ok {
 		return Access{}, errors.New("credential owner not configured")
@@ -381,7 +384,7 @@ func configFromEnv() (Config, error) {
 		}
 		for _, name := range strings.Split(os.Getenv("PROVIDER_BROKER_PROVIDERS"), ",") {
 			if !slices.Contains(LeaseProviders, name) || slices.Contains(cfg.Providers, name) {
-				return Config{}, errors.New("PROVIDER_BROKER_PROVIDERS must list grok and/or cursor")
+				return Config{}, errors.New("PROVIDER_BROKER_PROVIDERS must list some of grok, cursor, codex and claude, once each")
 			}
 			cfg.Providers = append(cfg.Providers, name)
 		}
@@ -399,7 +402,7 @@ func configFromEnv() (Config, error) {
 			return Config{}, errors.New("explicit credential owner required")
 		}
 		cfg.Owners[name] = owner
-		if name != "grok" {
+		if name == "codex" || name == "cursor" {
 			cfg.OAuthClientIDs[name] = os.Getenv(strings.ToUpper(name) + "_OAUTH_CLIENT_ID")
 		}
 	}
