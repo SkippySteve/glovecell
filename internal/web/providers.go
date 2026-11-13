@@ -79,6 +79,7 @@ func (s *Server) addProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	obj.Annotations["projects.agentwork.dev/requested-by"] = actor
 	if err := s.Client.Update(r.Context(), obj); err != nil {
+		slog.WarnContext(r.Context(), "provider access not saved", "workspace_uid", string(obj.UID), "provider", grant.Name, "error", err.Error())
 		http.Error(w, "provider access could not be saved; refresh before retrying", http.StatusConflict)
 		return
 	}
@@ -130,6 +131,7 @@ func (s *Server) removeProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	obj.Annotations["projects.agentwork.dev/requested-by"] = actor
 	if err := s.Client.Update(r.Context(), obj); err != nil {
+		slog.WarnContext(r.Context(), "provider access not revoked", "workspace_uid", string(obj.UID), "provider", name, "error", err.Error())
 		http.Error(w, "provider access could not be revoked; refresh before retrying", http.StatusConflict)
 		return
 	}
