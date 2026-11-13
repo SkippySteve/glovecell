@@ -1,0 +1,116 @@
+/* Access levels and the shared grant table. Colours come only from theme
+   tokens: --console-* (theme branch) with the --openui-* equivalents as
+   fallbacks, so this file works before and after the theme lands. */
+
+/* Level control */
+.level-card.is-open { border-color: var(--console-danger-border, var(--openui-border-danger)); }
+.level-card .card-hd h2 { margin-right: var(--openui-space-xs); }
+.level-expiry { display: inline-flex; align-items: baseline; gap: var(--openui-space-s); }
+.level-expiry .big-countdown { margin-left: 0; color: var(--console-danger, var(--openui-text-danger-primary)); }
+
+.level-scale { border: 0; margin: 0; padding: 0; min-width: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--openui-space-s); }
+.level-tile {
+  position: relative; display: flex; flex-direction: column; gap: 2px; min-width: 0; cursor: pointer;
+  padding: var(--openui-space-s) var(--openui-space-m); border-radius: var(--console-radius-lg, var(--openui-radius-l));
+  border: 1px solid var(--console-border, var(--openui-border-default)); background: var(--console-surface, var(--openui-foreground));
+  transition: border-color var(--console-dur-micro, 100ms) var(--console-ease, ease), background-color var(--console-dur-micro, 100ms) var(--console-ease, ease);
+}
+.level-tile input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; }
+.level-tile:hover { border-color: var(--console-border-strong, var(--openui-border-interactive)); }
+.level-tile:focus-within { outline: var(--console-focus-ring, 2px solid var(--openui-border-accent-emphasis)); outline-offset: 2px; }
+.level-tile.is-picked { border-color: var(--console-accent, var(--openui-interactive-accent-default)); background: var(--console-accent-soft, var(--openui-highlight)); box-shadow: inset 0 0 0 1px var(--console-accent, var(--openui-interactive-accent-default)); }
+.level-tile.is-unavailable .level-name, .level-tile.is-unavailable .level-sum { color: var(--console-text-subtle, var(--openui-text-neutral-tertiary)); }
+.level-name { display: flex; align-items: center; gap: var(--openui-space-xs); font-weight: var(--console-weight-bold, 600); color: var(--console-text, var(--openui-text-neutral-primary)); overflow-wrap: anywhere; }
+.level-sum { font: var(--openui-text-body-sm); color: var(--console-text-muted, var(--openui-text-neutral-secondary)); }
+.level-now { font-size: var(--console-text-xs, 12px); font-weight: var(--console-weight-medium, 500); padding: 0 6px; border-radius: var(--console-radius-pill, 999px); border: 1px solid currentColor; }
+.level-tile.is-locked .level-now { color: var(--console-ok, var(--openui-text-success-primary)); }
+.level-tile.is-ask .level-now, .level-tile.is-standard .level-now { color: var(--console-info, var(--openui-text-info-primary)); }
+.level-tile.is-open .level-now { color: var(--console-danger, var(--openui-text-danger-primary)); }
+.level-tile.is-custom .level-now { color: var(--console-neutral, var(--openui-text-neutral-secondary)); }
+
+.level-detail { display: flex; flex-direction: column; gap: var(--openui-space-m); padding: var(--openui-space-m); border-radius: var(--console-radius-lg, var(--openui-radius-l)); background: var(--console-surface-sunk, var(--openui-sunk)); }
+.level-lists { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--openui-space-m); }
+.level-lists h3, .level-also h3, .change-group h3 { font-size: var(--console-text-sm, 13px); font-weight: var(--console-weight-bold, 600); margin: 0 0 4px; color: var(--console-text-muted, var(--openui-text-neutral-secondary)); }
+.level-lists ul, .level-also ul, .change-group ul { margin: 0; padding-left: 18px; }
+.level-lists li, .level-also li { font: var(--openui-text-body-sm); }
+.level-reason { margin: 0; color: var(--console-text-muted, var(--openui-text-neutral-secondary)); }
+.level-also { font: var(--openui-text-body-sm); color: var(--console-text-muted, var(--openui-text-neutral-secondary)); }
+.level-also .warn { color: var(--console-warn, var(--openui-text-alert-primary)); }
+.level-links ul { display: flex; flex-wrap: wrap; gap: var(--openui-space-s) var(--openui-space-l); list-style: none; margin: 0; padding: 0; }
+.level-links .label { color: var(--console-text-muted, var(--openui-text-neutral-secondary)); }
+
+.open-controls { display: flex; flex-direction: column; gap: var(--openui-space-s); }
+.seg { display: inline-flex; flex-wrap: wrap; gap: var(--openui-space-xs); }
+.seg-item {
+  min-height: var(--console-control-h, 32px); padding: 0 var(--openui-space-m); border-radius: var(--console-radius, 6px); cursor: pointer;
+  border: 1px solid var(--console-border-strong, var(--openui-border-interactive)); background: var(--console-surface, var(--openui-foreground)); color: var(--console-text, var(--openui-text-neutral-primary)); font: inherit;
+}
+.seg-item[aria-checked=true] { background: var(--console-accent, var(--openui-interactive-accent-default)); border-color: var(--console-accent, var(--openui-interactive-accent-default)); color: var(--console-on-accent, var(--openui-text-white)); }
+.seg-item:focus-visible { outline: var(--console-focus-ring, 2px solid var(--openui-border-accent-emphasis)); outline-offset: 2px; }
+
+/* Confirmation body */
+.plan-body { display: flex; flex-direction: column; gap: var(--openui-space-m); }
+.plan-body p { margin: 0; }
+.change-group li { font: var(--openui-text-body-sm); overflow-wrap: anywhere; }
+.change-group.is-remove h3 { color: var(--console-ok, var(--openui-text-success-primary)); }
+.change-group.is-add h3 { color: var(--console-danger, var(--openui-text-danger-primary)); }
+
+/* Grant table */
+.grant-table { overflow: hidden; }
+.grant-intro { padding: var(--openui-space-s) var(--openui-space-l) 0; font: var(--openui-text-body-sm); color: var(--console-text-muted, var(--openui-text-neutral-secondary)); }
+.grant-intro p { margin: 0; }
+.grant-tools { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--openui-space-s) var(--openui-space-m); padding: var(--openui-space-m) var(--openui-space-l); }
+.grant-tools .grow { flex: 1 1 220px; min-width: 0; }
+.grant-filters { display: flex; flex-wrap: wrap; gap: var(--openui-space-xs); }
+.filter-chip {
+  min-height: var(--console-control-h-sm, 28px); padding: 0 var(--openui-space-s); border-radius: var(--console-radius-pill, 999px); cursor: pointer; font: var(--openui-text-body-sm);
+  border: 1px solid var(--console-border-strong, var(--openui-border-interactive)); background: transparent; color: var(--console-text, var(--openui-text-neutral-primary));
+}
+.filter-chip .num { color: var(--console-text-muted, var(--openui-text-neutral-secondary)); }
+.filter-chip[aria-pressed=true] { background: var(--console-accent-soft, var(--openui-highlight-strong)); border-color: var(--console-accent, var(--openui-interactive-accent-default)); }
+.filter-chip:focus-visible { outline: var(--console-focus-ring, 2px solid var(--openui-border-accent-emphasis)); outline-offset: 2px; }
+.bulk-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--openui-space-s); padding: var(--openui-space-s) var(--openui-space-l); background: var(--console-accent-soft, var(--openui-highlight)); border-top: 1px solid var(--console-border, var(--openui-border-default)); }
+.grant-scroll { overflow-x: auto; }
+.grant-grid { width: 100%; border-collapse: collapse; font: var(--openui-text-body-sm); }
+.grant-grid th { text-align: left; font-weight: var(--console-weight-medium, 500); color: var(--console-text-muted, var(--openui-text-neutral-secondary)); background: var(--console-surface-2, var(--openui-sunk)); padding: var(--openui-space-s) var(--openui-space-m); white-space: nowrap; }
+.grant-grid td { padding: var(--openui-space-s) var(--openui-space-m); border-top: 1px solid var(--console-border, var(--openui-border-default)); vertical-align: top; overflow-wrap: anywhere; }
+.grant-grid th:first-child, .grant-grid td:first-child { padding-left: var(--openui-space-l); }
+.grant-grid th:last-child, .grant-grid td:last-child { padding-right: var(--openui-space-l); }
+.grant-grid .sel { width: 1%; }
+.grant-grid .exp { white-space: nowrap; }
+.grant-grid .act { text-align: right; white-space: nowrap; }
+.grant-grid td.act > * { display: inline-flex; vertical-align: middle; }
+.grant-grid .act > * + * { margin-left: var(--openui-space-xs); }
+.grant-grid tr.is-selected td { background: var(--console-accent-soft, var(--openui-highlight)); }
+.grant-grid tr.grant-detail td { border-top: 0; background: var(--console-surface-sunk, var(--openui-sunk)); }
+.grant-grid code { overflow-wrap: anywhere; }
+.grant-grid .method { font-family: var(--console-font-mono, monospace); color: var(--console-text-muted, var(--openui-text-neutral-secondary)); margin-right: 6px; }
+.grant-grid input[type=checkbox] { width: 16px; height: 16px; }
+.expiry.is-soon { color: var(--console-warn, var(--openui-text-alert-primary)); }
+.expiry.is-over { color: var(--console-text-subtle, var(--openui-text-neutral-tertiary)); }
+.grant-empty { padding: var(--openui-space-l); display: flex; flex-direction: column; gap: 4px; }
+.grant-empty p { margin: 0; }
+.grant-foot { padding: var(--openui-space-s) var(--openui-space-l); border-top: 1px solid var(--console-border, var(--openui-border-default)); }
+.cell-sub { display: block; color: var(--console-text-muted, var(--openui-text-neutral-secondary)); }
+.tags { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-right: 4px; vertical-align: middle; }
+
+@media (max-width: 900px) {
+  .level-scale { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 720px) {
+  .level-scale { grid-template-columns: minmax(0, 1fr); }
+  .level-lists { grid-template-columns: minmax(0, 1fr); }
+  .grant-grid thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .grant-grid, .grant-grid tbody, .grant-grid tr, .grant-grid td { display: block; width: 100%; }
+  .grant-grid tr { border-top: 1px solid var(--console-border, var(--openui-border-default)); padding: var(--openui-space-s) var(--openui-space-l); }
+  .grant-grid td, .grant-grid td:first-child, .grant-grid td:last-child { border-top: 0; padding: 2px 0; text-align: left; }
+  .grant-grid td[data-label]::before { content: attr(data-label); display: block; font-size: var(--console-text-xs, 12px); color: var(--console-text-muted, var(--openui-text-neutral-secondary)); }
+  .grant-grid .act { padding-top: var(--openui-space-xs); }
+  .grant-grid tr.grant-detail { padding-top: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .level-tile { transition: none; }
+}
+.level-scale.is-compact { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+.learned { display: flex; flex-direction: column; gap: var(--openui-space-s); padding: var(--openui-space-s) 0; }
+.learned .actions { display: flex; align-items: center; gap: var(--openui-space-s); }

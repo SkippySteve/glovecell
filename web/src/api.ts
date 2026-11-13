@@ -10,8 +10,27 @@ export interface ProviderGrant { name: string; addedBy?: string; addedAt?: strin
 export interface Condition { type: string; status: string; reason: string; message: string; observedGeneration?: number }
 export interface Project {
   metadata: { name: string; uid?: string; generation?: number; resourceVersion?: string };
-  spec: { repository: string; desiredState: 'Running' | 'Paused' | 'Removed'; https?: HTTPSRule[]; repositories?: ProjectRepository[]; lanHosts?: LANHost[]; providers?: ProviderGrant[] };
+  spec: { repository: string; desiredState: 'Running' | 'Paused' | 'Removed'; https?: HTTPSRule[]; accessProfileName?: string; repositories?: ProjectRepository[]; lanHosts?: LANHost[]; providers?: ProviderGrant[] };
   status?: { phase?: string; namespace?: string; observedGeneration?: number; conditions?: Condition[] };
+}
+// Access levels (docs/access-levels.md): GET /api/v1/access-profiles and a cell's AccessGrants.
+export type ProfileLevel = 'locked' | 'ask' | 'standard' | 'open' | 'custom';
+export interface AccessProfileView {
+  name: string; level: ProfileLevel; description?: string; rules: HTTPSRule[]; allowedGrants: string[];
+  maxGrantMinutes?: Record<string, number>; approveRequests?: boolean; default?: boolean; projectSupported: boolean; reason?: string;
+}
+export interface AccessGrant {
+  metadata: {name: string; creationTimestamp?: string};
+  spec: {cell: string; type: 'internet' | 'lan' | 'package'; expiresAt: string; reason?: string; requestedBy?: string;
+    lan?: {address: string; ports: number[]; note?: string}; package?: {ecosystem: string; name: string; version?: string}; internet?: {learn?: boolean}};
+  status?: {state?: 'Active' | 'Refused' | 'Expired'; message?: string};
+}
+// null when this controller has no access profiles (older release or CRD not installed).
+export async function accessProfiles(): Promise<AccessProfileView[] | null> {
+  const response = await fetch('/api/v1/access-profiles', {credentials: 'same-origin'});
+  if (response.status === 404 || response.status === 405) return null;
+  if (!response.ok) throw await failure(response);
+  return response.json() as Promise<AccessProfileView[]>;
 }
 export interface AuditRecord { time: string; action: string; message?: string }
 export interface Session { actor?: string; oidc?: boolean; sandboxControl?: boolean; t3Connect?: boolean; githubOwner?: string; runRecords?: boolean; handoffs?: boolean; orcaProjects?: boolean; orcaSandbox?: string; orcaNamespace?: string; lanHosts?: boolean; lanAllowed?: string[]; downloads?: boolean; downloadMaxBytes?: number; uploads?: boolean; uploadChunkBytes?: number; providers?: string[]; hubPairing?: boolean; orcaSpokePairing?: boolean; providerLogins?: boolean }

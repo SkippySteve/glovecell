@@ -34,8 +34,8 @@ func (s *Server) enrollRepository(w http.ResponseWriter, r *http.Request) {
 		// Enroll while Ready (Running) or settled Paused. Pause is not required:
 		// the reconciler grants access, widens policy, and refreshes the worker
 		// so bootstrap clones onto the existing volume.
-		running := obj.Spec.DesiredState == "Running" && obj.Status.Phase == "Ready" && obj.Status.ObservedGeneration == obj.Generation
-		paused := obj.Spec.DesiredState == "Paused" && obj.Status.Phase == "Paused" && obj.Status.ObservedGeneration == obj.Generation
+		running := obj.Spec.DesiredState == api.DesiredRunning && obj.Settled(api.PhaseReady)
+		paused := obj.Spec.DesiredState == api.DesiredPaused && obj.Settled(api.PhasePaused)
 		if !running && !paused {
 			http.Error(w, "wait until the sandbox is Ready (or settled Paused) before enrolling a repository", 409)
 			return

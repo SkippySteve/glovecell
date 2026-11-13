@@ -122,7 +122,7 @@ func RunRegister(ctx context.Context, c client.Client, opts Options, helperFor f
 		}
 		ready := map[string]api.ProjectWorkspace{}
 		for _, w := range list.Items {
-			if w.Status.Phase == "Ready" && w.Status.Namespace != "" {
+			if w.Status.Phase == api.PhaseReady && w.Status.Namespace != "" {
 				ready[w.Name] = w
 			}
 		}

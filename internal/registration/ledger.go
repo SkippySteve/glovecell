@@ -6,13 +6,26 @@ import (
 	"strings"
 )
 
-// Client registration states stored in the control-namespace ledger ConfigMap.
+// State is a client's registration state, stored in the control-namespace
+// ledger ConfigMap.
+type State string
+
 const (
-	StateAbsent     = ""
-	StatePending    = "pending"
-	StateRegistered = "registered"
-	StateRevoked    = "revoked"
+	StateAbsent     State = ""
+	StatePending    State = "pending"
+	StateRegistered State = "registered"
+	StateRevoked    State = "revoked"
 )
+
+// transitions are the moves SyncRegister and SyncRevoke make (sync.go).
+// Pending is "a register or revoke command is running"; a registered client
+// goes back to pending to move or revoke it.
+var transitions = map[State][]State{
+	StateAbsent:     {StatePending, StateRevoked},
+	StatePending:    {StatePending, StateRegistered, StateRevoked},
+	StateRegistered: {StatePending},
+	StateRevoked:    {StatePending, StateRevoked},
+}
 
 // KnownKinds lists builtin client kinds for documentation and older callers.
 // Prefer KnownKind / LookupAdapter; custom kinds are registered at resolve time.
@@ -30,7 +43,7 @@ type Ledger struct {
 // ClientRecord is one configured client's registration ack.
 type ClientRecord struct {
 	Kind  string
-	State string
+	State State
 	ID    string // desktop project/repo id when registered
 	Path  string // mount path that was registered
 }
@@ -41,7 +54,7 @@ func NewLedger() *Ledger {
 }
 
 // ValidState reports whether state is one of the allowed ledger values.
-func ValidState(state string) bool {
+func ValidState(state State) bool {
 	switch state {
 	case StateAbsent, StatePending, StateRegistered, StateRevoked:
 		return true
@@ -50,8 +63,10 @@ func ValidState(state string) bool {
 	}
 }
 
-// SetClient records a client ack. Unknown kind or state fails closed.
-func (l *Ledger) SetClient(kind, state, id, path string) error {
+// SetClient records a client ack as found, whatever the previous state (for
+// decoding and fixtures). Unknown kind or state fails closed. The register
+// and revoke flow uses Move, which also checks the transition.
+func (l *Ledger) SetClient(kind string, state State, id, path string) error {
 	kind = strings.TrimSpace(kind)
 	if !KnownKind(kind) {
 		return fmt.Errorf("unknown client kind %q", kind)
@@ -64,6 +79,24 @@ func (l *Ledger) SetClient(kind, state, id, path string) error {
 	}
 	l.Clients[kind] = ClientRecord{Kind: kind, State: state, ID: id, Path: path}
 	return nil
+}
+
+// Move records a client's next state, refusing a move the register/revoke
+// flow never makes (for example registered straight to revoked, which would
+// skip the revoke command). A record in an unknown state may only go to
+// pending, so a damaged ledger can still be revoked.
+func (l *Ledger) Move(kind string, next State, id, path string) error {
+	from := l.Clients[strings.TrimSpace(kind)].State
+	allowedNext := transitions[from]
+	if !ValidState(from) {
+		allowedNext = []State{StatePending}
+	}
+	for _, allowed := range allowedNext {
+		if allowed == next {
+			return l.SetClient(kind, next, id, path)
+		}
+	}
+	return fmt.Errorf("client %q cannot move from %q to %q", kind, from, next)
 }
 
 // ClaimOwner records an exclusive owner for a worktree path.

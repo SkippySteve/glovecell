@@ -54,7 +54,7 @@ func TestLifecycleTransitionsPublishEventsNotAudit(t *testing.T) {
 	}
 
 	type step struct {
-		phase           string
+		phase           api.Phase
 		ready           bool
 		reason, message string
 		wantAction      string // "" means no Event
@@ -96,7 +96,7 @@ func TestLifecycleTransitionsPublishEventsNotAudit(t *testing.T) {
 		if e.reason != s.reason || e.action != s.wantAction || e.eventtype != s.wantType || !strings.Contains(e.note, s.message) || !strings.Contains(e.note, "generation 1") {
 			t.Fatalf("step %d: Event = %+v", i, e)
 		}
-		if s.wantAction == ActionChangePhase && !strings.Contains(e.note, "-> "+s.phase) {
+		if s.wantAction == ActionChangePhase && !strings.Contains(e.note, "-> "+string(s.phase)) {
 			t.Fatalf("step %d: note does not name the transition: %q", i, e.note)
 		}
 	}

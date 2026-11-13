@@ -63,7 +63,10 @@ func (r *Reconciler) policyConfiguration(ctx context.Context, w *api.ProjectWork
 			return proxy.Config{}, errors.New("a project's HTTPS rules cannot carry a source label; reference rules come from the controller")
 		}
 	}
-	cfg := proxy.Config{Rules: append(append([]api.HTTPSRule{}, rules...), https...), PrivateHosts: private, PrivateGitHubRepositories: privateGitHub}
+	if err := proxy.ProjectRulesConflictWithDeny(r.Config.PlatformFloors, https); err != nil {
+		return proxy.Config{}, err
+	}
+	cfg := proxy.Config{Rules: append(append([]api.HTTPSRule{}, rules...), https...), PrivateHosts: private, PrivateGitHubRepositories: privateGitHub, Platform: r.Config.PlatformFloors}
 	cfg.IndependentCodex = r.IndependentCodexWorkspaceUID != "" && r.IndependentCodexWorkspaceUID == string(w.UID)
 	if cfg.IndependentCodex {
 		cfg.BrokeredProviders = true
@@ -162,8 +165,8 @@ func (r *Reconciler) updateAccessPolicy(ctx context.Context, w *api.ProjectWorks
 	// previous repo still present. Apply the widened policy live (no Pause);
 	// enrollRepositories then grants and refreshes workers. Removals and HTTPS
 	// edits still require Pause so processes stop before a narrower policy.
-	live := w.Spec.DesiredState == "Running" && reflect.DeepEqual(previous, w.Spec.HTTPS) && repositoriesOnlyAdded(previousRepositories, w.Spec.Repositories)
-	if !live && w.Spec.DesiredState != "Paused" {
+	live := w.Spec.DesiredState == api.DesiredRunning && reflect.DeepEqual(previous, w.Spec.HTTPS) && repositoriesOnlyAdded(previousRepositories, w.Spec.Repositories)
+	if !live && w.Spec.DesiredState != api.DesiredPaused {
 		return errors.New("pause the project before changing HTTPS access")
 	}
 	if !live {

@@ -267,6 +267,12 @@ func TestOwnerProgramsOnDisk(t *testing.T) {
 	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("written file %v %v", info, err)
 	}
+	// The renewal reader only trusts files owned by the workspace user (1000).
+	if os.Getuid() != 1000 {
+		if err := os.Chown(path, 1000, 1000); err != nil {
+			t.Skip("owner UID fixture unavailable")
+		}
+	}
 	if out, err := run(oauthOwnerRead, map[string]any{"provider": "cursor"}); err != nil || !strings.Contains(out, "refresh-disk") {
 		t.Fatalf("renewal reader cannot read the installed login: %s", out)
 	}

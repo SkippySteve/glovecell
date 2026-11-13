@@ -23,6 +23,8 @@ func providerForHost(host string) string {
 		return "cursor"
 	case "api.meta.ai":
 		return "muse"
+	case "api.anthropic.com":
+		return "claude"
 	}
 	return ""
 }
@@ -66,7 +68,7 @@ func (s *Server) currentGrants() (map[string]providerGrant, error) {
 		return nil, errors.New("invalid provider grant document")
 	}
 	for provider := range grants {
-		if provider != "codex" && provider != "grok" && provider != "cursor" && provider != "muse" {
+		if provider != "codex" && provider != "grok" && provider != "cursor" && provider != "muse" && provider != "claude" {
 			return nil, errors.New("unreviewed provider grant")
 		}
 	}
@@ -85,6 +87,11 @@ func (s *Server) providerAuthorization(r *http.Request) error {
 	// allow worker account/renewal routes, even under a broad operator path rule.
 	if name == "cursor" && (r.URL.Path == "/auth" || strings.HasPrefix(r.URL.Path, "/auth/") || r.URL.Path == "/oauth" || strings.HasPrefix(r.URL.Path, "/oauth/")) {
 		return errors.New("provider account management belongs to the trusted owner")
+	}
+	if name == "claude" {
+		if err := claudeRequest(r); err != nil {
+			return err
+		}
 	}
 	grants, err := s.currentGrants()
 	if err != nil {
@@ -105,14 +112,22 @@ func (s *Server) providerAuthorization(r *http.Request) error {
 		// Per-cell token: the worker never held the real one. Only the cell
 		// token is accepted (the real token sent from inside means it leaked
 		// from somewhere else), and the real one goes upstream.
-		if name != "grok" && name != "cursor" {
-			return errors.New("cell tokens are reviewed only for grok and cursor")
+		if name != "grok" && name != "cursor" && name != "codex" && name != "claude" {
+			return errors.New("cell tokens are reviewed only for grok, cursor, codex and claude")
 		}
 		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+grant.Access.CellToken)) != 1 {
 			return errors.New("provider credential does not match its current grant")
 		}
 		r.Header.Set("Authorization", "Bearer "+grant.Access.Token)
+		if name == "claude" {
+			claudeOAuthHeaders(r)
+		}
 		return nil
+	}
+	// The Claude subscription token never enters a worker: its grant always
+	// carries a cell token (controller cell_tokens.go).
+	if name == "claude" {
+		return errors.New("Claude subscription authorization stays at the cell proxy")
 	}
 	if r.Header.Get("Authorization") != "Bearer "+grant.Access.Token {
 		return errors.New("provider credential does not match its current grant")

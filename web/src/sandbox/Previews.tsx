@@ -1,7 +1,6 @@
-import {useCallback, useEffect, useState} from 'react';
+import {useState} from 'react';
 import type {Preview} from '../api';
-import {loadPreviews} from '../workspace/sources/previews';
-import {useData} from '../data';
+import {serverTarget} from '../workspace/sources/previews';
 import {Button, Card, Tag, TextArea, type TagVariant} from '../ui';
 import {timeOf, type SandboxContext} from './Sandbox';
 
@@ -24,7 +23,7 @@ function PreviewCard({p, tailnetReady, act, reload}: {p: Preview; tailnetReady: 
   };
   const approvable = ['Pending', 'Denied', 'Revoked'].includes(p.state) && !p.listener.loopback;
   return (
-    <Card variant="sunk" width="full" className="preview" data-preview={p.id}>
+    <Card variant="sunk" width="full" className="preview pv-target" data-preview={p.id} id={serverTarget(p.id)} tabIndex={-1}>
       <div className="preview-head">
         <div><h3>{p.proposedName || 'Unnamed server'} <span className="subtle">· port {p.listener.port}</span></h3>
           <p className="muted">{p.listener.project} / {p.listener.worktree} · PID {p.listener.pid} · {p.listener.address} · seen {timeOf(p.seen)}</p></div>
@@ -49,22 +48,19 @@ function PreviewCard({p, tailnetReady, act, reload}: {p: Preview; tailnetReady: 
   );
 }
 
-export function PreviewsTab({detail, act}: SandboxContext) {
-  const {toast} = useData();
-  const [expired, setExpired] = useState(false);
-  const [data, setData] = useState<{expiredCount: number; requests: Preview[]} | null>(null);
-  const load = useCallback(async () => {
-    try { setData(await loadPreviews(detail.id, expired)); } catch (e) { toast((e as Error).message, true); }
-  }, [detail.id, expired, toast]);
-  useEffect(() => { load(); }, [load, detail.previewPending]);
+// The section (workspace/sections/Previews.tsx) loads the list and owns the
+// "show inactive" choice, so its summary and these cards agree.
+export function PreviewsTab({detail, act, data, inactive, setInactive, reload}: Pick<SandboxContext, 'detail' | 'act'> & {
+  data: {expiredCount: number; requests: Preview[]} | null; inactive: boolean; setInactive: (v: boolean) => void; reload: () => Promise<void>;
+}) {
   return (
     <div className="stack">
       <div className="section-intro">
         <p className="muted">Servers the agent starts inside the sandbox. Approval exposes the observed process and socket; it ends when the process stops or is replaced.</p>
-        {data?.expiredCount ? <Button variant="tertiary" size="small" onClick={() => setExpired(!expired)}>{expired ? 'Hide inactive' : `Show inactive (${data.expiredCount})`}</Button> : null}
+        {data?.expiredCount ? <Button variant="tertiary" size="small" onClick={() => setInactive(!inactive)}>{inactive ? 'Hide inactive' : `Show inactive (${data.expiredCount})`}</Button> : null}
       </div>
       {!data ? <p className="empty">Loading servers…</p> : data.requests.length
-        ? data.requests.map(p => <PreviewCard key={p.id + p.state} p={p} tailnetReady={detail.tailnetReady} act={act} reload={load} />)
+        ? data.requests.map(p => <PreviewCard key={p.id + p.state} p={p} tailnetReady={detail.tailnetReady} act={act} reload={reload} />)
         : <Card variant="sunk" width="full" className="empty-card"><p className="muted">No servers detected. They appear here when the agent listens on a port.</p></Card>}
     </div>
   );

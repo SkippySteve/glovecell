@@ -168,14 +168,14 @@ func TestOrcaAdapterEnsureSuspendRemove(t *testing.T) {
 	if err := a.Remove(ctx, w); err != nil {
 		t.Fatal("remove without a ledger (registrar never ran)", err)
 	}
-	cm := ledger(uid, uid, map[string]string{"purpose": "client-registration", "orca.state": registration.StateRegistered, "orca.id": "11111111-2222-3333-4444-555555555555", "t3.state": registration.StateRevoked})
+	cm := ledger(uid, uid, map[string]string{"purpose": "client-registration", "orca.state": string(registration.StateRegistered), "orca.id": "11111111-2222-3333-4444-555555555555", "t3.state": string(registration.StateRevoked)})
 	if err := c.Create(ctx, cm); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.Remove(ctx, w); err == nil || !strings.Contains(err.Error(), "registered") {
 		t.Fatal("removal reported done while Orca registration is active", err)
 	}
-	for _, state := range []string{registration.StatePending, "half-done"} {
+	for _, state := range []string{string(registration.StatePending), "half-done"} {
 		cm.Data["orca.state"] = state
 		if err := c.Update(ctx, cm); err != nil {
 			t.Fatal(err)
@@ -184,7 +184,7 @@ func TestOrcaAdapterEnsureSuspendRemove(t *testing.T) {
 			t.Fatalf("removal with Orca state %q reported done", state)
 		}
 	}
-	cm.Data["orca.state"] = registration.StateRevoked
+	cm.Data["orca.state"] = string(registration.StateRevoked)
 	if err := c.Update(ctx, cm); err != nil {
 		t.Fatal(err)
 	}
@@ -211,13 +211,13 @@ func TestCommandAdapterWaitsOnCustomKindsOnly(t *testing.T) {
 	ctx := context.Background()
 	w := workspace("command")
 	uid := string(w.UID)
-	cm := ledger(uid, uid, map[string]string{"purpose": "client-registration", "t3.state": registration.StateRegistered, "orca.state": registration.StateRegistered, "herdr.state": registration.StateRevoked})
+	cm := ledger(uid, uid, map[string]string{"purpose": "client-registration", "t3.state": string(registration.StateRegistered), "orca.state": string(registration.StateRegistered), "herdr.state": string(registration.StateRevoked)})
 	c := fake.NewClientBuilder().WithScheme(scheme()).WithObjects(cm).Build()
 	a := NewCommand(c, "control")
 	if err := a.Remove(ctx, w); err != nil {
 		t.Fatal("command adapter waited on built-in kinds", err)
 	}
-	cm.Data["herdr.state"] = registration.StateRegistered
+	cm.Data["herdr.state"] = string(registration.StateRegistered)
 	if err := c.Update(ctx, cm); err != nil {
 		t.Fatal(err)
 	}

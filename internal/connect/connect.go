@@ -39,7 +39,7 @@ func Pod(ctx context.Context, c client.Client, controlNamespace, workspace strin
 	if e := c.Get(ctx, client.ObjectKey{Namespace: controlNamespace, Name: workspace}, w); e != nil {
 		return nil, nil, e
 	}
-	if w.Status.Phase != "Ready" || w.Status.Namespace == "" {
+	if w.Status.Phase != api.PhaseReady || w.Status.Namespace == "" {
 		return w, nil, errors.New("workspace is not ready")
 	}
 	var pods corev1.PodList

@@ -63,7 +63,7 @@ func (s *Server) addProvider(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if obj.Spec.DesiredState == "Removed" {
+	if obj.Spec.DesiredState == api.DesiredRemoved {
 		http.Error(w, "removed projects cannot receive provider access", http.StatusConflict)
 		return
 	}
