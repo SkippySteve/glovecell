@@ -303,7 +303,7 @@ func (b *Broker) refresh(ctx context.Context, refresh, id string) (oauthResponse
 // provider from renewing. Leases expire if this trusted publisher is unavailable.
 func (b *Broker) Tick(ctx context.Context) error {
 	var work api.ProjectWorkspace
-	if b.Client.Get(ctx, types.NamespacedName{Namespace: b.Config.Control, Name: b.Config.Workspace}, &work) != nil || string(work.UID) != b.Config.UID || work.Spec.DesiredState == "Removed" || !work.DeletionTimestamp.IsZero() {
+	if b.Client.Get(ctx, types.NamespacedName{Namespace: b.Config.Control, Name: b.Config.Workspace}, &work) != nil || string(work.UID) != b.Config.UID || work.Spec.DesiredState == api.DesiredRemoved || !work.DeletionTimestamp.IsZero() {
 		return errors.New("workbench unavailable or removed")
 	}
 	namespace := "apc-" + strings.ReplaceAll(b.Config.UID, "-", "")
@@ -343,7 +343,7 @@ func (b *Broker) Tick(ctx context.Context) error {
 	// Re-read lifecycle and projection before publication. Never undo a revocation
 	// made while a refresh request was in flight or replace another provider's data.
 	var current api.ProjectWorkspace
-	if b.Client.Get(ctx, client.ObjectKeyFromObject(&work), &current) != nil || current.UID != work.UID || current.Spec.DesiredState == "Removed" || !current.DeletionTimestamp.IsZero() {
+	if b.Client.Get(ctx, client.ObjectKeyFromObject(&work), &current) != nil || current.UID != work.UID || current.Spec.DesiredState == api.DesiredRemoved || !current.DeletionTimestamp.IsZero() {
 		return errors.New("workbench changed during renewal")
 	}
 	var latest corev1.Secret

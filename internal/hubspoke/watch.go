@@ -113,7 +113,12 @@ func syncOnce(ctx context.Context, c client.Client, enroller Enroller, runtime R
 			slog.Warn("hubspoke revoke", "workspace", w.Name, "error", err)
 			continue
 		}
-		if err := SetState(ctx, c, opts.ControlNamespace, uid, opts.Kind, LedgerRecord{State: StateRevoked, Name: name, ID: rec.ID}); err != nil {
+		revoked, err := rec.To(StateRevoked)
+		if err != nil {
+			return err
+		}
+		revoked.Name = name
+		if err := SetState(ctx, c, opts.ControlNamespace, uid, opts.Kind, revoked); err != nil {
 			return err
 		}
 		slog.Info("revoked spoke", "workspace", w.Name)
@@ -121,20 +126,20 @@ func syncOnce(ctx context.Context, c client.Client, enroller Enroller, runtime R
 	for uid, w := range want {
 		if err := ensureSpoke(ctx, c, enroller, runtime, opts, w, byName); err != nil {
 			slog.Warn("hubspoke enroll", "workspace", w.Name, "error", err)
-			_ = SetState(ctx, c, opts.ControlNamespace, uid, opts.Kind, LedgerRecord{State: StatePending, Name: w.Name})
+			markPending(ctx, c, opts, uid, w.Name)
 		}
 	}
 	return nil
 }
 
 func eligible(w *api.ProjectWorkspace, opts WatchOptions) bool {
-	if w.DeletionTimestamp != nil || w.Spec.DesiredState != "Running" {
+	if w.DeletionTimestamp != nil || w.Spec.DesiredState != api.DesiredRunning {
 		return false
 	}
 	// Enroll as soon as the workspace is Running and still present. Waiting
 	// for Phase Ready would deadlock with Ensure if Ensure waited on the
 	// ledger; the hub instead needs a live worker that prints a pairing offer.
-	if w.Status.Phase == "Removing" || w.Status.Phase == "Removed" {
+	if w.Status.Phase.Leaving() {
 		return false
 	}
 	if opts.ClassName != "" {
@@ -160,15 +165,7 @@ func shouldRevoke(w *api.ProjectWorkspace) bool {
 	if w.DeletionTimestamp != nil {
 		return true
 	}
-	if w.Spec.DesiredState == "Removed" {
-		return true
-	}
-	switch w.Status.Phase {
-	case "Removing", "Removed":
-		return true
-	default:
-		return false
-	}
+	return w.Spec.DesiredState == api.DesiredRemoved || w.Status.Phase.Leaving()
 }
 
 func ensureSpoke(ctx context.Context, c client.Client, enroller Enroller, runtime Runtime, opts WatchOptions, w *api.ProjectWorkspace, byName map[string]Enrolled) error {
@@ -192,7 +189,12 @@ func ensureSpoke(ctx context.Context, c client.Client, enroller Enroller, runtim
 		return fmt.Errorf("need exactly one worker pod, found %d", len(pods.Items))
 	}
 	pod := pods.Items[0].DeepCopy()
-	if err := SetState(ctx, c, opts.ControlNamespace, uid, opts.Kind, LedgerRecord{State: StatePending, Name: w.Name}); err != nil {
+	pending, err := rec.To(StatePending)
+	if err != nil {
+		return err
+	}
+	pending.Name = w.Name
+	if err := SetState(ctx, c, opts.ControlNamespace, uid, opts.Kind, pending); err != nil {
 		return err
 	}
 	offer, err := opts.OfferFrom(ctx, w, pod)
@@ -213,12 +215,39 @@ func ensureSpoke(ctx context.Context, c client.Client, enroller Enroller, runtim
 	if err := enroller.Connect(ctx, enrolled.ID); err != nil {
 		return err
 	}
-	rec = LedgerRecord{State: StateEnrolled, ID: enrolled.ID, Name: enrolled.Name}
+	rec, err = pending.To(StateEnrolled)
+	if err != nil {
+		return err
+	}
+	if rec.ID != enrolled.ID {
+		rec.Projects = nil // a different hub environment has none of them
+	}
+	rec.ID, rec.Name = enrolled.ID, enrolled.Name
 	if err := syncProjects(ctx, c, enroller, opts, w, rec); err != nil {
 		return err
 	}
 	slog.Info("enrolled spoke", "workspace", w.Name, "environment", enrolled.ID)
 	return nil
+}
+
+// markPending records that enrolling the workspace failed and will be
+// retried. A spoke already on the hub stays enrolled with its id and project
+// list, so the next pass only retries the projects that failed (for example a
+// clone still arriving after Resume) instead of enrolling it again.
+func markPending(ctx context.Context, c client.Client, opts WatchOptions, uid, name string) {
+	rec, err := GetState(ctx, c, opts.ControlNamespace, uid, opts.Kind)
+	if err != nil || (rec.State == StateEnrolled && rec.ID != "") {
+		return
+	}
+	pending, err := rec.To(StatePending)
+	if err != nil {
+		slog.Warn("hubspoke ledger", "workspace", name, "error", err)
+		return
+	}
+	if pending.Name == "" {
+		pending.Name = name
+	}
+	_ = SetState(ctx, c, opts.ControlNamespace, uid, opts.Kind, pending)
 }
 
 // projectPaths is the primary checkout plus each Spec.Repositories enrollment.
@@ -264,8 +293,11 @@ func syncProjects(ctx context.Context, c client.Client, enroller Enroller, opts 
 		registered = append(registered, path)
 		slog.Info("registered spoke project", "workspace", w.Name, "path", path, "environment", rec.ID)
 	}
+	rec, err := rec.To(StateEnrolled)
+	if err != nil {
+		return err
+	}
 	rec.Projects = registered
-	rec.State = StateEnrolled
 	rec.Kind = opts.Kind
 	return SetState(ctx, c, opts.ControlNamespace, string(w.UID), opts.Kind, rec)
 }

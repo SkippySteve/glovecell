@@ -21,7 +21,7 @@ func EncodeConfigMapData(l *Ledger) map[string]string {
 		return out
 	}
 	for kind, rec := range l.Clients {
-		out[fmt.Sprintf(clientStateKey, kind)] = rec.State
+		out[fmt.Sprintf(clientStateKey, kind)] = string(rec.State)
 		if rec.ID != "" {
 			out[fmt.Sprintf(clientIDKey, kind)] = rec.ID
 		}
@@ -63,7 +63,7 @@ func DecodeConfigMapData(data map[string]string) (*Ledger, error) {
 	for kind := range kinds {
 		rec := ClientRecord{
 			Kind:  kind,
-			State: data[fmt.Sprintf(clientStateKey, kind)],
+			State: State(data[fmt.Sprintf(clientStateKey, kind)]),
 			ID:    data[fmt.Sprintf(clientIDKey, kind)],
 			Path:  data[fmt.Sprintf(clientPathKey, kind)],
 		}

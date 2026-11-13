@@ -85,3 +85,30 @@ func TestLedgerConfigMapRoundTrip(t *testing.T) {
 		t.Fatal(got.Owners)
 	}
 }
+
+func TestMoveFollowsTheRegisterRevokeFlow(t *testing.T) {
+	for _, c := range []struct {
+		from, to State
+		ok       bool
+	}{
+		{StateAbsent, StatePending, true},
+		{StateAbsent, StateRevoked, true},
+		{StateAbsent, StateRegistered, false}, // must run the register command first
+		{StatePending, StateRegistered, true},
+		{StateRegistered, StatePending, true},
+		{StateRegistered, StateRevoked, false}, // must run the revoke command first
+		{StateRevoked, StatePending, true},
+		{"half-done", StatePending, true}, // a damaged record can still be revoked
+		{"half-done", StateRevoked, false},
+	} {
+		l := NewLedger()
+		l.Clients["t3"] = ClientRecord{Kind: "t3", State: c.from}
+		err := l.Move("t3", c.to, "id", "/m")
+		if (err == nil) != c.ok {
+			t.Errorf("%q -> %q: err %v, want ok=%v", c.from, c.to, err, c.ok)
+		}
+		if err != nil && l.Clients["t3"].State != c.from {
+			t.Errorf("%q -> %q: a refused move changed the record", c.from, c.to)
+		}
+	}
+}

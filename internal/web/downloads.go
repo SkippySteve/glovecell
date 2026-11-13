@@ -91,7 +91,7 @@ type Check struct {
 	ID                 string         `json:"id"`
 	Workspace          string         `json:"workspace"`
 	Input              string         `json:"input"`
-	State              string         `json:"state"` // checking, ready, failed
+	State              checkState     `json:"state"`
 	Hops               []download.Hop `json:"hops"`
 	Digest             string         `json:"digest,omitempty"`
 	Error              string         `json:"error,omitempty"`
@@ -107,7 +107,7 @@ type Job struct {
 	Workspace          string           `json:"workspace"`
 	CheckID            string           `json:"checkId"`
 	Input              string           `json:"input"`
-	State              string           `json:"state"` // starting, downloading, done, failed, changed, cancelled
+	State              jobState         `json:"state"`
 	Hops               []download.Hop   `json:"hops"`
 	Hop                int              `json:"hop"`
 	Followed           []string         `json:"followed"`
@@ -213,7 +213,7 @@ func (s *Server) projectTarget(ctx context.Context, name string, roles ...string
 	if err := s.Client.Get(ctx, types.NamespacedName{Namespace: s.Namespace, Name: name}, obj); err != nil {
 		return nil, http.StatusNotFound, "project unavailable"
 	}
-	if !obj.DeletionTimestamp.IsZero() || obj.Spec.DesiredState != "Running" || obj.Status.Phase != "Ready" {
+	if !obj.DeletionTimestamp.IsZero() || obj.Spec.DesiredState != api.DesiredRunning || obj.Status.Phase != api.PhaseReady {
 		return nil, http.StatusConflict, "the project must be running and Ready"
 	}
 	ns := obj.Status.Namespace
@@ -279,7 +279,7 @@ func (d *Downloads) release(uid string, id string) {
 func (d *Downloads) prune() {
 	now := d.now()
 	for id, c := range d.checks {
-		if now.After(c.Expires) && c.State != "checking" {
+		if now.After(c.Expires) && c.State != checkChecking {
 			delete(d.checks, id)
 		}
 	}
@@ -328,7 +328,7 @@ func (s *Server) startDownloadCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := d.now()
-	rec := &checkRecord{uid: t.uid, Check: Check{ID: id, Workspace: t.obj.Name, Input: download.Exact(u), State: "checking", Hops: []download.Hop{}, DefaultDestination: download.DefaultDestination(u), RequestedBy: actor, Started: now, Expires: now.Add(checkLifetime)}}
+	rec := &checkRecord{uid: t.uid, Check: Check{ID: id, Workspace: t.obj.Name, Input: download.Exact(u), State: checkChecking, Hops: []download.Hop{}, DefaultDestination: download.DefaultDestination(u), RequestedBy: actor, Started: now, Expires: now.Add(checkLifetime)}}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(download.MaxHops)*2*time.Minute)
 	d.mu.Lock()
 	d.prune()
@@ -400,7 +400,7 @@ func (s *Server) startDownload(w http.ResponseWriter, r *http.Request) {
 	if ok {
 		hops = append([]download.Hop(nil), check.Hops...)
 		input = check.Input
-		ok = check.Workspace == r.PathValue("name") && check.State == "ready" && check.Digest == req.Digest && d.now().Before(check.Expires)
+		ok = check.Workspace == r.PathValue("name") && check.State == checkReady && check.Digest == req.Digest && d.now().Before(check.Expires)
 	}
 	d.mu.Unlock()
 	if !ok {
@@ -421,7 +421,7 @@ func (s *Server) startDownload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
-	rec := &jobRecord{uid: t.uid, Job: Job{ID: id, Workspace: t.obj.Name, CheckID: req.CheckID, Input: input, State: "starting", Hops: hops, Followed: []string{}, Destination: req.Destination, Overwrite: req.Overwrite, ExpectedSHA256: sha, AcceptQueryChanges: req.AcceptQueryChanges, MaxBytes: d.MaxBytes, Total: -1, RequestedBy: actor, Started: d.now()}}
+	rec := &jobRecord{uid: t.uid, Job: Job{ID: id, Workspace: t.obj.Name, CheckID: req.CheckID, Input: input, State: jobStarting, Hops: hops, Followed: []string{}, Destination: req.Destination, Overwrite: req.Overwrite, ExpectedSHA256: sha, AcceptQueryChanges: req.AcceptQueryChanges, MaxBytes: d.MaxBytes, Total: -1, RequestedBy: actor, Started: d.now()}}
 	if err := s.downloadAudit(r.Context(), t.obj, "download-requested", id, actor, rec.requestedRecord()); err != nil {
 		d.release(t.uid, id)
 		slog.ErrorContext(r.Context(), "download refused: audit record failed", "workspace_uid", t.uid, "error", err.Error())
@@ -536,16 +536,16 @@ func (d *Downloads) runCheck(ctx context.Context, s *Server, t *target, rec *che
 	hosts := []string{}
 	seen := map[string]bool{}
 	prev := ""
-	finish := func(state, msg string) {
+	finish := func(state checkState, msg string) {
 		d.mu.Lock()
 		rec.State, rec.Error = state, msg
-		if state == "ready" {
+		if state == checkReady {
 			rec.Digest = download.ChainDigest(rec.Hops)
 		}
 		rec.Expires = d.now().Add(checkLifetime)
 		hops := append([]download.Hop(nil), rec.Hops...)
 		d.mu.Unlock()
-		data := map[string]string{"url": download.Redact(u), "chain": chainSummary(hops), "outcome": state}
+		data := map[string]string{"url": download.Redact(u), "chain": chainSummary(hops), "outcome": string(state)}
 		if msg != "" {
 			data["error"] = msg
 		}
@@ -561,32 +561,32 @@ func (d *Downloads) runCheck(ctx context.Context, s *Server, t *target, rec *che
 		if seen[hop.URL] {
 			hop.Refused = "redirect loop: this URL appeared earlier in the chain"
 			d.appendHop(&rec.Hops, hop)
-			finish("failed", "the redirect chain loops")
+			finish(checkFailed, "the redirect chain loops")
 			return
 		}
 		if i >= download.MaxHops {
 			hop.Refused = fmt.Sprintf("more than %d hops", download.MaxHops)
 			d.appendHop(&rec.Hops, hop)
-			finish("failed", fmt.Sprintf("more than %d redirects", download.MaxHops-1))
+			finish(checkFailed, fmt.Sprintf("more than %d redirects", download.MaxHops-1))
 			return
 		}
 		seen[hop.URL] = true
 		hosts = appendHost(hosts, cur.Hostname())
 		if err := d.applyPolicy(ctx, s, t, rec.ID, hosts); err != nil {
 			d.appendHop(&rec.Hops, hop)
-			finish("failed", err.Error())
+			finish(checkFailed, err.Error())
 			return
 		}
 		st, ev, err := d.grantAndRun(ctx, t, rec.ID+"-"+strconv.Itoa(i), download.Job{Mode: "probe", URL: hop.URL, TimeoutSeconds: 90}, nil)
 		hop.Status, hop.Probe, hop.ContentLength, hop.ContentType = st.Status, st.Method, st.ContentLength, st.ContentType
 		if err != nil {
 			d.appendHop(&rec.Hops, hop)
-			finish("failed", err.Error())
+			finish(checkFailed, err.Error())
 			return
 		}
 		if ev.Event != "probe" {
 			d.appendHop(&rec.Hops, hop)
-			finish("failed", "the sandbox helper did not report the check")
+			finish(checkFailed, "the sandbox helper did not report the check")
 			return
 		}
 		if st.Status >= 300 && st.Status < 400 {
@@ -594,7 +594,7 @@ func (d *Downloads) runCheck(ctx context.Context, s *Server, t *target, rec *che
 			if rerr != nil {
 				hop.Refused = rerr.Error()
 				d.appendHop(&rec.Hops, hop)
-				finish("failed", "a redirect was refused: "+rerr.Error())
+				finish(checkFailed, "a redirect was refused: "+rerr.Error())
 				return
 			}
 			d.appendHop(&rec.Hops, hop)
@@ -603,11 +603,11 @@ func (d *Downloads) runCheck(ctx context.Context, s *Server, t *target, rec *che
 		}
 		d.appendHop(&rec.Hops, hop)
 		if st.Status == http.StatusOK {
-			finish("ready", "")
+			finish(checkReady, "")
 		} else if st.Status == 0 {
-			finish("failed", "the destination could not be reached through the sandbox proxy ("+st.Failure+")")
+			finish(checkFailed, "the destination could not be reached through the sandbox proxy ("+st.Failure+")")
 		} else {
-			finish("failed", fmt.Sprintf("the server answered %d %s", st.Status, http.StatusText(st.Status)))
+			finish(checkFailed, fmt.Sprintf("the server answered %d %s", st.Status, http.StatusText(st.Status)))
 		}
 		return
 	}
@@ -643,11 +643,8 @@ func (d *Downloads) runJob(ctx context.Context, s *Server, t *target, rec *jobRe
 		d.mu.Lock()
 		now := d.now()
 		rec.Finished = &now
-		if rec.State == "starting" || rec.State == "downloading" {
-			rec.State = "failed"
-		}
-		if ctx.Err() != nil && rec.State == "failed" && rec.Code == "" {
-			rec.State, rec.Code, rec.Error = "cancelled", download.CodeCancelled, "download cancelled or timed out"
+		if rec.State = rec.State.settle(ctx.Err() != nil, rec.Code); rec.State == jobCancelled && rec.Code == "" {
+			rec.Code, rec.Error = download.CodeCancelled, "download cancelled or timed out"
 		}
 		record := rec.finishedRecord()
 		d.mu.Unlock()
@@ -661,7 +658,10 @@ func (d *Downloads) runJob(ctx context.Context, s *Server, t *target, rec *jobRe
 	}
 	cur, _ := download.ParseURL(rec.Hops[0].URL)
 	for i := 0; i < len(rec.Hops); i++ {
-		update(func(j *Job) { j.Hop, j.State = i, "downloading"; j.Followed = append(j.Followed, download.Redact(cur)) })
+		update(func(j *Job) {
+			j.Hop, j.State = i, j.State.to(jobDownloading)
+			j.Followed = append(j.Followed, download.Redact(cur))
+		})
 		job := download.Job{Mode: "fetch", URL: download.Exact(cur), TimeoutSeconds: int(d.Timeout / time.Second), Home: workerHome, Destination: rec.Destination, SHA256: rec.ExpectedSHA256, Overwrite: rec.Overwrite, MaxBytes: rec.MaxBytes}
 		st, ev, err := d.grantAndRun(ctx, t, rec.ID+"-"+strconv.Itoa(i), job, func(e download.Event) {
 			if e.Event == "progress" {
@@ -675,7 +675,7 @@ func (d *Downloads) runJob(ctx context.Context, s *Server, t *target, rec *jobRe
 		switch ev.Event {
 		case "done":
 			update(func(j *Job) {
-				j.State, j.Bytes, j.Total, j.SHA256, j.Path = "done", ev.Bytes, ev.Bytes, ev.SHA256, ev.Path
+				j.State, j.Bytes, j.Total, j.SHA256, j.Path = j.State.to(jobDone), ev.Bytes, ev.Bytes, ev.SHA256, ev.Path
 				if i < len(j.Hops)-1 {
 					j.Note = fmt.Sprintf("the server answered at hop %d of %d without redirecting further; the file came from that approved URL", i+1, len(j.Hops))
 				}
@@ -685,14 +685,14 @@ func (d *Downloads) runJob(ctx context.Context, s *Server, t *target, rec *jobRe
 			next, rerr := download.ResolveRedirect(cur, st.Location)
 			if rerr != nil {
 				update(func(j *Job) {
-					j.State, j.Error = "changed", "a redirect was refused: "+rerr.Error()
+					j.State, j.Error = j.State.to(jobChanged), "a redirect was refused: "+rerr.Error()
 					j.Change = &download.Change{Hop: i + 1, Expected: expectedAt(j.Hops, i+1), Observed: download.RedactString(st.Location), Reason: rerr.Error()}
 				})
 				return
 			}
 			if i+1 >= len(rec.Hops) {
 				update(func(j *Job) {
-					j.State, j.Error = "changed", "the server now redirects where it answered directly during the check"
+					j.State, j.Error = j.State.to(jobChanged), "the server now redirects where it answered directly during the check"
 					j.Change = &download.Change{Hop: i + 1, Expected: "(end of the approved chain)", Observed: download.Redact(next), Reason: "extra redirect"}
 				})
 				return
@@ -702,7 +702,7 @@ func (d *Downloads) runJob(ctx context.Context, s *Server, t *target, rec *jobRe
 				queryOnly := download.SameExceptQuery(next, want)
 				if !(queryOnly && rec.AcceptQueryChanges) {
 					update(func(j *Job) {
-						j.State, j.Error = "changed", "the redirect chain changed since it was checked; review the new chain"
+						j.State, j.Error = j.State.to(jobChanged), "the redirect chain changed since it was checked; review the new chain"
 						reason := "different URL"
 						if queryOnly {
 							reason = "same host and path, different query (for example a fresh signature)"
@@ -970,7 +970,7 @@ func (j *jobRecord) requestedRecord() map[string]string {
 }
 
 func (j *jobRecord) finishedRecord() map[string]string {
-	data := map[string]string{"url": j.Hops[0].Redacted, "followed": strings.Join(j.Followed, " -> "), "destination": j.Destination, "outcome": j.State, "bytes": strconv.FormatInt(j.Bytes, 10)}
+	data := map[string]string{"url": j.Hops[0].Redacted, "followed": strings.Join(j.Followed, " -> "), "destination": j.Destination, "outcome": string(j.State), "bytes": strconv.FormatInt(j.Bytes, 10)}
 	if j.SHA256 != "" {
 		data["sha256"] = j.SHA256
 	}
@@ -981,7 +981,7 @@ func (j *jobRecord) finishedRecord() map[string]string {
 		data["change"] = fmt.Sprintf("hop %d: expected %s, observed %s (%s)", j.Change.Hop+1, j.Change.Expected, j.Change.Observed, j.Change.Reason)
 	}
 	msg := fmt.Sprintf("Download %s: %s to %s", j.State, j.Hops[0].Redacted, j.Destination)
-	if j.State == "done" {
+	if j.State == jobDone {
 		msg += fmt.Sprintf(" (%d bytes, sha256 %s)", j.Bytes, j.SHA256)
 	} else if j.Error != "" {
 		msg += " (" + j.Error + ")"
