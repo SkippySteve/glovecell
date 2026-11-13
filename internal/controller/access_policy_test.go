@@ -165,10 +165,72 @@ func TestInterruptedAccessUpdateRecoversWithoutRecreatingStorage(t *testing.T) {
 func TestRepositoryHostsCannotBeOverridden(t *testing.T) {
 	r, w, _ := fixture(t)
 	for _, host := range []string{"git.example.com"} {
-		_, err := r.policyConfiguration(w, []api.HTTPSRule{{Host: host, Methods: []string{"POST"}, Paths: []string{"/"}}})
+		_, err := r.policyConfiguration(context.Background(), w, []api.HTTPSRule{{Host: host, Methods: []string{"POST"}, Paths: []string{"/"}}})
 		if err == nil {
 			t.Fatal("repository permissions expanded", host)
 		}
+	}
+}
+
+func TestRunningAdditiveRepositoryEnrollmentDoesNotRequirePause(t *testing.T) {
+	ctx := context.Background()
+	r, w, _ := fixture(t)
+	if err := r.ensure(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	var claim corev1.PersistentVolumeClaim
+	if err := r.Get(ctx, types.NamespacedName{Namespace: namespace(w), Name: "workspace"}, &claim); err != nil {
+		t.Fatal(err)
+	}
+	original := claim.ResourceVersion
+	w.Spec.Repositories = []api.RepositoryProject{
+		{Name: "extra", Host: "forgejo", Repository: "steve/extra"},
+		{Name: "library", Host: "github", Repository: "upstream/library", Public: true},
+	}
+	w.Generation++
+	if err := r.Update(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ensure(ctx, w); err != nil {
+		t.Fatal("running enrollment", err)
+	}
+	var ledger corev1.Secret
+	if err := r.Get(ctx, types.NamespacedName{Namespace: w.Namespace, Name: identity(w)}, &ledger); err != nil {
+		t.Fatal(err)
+	}
+	var saved []api.RepositoryProject
+	if err := json.Unmarshal(ledger.Data[RepositoriesLedgerKey], &saved); err != nil || !reflect.DeepEqual(saved, w.Spec.Repositories) {
+		t.Fatal("repository ledger not saved while running", err, saved)
+	}
+	if err := r.Get(ctx, types.NamespacedName{Namespace: namespace(w), Name: "workspace"}, &claim); err != nil {
+		t.Fatal(err)
+	}
+	if claim.ResourceVersion != original {
+		t.Fatal("existing volume changed during running enrollment")
+	}
+	// HTTPS edits while Running still require Pause.
+	w.Spec.HTTPS = []api.HTTPSRule{{Host: "api.example.com", Methods: []string{"GET"}, Paths: []string{"/v1"}}}
+	w.Generation++
+	if err := r.Update(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ensure(ctx, w); err == nil || !strings.Contains(err.Error(), "pause the project") {
+		t.Fatal("accepted running HTTPS change after enrollment", err)
+	}
+}
+
+func TestRepositoriesOnlyAdded(t *testing.T) {
+	base := []api.RepositoryProject{{Name: "a", Host: "forgejo", Repository: "steve/a"}}
+	if !repositoriesOnlyAdded(nil, base) || !repositoriesOnlyAdded(base, base) {
+		t.Fatal("empty-to-one and equal should be additive")
+	}
+	grown := append(append([]api.RepositoryProject{}, base...), api.RepositoryProject{Name: "b", Host: "forgejo", Repository: "steve/b"})
+	if !repositoriesOnlyAdded(base, grown) {
+		t.Fatal("growth should be additive")
+	}
+	replaced := []api.RepositoryProject{{Name: "other", Host: "forgejo", Repository: "steve/other"}}
+	if repositoriesOnlyAdded(base, replaced) || repositoriesOnlyAdded(grown, base) {
+		t.Fatal("replacement or shrink must not count as additive")
 	}
 }
 

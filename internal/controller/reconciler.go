@@ -26,8 +26,11 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/auditlog"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/forge"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/forgejo"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/network"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/orchestrator"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/proxy"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -41,9 +44,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 var sandboxGVK = schema.GroupVersionKind{Group: "agents.x-k8s.io", Version: "v1beta1", Kind: "Sandbox"}
@@ -73,6 +79,54 @@ type Config struct {
 	// list in audit records.
 	ReferenceRules  []api.HTTPSRule
 	ReferenceDigest string
+
+	// VendorTelemetry allows the fixed vendor collection routes in the proxy.
+	VendorTelemetry bool
+
+	// OrcaHubSpoke runs orcad in project workers and waits for the hub
+	// (`agent-project-controller hubspoke --watch`) to enroll them. Requires
+	// OrcaRuntimeImage (orca-pilot or equivalent) and HUBSPOKE_ORCA_ENABLED on
+	// the controller. Off by default.
+	OrcaHubSpoke bool
+	// OrcaRuntimeImage is the digest-pinned image that contains orcad. Empty
+	// keeps today's sleep worker even when OrcaHubSpoke is set.
+	OrcaRuntimeImage string
+	// OrcaOrchestratorClass is the OrchestratorClass name that selects the
+	// hub-spoke path (default "orca").
+	OrcaOrchestratorClass string
+	// OrcaSpokePublicDomain is the DNS suffix for desktop-reachable spoke
+	// hosts (<project>.<domain>). Empty keeps cluster-local pairing only
+	// (phone via hub still works; desktop outside the cluster cannot dial).
+	// Independent of PUBLIC_ORIGIN and hubspoke.hub.publicAddress.
+	OrcaSpokePublicDomain string
+	// OrcaSpokeGateway* select the Gateway API listener for spoke HTTPRoutes.
+	OrcaSpokeGatewayName      string
+	OrcaSpokeGatewayNamespace string
+	OrcaSpokeGatewaySection   string
+	// OrcaHubNamespace is the hub's pod namespace (Traefik CNP peer + docs).
+	OrcaHubNamespace string
+	// HubLogsClusterRole, when set with OrcaHubSpoke, is bound to the hub's
+	// ServiceAccount (HubServiceAccount in OrcaHubNamespace) in each project
+	// namespace, so the hub reads worker logs only in cells instead of
+	// through a cluster-wide grant. Empty leaves project RBAC unchanged.
+	HubLogsClusterRole string
+	// HubServiceAccount is the hub's ServiceAccount name (default orca-hub).
+	HubServiceAccount string
+
+	// AuditAssignmentFeed publishes per-cell host audit assignments into
+	// ConfigMap AuditAssignmentFeedConfigMap in Namespace (default
+	// glovecell-audit-assignments). Off by default; enabling it is the
+	// controller half of the inert host feed in the deployment repo (#217).
+	AuditAssignmentFeed bool
+	// AuditAssignmentFeedConfigMap overrides the ConfigMap name. Empty uses
+	// glovecell-audit-assignments.
+	AuditAssignmentFeedConfigMap string
+
+	// CellTokens lists brokered providers whose workers receive a per-cell
+	// stand-in instead of the real access token (PROVIDER_CELL_TOKENS,
+	// cell_tokens.go). Turn on only once every cell's proxy runs an image that
+	// understands cellToken: an older proxy refuses the field (fails closed).
+	CellTokens map[string]bool
 }
 
 func (c Config) Validate() error {
@@ -91,6 +145,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := validateProjectAccess(c.ProjectAccessClusterRole, c.ControllerServiceAccount); err != nil {
+		return err
+	}
+	if err := validateHubLogs(c.HubLogsClusterRole, c.HubServiceAccount, c.OrcaHubSpoke); err != nil {
 		return err
 	}
 	if q, e := resource.ParseQuantity(c.StorageSize); e != nil || q.Sign() <= 0 {
@@ -113,6 +170,24 @@ func (c Config) Validate() error {
 			return errors.New("invalid image digest")
 		}
 	}
+	if c.OrcaHubSpoke {
+		digest := strings.Split(c.OrcaRuntimeImage, "@sha256:")
+		if len(digest) != 2 || digest[0] == "" || len(digest[1]) != 64 {
+			return errors.New("ORCA_RUNTIME_IMAGE requires a sha256 digest when hubspoke is enabled")
+		}
+		if _, e := hex.DecodeString(digest[1]); e != nil {
+			return errors.New("invalid ORCA_RUNTIME_IMAGE digest")
+		}
+		domain := strings.TrimSpace(c.OrcaSpokePublicDomain)
+		if domain != "" {
+			if strings.Contains(domain, "/") || strings.Contains(domain, ":") || strings.HasPrefix(domain, ".") || strings.HasSuffix(domain, ".") {
+				return errors.New("HUBSPOKE_SPOKE_DOMAIN must be a DNS suffix without scheme or port")
+			}
+			if strings.TrimSpace(c.OrcaSpokeGatewayName) == "" || strings.TrimSpace(c.OrcaSpokeGatewayNamespace) == "" || strings.TrimSpace(c.OrcaSpokeGatewaySection) == "" {
+				return errors.New("HUBSPOKE_SPOKE_GATEWAY_NAME/NAMESPACE/SECTION required when HUBSPOKE_SPOKE_DOMAIN is set")
+			}
+		}
+	}
 	return nil
 }
 func (c Config) proxyImage() string {
@@ -123,19 +198,21 @@ func (c Config) proxyImage() string {
 }
 
 // ProjectAccess owns externally registered application access for a sandbox.
-type ProjectAccess interface {
-	Ensure(context.Context, *api.ProjectWorkspace) error
-	Suspend(context.Context, *api.ProjectWorkspace) error
-	Remove(context.Context, *api.ProjectWorkspace) error
-}
+// Orchestrator adapters (internal/orchestrator) implement it.
+type ProjectAccess = orchestrator.Access
 
 type Reconciler struct {
 	IndependentCodexWorkspaceUID string
 	ReaderWorkspaceUID           string
 	ReaderRoute                  *proxy.ReaderRoute
-	Access                       ProjectAccess
+	// Access is the deployment's default orchestrator, used by workspaces
+	// without spec.orchestratorClassName: T3 Connect when enabled, else nil.
+	Access ProjectAccess
+	// Orchestrators holds the adapters OrchestratorClasses may name. A
+	// workspace naming a class this registry cannot serve is refused.
+	Orchestrators *orchestrator.Registry
 	client.Client
-	Host    forgejo.Host
+	Host    forge.Forge
 	Network network.Provider
 	Config  Config
 	// LAN is the operator's home-LAN grant setting; empty disables grants.
@@ -145,6 +222,15 @@ type Reconciler struct {
 	// ProviderLeases is the trusted Secret the provider broker writes; nil
 	// turns spec.providers off (see providers.go).
 	ProviderLeases *types.NamespacedName
+	// Events publishes lifecycle Events (events.k8s.io/v1) regarding each
+	// workspace (events.go). Nil publishes nothing.
+	Events events.EventRecorder
+	// AuditLog keeps the durable history (D13: PostgreSQL). Nil writes the
+	// audit ConfigMaps in Config.Namespace, as before.
+	AuditLog *auditlog.Log
+	// Forges resolves spec.forgeClassName (forge_class.go). Nil allows only
+	// the configured forge (Host and Config).
+	Forges *forge.Resolver
 	// GitHubLease is the trusted Secret the GitHub broker writes; nil turns
 	// spec.github off (see github.go).
 	GitHubLease *types.NamespacedName
@@ -185,7 +271,31 @@ func (r *Reconciler) Setup(m ctrl.Manager) error {
 	if e != nil {
 		return e
 	}
-	return ctrl.NewControllerManagedBy(m).For(&api.ProjectWorkspace{}).Complete(r)
+	// A grant change or expiry, and a profile edit, reconcile the cells concerned.
+	grantCell := handler.EnqueueRequestsFromMapFunc(func(_ context.Context, o client.Object) []reconcile.Request {
+		g, ok := o.(*api.AccessGrant)
+		if !ok || g.Namespace != r.Config.Namespace || g.Spec.Cell == "" {
+			return nil
+		}
+		return []reconcile.Request{{NamespacedName: types.NamespacedName{Namespace: g.Namespace, Name: g.Spec.Cell}}}
+	})
+	profileCells := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, o client.Object) []reconcile.Request {
+		var list api.ProjectWorkspaceList
+		if err := r.List(ctx, &list, client.InNamespace(r.Config.Namespace)); err != nil {
+			return nil
+		}
+		var out []reconcile.Request
+		for _, w := range list.Items {
+			if w.Spec.AccessProfileName == o.GetName() {
+				out = append(out, reconcile.Request{NamespacedName: types.NamespacedName{Namespace: w.Namespace, Name: w.Name}})
+			}
+		}
+		return out
+	})
+	return ctrl.NewControllerManagedBy(m).For(&api.ProjectWorkspace{}).
+		Watches(&api.AccessGrant{}, grantCell).
+		Watches(&api.AccessProfile{}, profileCells).
+		Complete(r)
 }
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ctrl.Result, err error) {
 	started := time.Now()
@@ -196,7 +306,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ct
 			outcome = "retry"
 			span.SetStatus(codes.Error, "reconciliation will retry")
 		}
-		opts := metric.WithAttributes(attribute.String("outcome", outcome))
+		opts := metric.WithAttributes(attribute.String("status", outcome))
 		duration.Record(ctx, time.Since(started).Seconds(), opts)
 		attempts.Add(ctx, 1, opts)
 		span.End()
@@ -208,6 +318,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ct
 	if e := r.Get(ctx, req.NamespacedName, w); e != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(e)
 	}
+	// Every forge operation below uses the workspace's own forge. When its
+	// class does not resolve, every forge call fails: nothing is granted, and
+	// removal of a workspace that holds a grant waits for revocation.
+	r, forgeErr := r.forWorkspace(ctx, w)
 	if !w.DeletionTimestamp.IsZero() || w.Spec.DesiredState == "Removed" {
 		if e := r.remove(ctx, w); e != nil {
 			statusErr := r.status(ctx, w, "Removing", false, "CleanupPending", e.Error())
@@ -223,7 +337,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ct
 		controllerutil.AddFinalizer(w, api.Finalizer)
 		return ctrl.Result{Requeue: true}, r.Update(ctx, w)
 	}
-	if e := r.validate(ctx, w); e != nil {
+	e := forgeErr
+	if e == nil {
+		e = r.validate(ctx, w)
+	}
+	if e != nil {
 		if stopErr := r.suspend(ctx, w); stopErr != nil {
 			return ctrl.Result{}, stopErr
 		}
@@ -235,7 +353,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ct
 		if _, providerErr := r.applyProviders(ctx, w, nil, nil); providerErr != nil {
 			return ctrl.Result{}, providerErr
 		}
-		if statusErr := r.status(ctx, w, "Blocked", false, "PolicyRejected", e.Error()); statusErr != nil {
+		if statusErr := r.status(ctx, w, "Blocked", false, classRejection(e), e.Error()); statusErr != nil {
 			return ctrl.Result{}, statusErr
 		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
@@ -280,14 +398,33 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ct
 			}
 		}
 	}
-	if r.Access != nil {
+	access, e := r.orchestratorAccess(ctx, w)
+	if e != nil {
+		// The class changed since validation; grant nothing and retry.
+		if stopErr := r.suspendOrchestrators(ctx, w, nil, e); stopErr != nil {
+			return ctrl.Result{}, stopErr
+		}
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, r.status(ctx, w, "Blocked", false, classRejection(e), e.Error())
+	}
+	if access != nil {
+		pendingReason, readyMessage := orchestrator.Wording(access)
 		if ready {
-			if e := r.Access.Ensure(ctx, w); e != nil {
-				phase, ready, reason, message = "Preparing", false, "T3ConnectPending", e.Error()
-			} else {
-				message = "Project sandbox and T3 Connect environment are ready"
+			if w.Spec.OrchestratorClassName != "" {
+				if e := r.audit(ctx, w, orchestratorBound); e != nil {
+					return ctrl.Result{}, e
+				}
+				if r.Access != nil && !sameAccess(r.Access, access) {
+					if e := r.Access.Suspend(ctx, w); e != nil {
+						return ctrl.Result{RequeueAfter: 5 * time.Second}, e
+					}
+				}
 			}
-		} else if e := r.Access.Suspend(ctx, w); e != nil {
+			if e := access.Ensure(ctx, w); e != nil {
+				phase, ready, reason, message = "Preparing", false, pendingReason, e.Error()
+			} else {
+				message = readyMessage
+			}
+		} else if e := r.suspendOrchestrators(ctx, w, access, nil); e != nil {
 			return ctrl.Result{RequeueAfter: 5 * time.Second}, e
 		}
 	}
@@ -346,32 +483,30 @@ func (r *Reconciler) validate(ctx context.Context, w *api.ProjectWorkspace) erro
 	if e := r.Get(ctx, types.NamespacedName{Name: r.Config.RuntimeClass}, runtime); e != nil {
 		return errors.New("configured isolation runtime unavailable")
 	}
-	if _, e := r.policyConfiguration(w, w.Spec.HTTPS); e != nil {
+	if _, e := r.policyConfiguration(ctx, w, w.Spec.HTTPS); e != nil {
 		return e
 	}
-	if e := r.validateLANHosts(w); e != nil {
+	hosts, _, e := r.effectiveLAN(ctx, w)
+	if e != nil {
+		return e
+	}
+	if e := r.validateLANHosts(hosts); e != nil {
 		return e
 	}
 	if e := r.validateGitHub(w); e != nil {
 		return e
 	}
-	return r.validateProviders(w)
+	if e := r.validateProviders(ctx, w); e != nil {
+		return e
+	}
+	_, e = r.orchestratorAccess(ctx, w)
+	return e
 }
 func (r *Reconciler) audit(ctx context.Context, w *api.ProjectWorkspace, action string) error {
 	return r.auditDetails(ctx, w, action, nil)
 }
 func (r *Reconciler) auditDetails(ctx context.Context, w *api.ProjectWorkspace, action string, details map[string]string) error {
 	name := fmt.Sprintf("audit-%s-%d-%s", strings.ReplaceAll(string(w.UID), "-", ""), w.Generation, action)
-	cm := &corev1.ConfigMap{}
-	key := types.NamespacedName{Namespace: r.Config.Namespace, Name: name}
-	e := r.Get(ctx, key, cm)
-	if e == nil {
-		return owner(w, cm)
-	}
-	if !apierrors.IsNotFound(e) {
-		return e
-	}
-	immutable := true
 	actor := w.Annotations["projects.agentwork.dev/requested-by"]
 	if actor == "" {
 		actor = "kubernetes-api-client"
@@ -380,7 +515,16 @@ func (r *Reconciler) auditDetails(ctx context.Context, w *api.ProjectWorkspace, 
 	for key, value := range details {
 		data[key] = value
 	}
-	return r.Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: r.Config.Namespace, Labels: labels(w)}, Immutable: &immutable, Data: data})
+	return r.auditLog().Record(ctx, string(w.UID), name, data, "controller")
+}
+
+// auditLog is the durable history: PostgreSQL when configured, else the
+// audit ConfigMaps in the control namespace (internal/auditlog).
+func (r *Reconciler) auditLog() *auditlog.Log {
+	if r.AuditLog != nil {
+		return r.AuditLog
+	}
+	return &auditlog.Log{Client: r.Client, Namespace: r.Config.Namespace}
 }
 func (r *Reconciler) status(ctx context.Context, w *api.ProjectWorkspace, phase string, ready bool, reason, message string) error {
 	old := w.DeepCopyObject().(*api.ProjectWorkspace)
@@ -391,15 +535,21 @@ func (r *Reconciler) status(ctx context.Context, w *api.ProjectWorkspace, phase 
 			return e
 		}
 	}
+	// Lifecycle history goes to Events, not status.audit (deprecated: kept
+	// readable, never appended). One Event per transition: a phase change,
+	// or a new reason or message on a not-ready condition in the same phase.
 	if w.Status.Phase != phase {
 		if e := r.audit(ctx, w, "phase-"+strings.ToLower(phase)); e != nil {
 			return e
 		}
-		w.Status.Audit = append(w.Status.Audit, api.AuditEvent{Time: metav1.Now(), Action: phase, Generation: w.Generation})
 		slog.InfoContext(ctx, "workspace phase changed", "workspace_uid", string(w.UID), "generation", w.Generation, "phase", phase, "trace_id", trace.SpanContextFromContext(ctx).TraceID().String())
-		if len(w.Status.Audit) > 32 {
-			w.Status.Audit = w.Status.Audit[len(w.Status.Audit)-32:]
+		from := w.Status.Phase
+		if from == "" {
+			from = "Requested"
 		}
+		r.event(w, phaseEventType(phase, reason), reason, ActionChangePhase, fmt.Sprintf("Phase %s -> %s (generation %d): %s", from, phase, w.Generation, message))
+	} else if !ready && (previous == nil || previous.Reason != reason || previous.Message != message) {
+		r.event(w, phaseEventType(phase, reason), reason, ActionUpdateCondition, fmt.Sprintf("%s (generation %d): %s", phase, w.Generation, message))
 	}
 	w.Status.Phase = phase
 	w.Status.Namespace = namespace(w)
@@ -508,6 +658,9 @@ func (r *Reconciler) ensure(ctx context.Context, w *api.ProjectWorkspace) error 
 	if e = r.ensureRegistrarAccess(ctx, w); e != nil {
 		return e
 	}
+	if e = r.ensureHubLogsAccess(ctx, w); e != nil {
+		return e
+	}
 	// LAN grants apply before the rest of the project objects, so removing one
 	// takes effect even while another preparation step is failing.
 	if e = r.applyLANHosts(ctx, w); e != nil {
@@ -532,7 +685,8 @@ func (r *Reconciler) ensure(ctx context.Context, w *api.ProjectWorkspace) error 
 	if e = r.updateAccessPolicy(ctx, w, s); e != nil {
 		return e
 	}
-	if e = r.enrollRepositories(ctx, w, s); e != nil {
+	restartWorkers, e := r.enrollRepositories(ctx, w, s)
+	if e != nil {
 		return e
 	}
 	if e = r.objects(ctx, w, s, brokered); e != nil {
@@ -541,8 +695,18 @@ func (r *Reconciler) ensure(ctx context.Context, w *api.ProjectWorkspace) error 
 	if e = r.saveAccessPolicy(ctx, w, s); e != nil {
 		return e
 	}
+	// Refresh workers after proxy/network policy includes the new remotes.
+	if restartWorkers {
+		if _, err := r.restartWorkersForEnrollment(ctx, w); err != nil {
+			return err
+		}
+	}
 	if !bytes.Equal(beforeCA, s.Data["ca.crt"]) {
 		return r.restartInspection(ctx, w)
+	}
+	// Host audit assignment for apc-*/project. No-op while the feed flag is off.
+	if e = r.syncAuditAssignmentFeed(ctx, w, true); e != nil {
+		return e
 	}
 	return nil
 }
@@ -683,9 +847,16 @@ func (r *Reconciler) apply(ctx context.Context, w *api.ProjectWorkspace, obj cli
 			wantCopy, _ := cloneValue(want).(map[string]any)
 			normalizeSandboxNameservers(gotCopy)
 			normalizeSandboxNameservers(wantCopy)
+			// Worker telemetry settings arrive with the next worker replacement;
+			// they never force a running worker to restart.
+			stripTelemetryEnv(gotCopy)
+			stripTelemetryEnv(wantCopy)
 			gotCopy["operatingMode"] = want["operatingMode"]
 			if !contains(gotCopy, wantCopy) {
 				return r.replaceWorkspaceImage(ctx, w, current, got, want)
+			}
+			if e := r.reconcileTelemetryEnv(ctx, w, current, got, want); e != nil {
+				return e
 			}
 			gotNS, _, e := unstructured.NestedStringSlice(got, "podTemplate", "spec", "dnsConfig", "nameservers")
 			if e != nil {
@@ -728,6 +899,27 @@ func (r *Reconciler) apply(ctx context.Context, w *api.ProjectWorkspace, obj cli
 			sum := sha256.Sum256([]byte(strings.Join(wantNS, ",")))
 			return r.audit(ctx, w, "dns-"+hex.EncodeToString(sum[:6]))
 		}
+		// Spoke HTTPRoute and orca-runtime CNP may gain a public dial; patch
+		// their specs. Other Cilium policies stay immutable (drift).
+		if expected.GetKind() == "HTTPRoute" || expected.GetKind() == "CiliumNetworkPolicy" && expected.GetName() == "orca-runtime" {
+			if same(got, want) {
+				return nil
+			}
+			old := current.DeepCopy()
+			if e := unstructured.SetNestedMap(current.Object, want, "spec"); e != nil {
+				return e
+			}
+			return r.Patch(ctx, current, client.MergeFrom(old))
+		}
+		// Cell telemetry switched on or off changes only the worker and proxy
+		// policies' telemetry-port rules; patch those to the expected spec.
+		if !same(got, want) && (expected.GetName() == "worker" || expected.GetName() == "proxy") && same(network.StripTelemetry(got), network.StripTelemetry(want)) {
+			old := current.DeepCopy()
+			if e := unstructured.SetNestedMap(current.Object, want, "spec"); e != nil {
+				return e
+			}
+			return r.Patch(ctx, current, client.MergeFrom(old))
+		}
 		if !same(got, want) {
 			return errors.New("network policy drift detected")
 		}
@@ -764,7 +956,10 @@ func (r *Reconciler) apply(ctx context.Context, w *api.ProjectWorkspace, obj cli
 		wantSpec := expected.Spec.DeepCopy()
 		normalizeProxyDrift(gotSpec)
 		normalizeProxyDrift(wantSpec)
-		if !contains(*gotSpec, *wantSpec) || current.Spec.Template.Spec.DNSConfig == nil || expected.Spec.Template.Spec.DNSConfig == nil {
+		// Both directions: a field the controller never sets (an added env,
+		// command, probe, init container, host alias or annotation) is drift,
+		// not just a changed one. API-server defaults are cleared first.
+		if !same(*gotSpec, *wantSpec) || current.Spec.Template.Spec.DNSConfig == nil || expected.Spec.Template.Spec.DNSConfig == nil {
 			return errors.New("proxy deployment drift detected")
 		}
 		wantImage, ok := proxyContainerImage(expected.Spec)
@@ -773,17 +968,27 @@ func (r *Reconciler) apply(ctx context.Context, w *api.ProjectWorkspace, obj cli
 			return errors.New("proxy deployment drift detected")
 		}
 		dnsChanged := !reflect.DeepEqual(current.Spec.Template.Spec.DNSConfig.Nameservers, expected.Spec.Template.Spec.DNSConfig.Nameservers)
-		imageChanged := gotImage != wantImage
+		imageChanged := gotImage != wantImage || relayImageDiffers(current.Spec.Template, wantImage)
 		replicasChanged := !reflect.DeepEqual(current.Spec.Replicas, expected.Spec.Replicas)
-		if dnsChanged || imageChanged || replicasChanged {
+		// Cell telemetry switched on or off: everything else already matched,
+		// so take the expected containers and pod annotations whole.
+		if !relayMatches(current.Spec.Template, expected.Spec.Template) {
+			return errors.New("proxy deployment drift detected")
+		}
+		telemetryChanged := !telemetryPartsEqual(current.Spec.Template, expected.Spec.Template)
+		if dnsChanged || imageChanged || replicasChanged || telemetryChanged {
 			old := current.DeepCopy()
+			if telemetryChanged {
+				current.Spec.Template.Spec.Containers = append([]corev1.Container{}, expected.Spec.Template.Spec.Containers...)
+				current.Spec.Template.Annotations = withScrapeAnnotations(current.Spec.Template.Annotations, expected.Spec.Template.Annotations)
+			}
 			current.Spec.Replicas = expected.Spec.Replicas
 			if dnsChanged {
 				current.Spec.Template.Spec.DNSConfig.Nameservers = append([]string{}, expected.Spec.Template.Spec.DNSConfig.Nameservers...)
 			}
 			if imageChanged {
 				for i := range current.Spec.Template.Spec.Containers {
-					if current.Spec.Template.Spec.Containers[i].Name == "proxy" {
+					if name := current.Spec.Template.Spec.Containers[i].Name; name == "proxy" || name == relayContainer {
 						current.Spec.Template.Spec.Containers[i].Image = wantImage
 					}
 				}
@@ -846,7 +1051,9 @@ func (r *Reconciler) replaceWorkspaceImage(ctx context.Context, w *api.ProjectWo
 	normalizeSandboxNameservers(wantCopy)
 	normalizeSandboxWorkloadImages(gotCopy)
 	normalizeSandboxWorkloadImages(wantCopy)
-	if r.Access != nil {
+	stripTelemetryEnv(gotCopy)
+	stripTelemetryEnv(wantCopy)
+	if r.usesOrchestrator(w) {
 		existing, _, e := unstructured.NestedString(gotCopy, "podTemplate", "spec", "hostname")
 		if e != nil || existing != "" && existing != w.Name {
 			return errors.New("managed T3 hostname drift detected")
@@ -855,6 +1062,10 @@ func (r *Reconciler) replaceWorkspaceImage(ctx context.Context, w *api.ProjectWo
 		unstructured.RemoveNestedField(wantCopy, "podTemplate", "spec", "hostname")
 	}
 	gotCopy["operatingMode"] = want["operatingMode"]
+	if r.usesOrcaSpoke(w) {
+		normalizeOrcaSpokeDial(gotCopy)
+		normalizeOrcaSpokeDial(wantCopy)
+	}
 	if !contains(gotCopy, wantCopy) {
 		return errors.New("Sandbox configuration drift detected")
 	}
@@ -866,6 +1077,7 @@ func (r *Reconciler) replaceWorkspaceImage(ctx context.Context, w *api.ProjectWo
 		return errors.New("Sandbox configuration drift detected")
 	}
 	before := current.DeepCopy()
+	wantWorkspace, hasWantWorkspace := workspaceContainer(want)
 	for _, kind := range []string{"initContainers", "containers"} {
 		items, _, err := unstructured.NestedSlice(current.Object, "spec", "podTemplate", "spec", kind)
 		if err != nil {
@@ -876,16 +1088,36 @@ func (r *Reconciler) replaceWorkspaceImage(ctx context.Context, w *api.ProjectWo
 			if !ok {
 				return errors.New("invalid Sandbox container")
 			}
-			if container["name"] == "clone" || container["name"] == "workspace" {
+			name, _ := container["name"].(string)
+			switch name {
+			case "clone":
 				container["image"] = r.Config.Image
-				items[i] = container
+			case "workspace":
+				container["image"] = r.orcaSpokeImage(w)
+				// The comparison above ignored only telemetry settings in env,
+				// so the expected env is safe to take with the new image.
+				if env, ok := wantWorkspace["env"].([]any); ok && hasWantWorkspace {
+					container["env"] = env
+				}
+				if r.usesOrcaSpoke(w) && hasWantWorkspace {
+					if cmd, ok := wantWorkspace["command"].([]any); ok {
+						container["command"] = cmd
+					}
+					if env, ok := wantWorkspace["env"].([]any); ok {
+						container["env"] = env
+					}
+					if ports, ok := wantWorkspace["ports"].([]any); ok {
+						container["ports"] = ports
+					}
+				}
 			}
+			items[i] = container
 		}
 		if err := unstructured.SetNestedSlice(current.Object, items, "spec", "podTemplate", "spec", kind); err != nil {
 			return err
 		}
 	}
-	if r.Access != nil {
+	if r.usesOrchestrator(w) {
 		if err := unstructured.SetNestedField(current.Object, w.Name, "spec", "podTemplate", "spec", "hostname"); err != nil {
 			return err
 		}
@@ -897,6 +1129,67 @@ func (r *Reconciler) replaceWorkspaceImage(ctx context.Context, w *api.ProjectWo
 		return err
 	}
 	return errors.New("Sandbox workspace image is being updated with its identity retained")
+}
+
+func workspaceContainer(spec map[string]any) (map[string]any, bool) {
+	pod, _ := spec["podTemplate"].(map[string]any)
+	if pod == nil {
+		return nil, false
+	}
+	body, _ := pod["spec"].(map[string]any)
+	if body == nil {
+		return nil, false
+	}
+	items, _ := body["containers"].([]any)
+	for _, raw := range items {
+		container, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if container["name"] == "workspace" {
+			return container, true
+		}
+	}
+	return nil, false
+}
+
+// normalizeOrcaSpokeDial ignores pairing dial fields so a public-address roll
+// can reuse the reviewed Sandbox update path. ORCA_PUBLIC_ADDRESS is on both
+// the clone init container and the workspace container (same env slice).
+func normalizeOrcaSpokeDial(spec map[string]any) {
+	pod, _ := spec["podTemplate"].(map[string]any)
+	if pod == nil {
+		return
+	}
+	body, _ := pod["spec"].(map[string]any)
+	if body == nil {
+		return
+	}
+	for _, key := range []string{"initContainers", "containers"} {
+		items, _ := body[key].([]any)
+		for i, raw := range items {
+			container, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			if container["name"] == "workspace" {
+				container["command"] = []any{"normalized"}
+				container["ports"] = []any{}
+			}
+			env, _ := container["env"].([]any)
+			for j, eraw := range env {
+				item, ok := eraw.(map[string]any)
+				if !ok {
+					continue
+				}
+				if item["name"] == "ORCA_PUBLIC_ADDRESS" {
+					item["value"] = "normalized"
+					env[j] = item
+				}
+			}
+			items[i] = container
+		}
+	}
 }
 func normalizeSandboxWorkloadImages(spec map[string]any) {
 	pod, _ := spec["podTemplate"].(map[string]any)
@@ -923,6 +1216,8 @@ func normalizeSandboxWorkloadImages(spec map[string]any) {
 	}
 }
 func normalizeProxyDrift(spec *appsv1.DeploymentSpec) {
+	stripCellTelemetry(spec)
+	clearAPIDefaults(spec)
 	spec.Replicas = nil
 	if spec.Template.Spec.DNSConfig != nil {
 		spec.Template.Spec.DNSConfig.Nameservers = []string{"normalized"}
@@ -980,10 +1275,9 @@ func (r *Reconciler) current(ctx context.Context, w *api.ProjectWorkspace) error
 	return nil
 }
 func (r *Reconciler) suspend(ctx context.Context, w *api.ProjectWorkspace) error {
-	if r.Access != nil {
-		if e := r.Access.Suspend(ctx, w); e != nil {
-			return e
-		}
+	access, resolveErr := r.orchestratorAccess(ctx, w)
+	if e := r.suspendOrchestrators(ctx, w, access, resolveErr); e != nil {
+		return e
 	}
 	u := &unstructured.Unstructured{}
 	u.SetGroupVersionKind(sandboxGVK)
@@ -1034,16 +1328,19 @@ func (r *Reconciler) remove(ctx context.Context, w *api.ProjectWorkspace) error 
 	if e := r.audit(ctx, w, "remove-requested"); e != nil {
 		return e
 	}
+	// Feed failure must not prevent stopping work or revoking external access.
+	feedErr := r.syncAuditAssignmentFeed(ctx, w, false)
 	stopErr := r.stop(ctx, w)
 	var accessErr error
-	if r.Access != nil {
+	if w.Spec.OrchestratorClassName != "" {
+		accessErr = r.removeOrchestrator(ctx, w)
+		if r.Access == nil {
+			accessErr = errors.Join(accessErr, r.t3HistoryPending(ctx, w))
+		}
+	} else if r.Access != nil {
 		accessErr = r.Access.Remove(ctx, w)
-	} else if ledger, marker, e := r.t3History(ctx, w); e != nil {
-		accessErr = e
-	} else if ledger != nil && !t3Revoked(ledger, string(ledger.Data["state"]), string(ledger.Data["environment-id"])) {
-		accessErr = fmt.Errorf("T3 Connect ledger exists but registration manager is disabled; revoke the environment on T3, then annotate Secret %s/%s with %s=<its environment-id>", ledger.Namespace, ledger.Name, t3RevokedAnnotation)
-	} else if ledger == nil && marker != nil && !t3Revoked(marker, marker.Data["state"], marker.Data["environment-id"]) {
-		accessErr = fmt.Errorf("T3 registration history exists but revocation manager is disabled; revoke the environment on T3, then annotate ConfigMap %s/%s with %s=<its environment-id>", marker.Namespace, marker.Name, t3RevokedAnnotation)
+	} else {
+		accessErr = r.t3HistoryPending(ctx, w)
 	}
 	s := &corev1.Secret{}
 	e := r.Get(ctx, types.NamespacedName{Namespace: r.Config.Namespace, Name: identity(w)}, s)
@@ -1065,23 +1362,17 @@ func (r *Reconciler) remove(ctx context.Context, w *api.ProjectWorkspace) error 
 	} else if !apierrors.IsNotFound(e) {
 		return e
 	} else { // Missing ledger is safe only when no identity was ever created.
-		cm := &corev1.ConfigMap{}
-		auditName := fmt.Sprintf("audit-%s-%d-access-granted", strings.ReplaceAll(string(w.UID), "-", ""), w.Generation)
-		if e = r.Get(ctx, types.NamespacedName{Namespace: r.Config.Namespace, Name: auditName}, cm); e == nil {
-			return errors.New("credential ledger missing; operator recovery required")
-		}
-		// Check all generations, since a pause changes generation.
-		var records corev1.ConfigMapList
-		if e = r.List(ctx, &records, client.InNamespace(r.Config.Namespace), client.MatchingLabels{api.OwnerLabel: string(w.UID)}); e != nil {
+		// Check all generations, since a pause changes generation. An
+		// unreadable history is an error, never "no identity".
+		granted, e := r.auditLog().Has(ctx, string(w.UID), "access-granted", "grant-requested")
+		if e != nil {
 			return e
 		}
-		for _, record := range records.Items {
-			if record.Data["action"] == "access-granted" || record.Data["action"] == "grant-requested" {
-				return errors.New("credential ledger missing; operator recovery required")
-			}
+		if granted {
+			return errors.New("credential ledger missing; operator recovery required")
 		}
 	}
-	if e := errors.Join(stopErr, accessErr); e != nil {
+	if e := errors.Join(feedErr, stopErr, accessErr); e != nil {
 		return e
 	}
 	if e = r.audit(ctx, w, "access-revoked"); e != nil {
@@ -1152,6 +1443,22 @@ func (r *Reconciler) remove(ctx context.Context, w *api.ProjectWorkspace) error 
 		if e = r.Delete(ctx, ledger); e != nil && !apierrors.IsNotFound(e) {
 			return e
 		}
+	}
+	return nil
+}
+
+// t3HistoryPending refuses removal while T3 history shows an unrevoked
+// environment and no registration manager is running to revoke it.
+func (r *Reconciler) t3HistoryPending(ctx context.Context, w *api.ProjectWorkspace) error {
+	ledger, marker, e := r.t3History(ctx, w)
+	if e != nil {
+		return e
+	}
+	if ledger != nil && !t3Revoked(ledger, string(ledger.Data["state"]), string(ledger.Data["environment-id"])) {
+		return fmt.Errorf("T3 Connect ledger exists but registration manager is disabled; revoke the environment on T3, then annotate Secret %s/%s with %s=<its environment-id>", ledger.Namespace, ledger.Name, t3RevokedAnnotation)
+	}
+	if ledger == nil && marker != nil && !t3Revoked(marker, marker.Data["state"], marker.Data["environment-id"]) {
+		return fmt.Errorf("T3 registration history exists but revocation manager is disabled; revoke the environment on T3, then annotate ConfigMap %s/%s with %s=<its environment-id>", marker.Namespace, marker.Name, t3RevokedAnnotation)
 	}
 	return nil
 }
@@ -1259,7 +1566,7 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 	if e != nil {
 		return e
 	}
-	cfg, e := r.policyConfiguration(w, w.Spec.HTTPS)
+	cfg, e := r.policyConfiguration(ctx, w, w.Spec.HTTPS)
 	if e != nil {
 		return e
 	}
@@ -1348,6 +1655,10 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 	plabels := labels(w)
 	plabels["projects.agentwork.dev/role"] = "proxy"
 	proxyDeployment := &appsv1.Deployment{ObjectMeta: metadata(w, "proxy"), Spec: appsv1.DeploymentSpec{Replicas: int32p(1), Selector: &metav1.LabelSelector{MatchLabels: plabels}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: plabels}, Spec: corev1.PodSpec{DNSPolicy: corev1.DNSNone, DNSConfig: dns, AutomountServiceAccountToken: boolp(false), ServiceAccountName: "worker", TerminationGracePeriodSeconds: int64p(1), SecurityContext: &corev1.PodSecurityContext{FSGroup: int64p(1000)}, Containers: []corev1.Container{{Name: "proxy", Image: r.Config.proxyImage(), Args: []string{"proxy"}, SecurityContext: security, Resources: proxyResources, Ports: []corev1.ContainerPort{{ContainerPort: 3128}}, ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: fromInt(3128)}}}, VolumeMounts: []corev1.VolumeMount{{Name: "tls", MountPath: "/tls", ReadOnly: true}, {Name: "policy", MountPath: "/policy", ReadOnly: true}}}}, Volumes: []corev1.Volume{{Name: "tls", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "proxy-ca", DefaultMode: int32p(0440)}}}, {Name: "policy", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: "proxy-policy"}}}}}}}}}
+	cellTelemetry := network.CellTelemetry(r.Network) != nil
+	if cellTelemetry {
+		addCellTelemetry(proxyDeployment, r.Config.proxyImage(), security)
+	}
 	r.Config.ProxyScheduling.Apply(&proxyDeployment.Spec.Template.Spec)
 	if w.Spec.DesiredState == "Paused" {
 		proxyDeployment.Spec.Replicas = int32p(0)
@@ -1360,15 +1671,34 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 	}
 	env := []corev1.EnvVar{{Name: "HOME", Value: "/workspace/home"}, {Name: "GIT_ORIGIN", Value: origin}, {Name: "GIT_HOST", Value: u.Host}, {Name: "GIT_REPOSITORY", Value: w.Spec.Repository}, {Name: "GIT_WORK_BRANCH", Value: "agent/" + identity(w)}, {Name: "GIT_TERMINAL_PROMPT", Value: "0"}, {Name: "HTTPS_PROXY", Value: "http://proxy:3128"}, {Name: "https_proxy", Value: "http://proxy:3128"}, {Name: "HTTP_PROXY", Value: "http://proxy:3128"}, {Name: "http_proxy", Value: "http://proxy:3128"}, {Name: "SSL_CERT_FILE", Value: "/workspace/home/ca-bundle.crt"}, {Name: "NODE_EXTRA_CA_CERTS", Value: "/trust/ca.crt"}, {Name: "REQUESTS_CA_BUNDLE", Value: "/workspace/home/ca-bundle.crt"}}
 	env = append(env, githubWorkerEnv(w)...)
+	env = r.orcaSpokeEnv(w, env)
 	mounts := []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "identity", MountPath: "/identity", ReadOnly: true}, {Name: "trust", MountPath: "/trust", ReadOnly: true}, {Name: "model", MountPath: "/run/model", ReadOnly: true}, {Name: "scratch", MountPath: "/tmp"}}
+	workerEnv := env
+	if cellTelemetry {
+		workerEnv = append(append([]corev1.EnvVar{}, env...), telemetryEnv...)
+	}
 	workerlabels := labels(w)
 	workerlabels["projects.agentwork.dev/role"] = "worker"
-	spec := corev1.PodSpec{DNSPolicy: corev1.DNSNone, DNSConfig: dns, RuntimeClassName: &r.Config.RuntimeClass, AutomountServiceAccountToken: boolp(false), ServiceAccountName: "worker", TerminationGracePeriodSeconds: int64p(5), SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: boolp(true), RunAsUser: int64p(1000), RunAsGroup: int64p(1000), FSGroup: int64p(1000)}, InitContainers: []corev1.Container{{Name: "clone", Image: r.Config.Image, Args: []string{"bootstrap"}, Env: env, SecurityContext: security, Resources: workerResources, VolumeMounts: mounts}}, Containers: []corev1.Container{{Name: "workspace", Image: r.Config.Image, Command: []string{"/bin/sh", "-c", "trap 'exit 0' TERM INT; while :; do sleep 3600 & wait $!; done"}, Env: env, WorkingDir: "/workspace/repo", SecurityContext: security, Resources: workerResources, VolumeMounts: mounts, ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{"test", "-f", "/workspace/.ready"}}}}}}, Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "workspace"}}}, {Name: "identity", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "git-identity", DefaultMode: int32p(0440)}}}, {Name: "trust", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: "trust"}}}}, {Name: "model", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "model-access", Optional: boolp(true), DefaultMode: int32p(0440)}}}, {Name: "scratch", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}}
+	workerImage := r.orcaSpokeImage(w)
+	workerPorts := []corev1.ContainerPort(nil)
+	if r.usesOrcaSpoke(w) {
+		workerPorts = []corev1.ContainerPort{{Name: "orca", ContainerPort: 6768}}
+	}
+	spec := corev1.PodSpec{DNSPolicy: corev1.DNSNone, DNSConfig: dns, RuntimeClassName: &r.Config.RuntimeClass, AutomountServiceAccountToken: boolp(false), ServiceAccountName: "worker", TerminationGracePeriodSeconds: int64p(5), SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: boolp(true), RunAsUser: int64p(1000), RunAsGroup: int64p(1000), FSGroup: int64p(1000)}, InitContainers: []corev1.Container{{Name: "clone", Image: r.Config.Image, Args: []string{"bootstrap"}, Env: env, SecurityContext: security, Resources: workerResources, VolumeMounts: mounts}}, Containers: []corev1.Container{{Name: "workspace", Image: workerImage, Command: r.orcaSpokeCommand(w), Env: workerEnv, WorkingDir: "/workspace/repo", SecurityContext: security, Resources: workerResources, VolumeMounts: mounts, Ports: workerPorts, ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{"test", "-f", "/workspace/.ready"}}}}}}, Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "workspace"}}}, {Name: "identity", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "git-identity", DefaultMode: int32p(0440)}}}, {Name: "trust", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: "trust"}}}}, {Name: "model", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "model-access", Optional: boolp(true), DefaultMode: int32p(0440)}}}, {Name: "scratch", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}}
 	if serviceProxy {
 		spec.HostAliases = []corev1.HostAlias{{IP: proxyAddress, Hostnames: []string{"proxy"}}}
 	}
-	if r.Access != nil {
+	if r.usesOrchestrator(w) {
 		spec.Hostname = w.Name
+	}
+	if svc := r.orcaSpokeService(w); svc != nil {
+		objects = append(objects, svc)
+	}
+	if route := r.orcaSpokeRoute(w); route != nil {
+		objects = append(objects, route)
+	}
+	if policy := r.orcaSpokeIngressPolicy(w); policy != nil {
+		objects = append(objects, policy)
 	}
 	r.Config.WorkerScheduling.Apply(&spec)
 	b, e := json.Marshal(spec)

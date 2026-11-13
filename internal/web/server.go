@@ -7,6 +7,7 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/telemetry"
 	"io"
 	"io/fs"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/auditlog"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/forgejo"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/registration"
 	corev1 "k8s.io/api/core/v1"
@@ -56,11 +58,25 @@ type Server struct {
 	Downloads *Downloads
 	// Providers enables brokered provider opt-in (providers.go).
 	Providers *Providers
+	// ProviderLogins enables signing a provider in from the console
+	// (provider_logins.go).
+	ProviderLogins *ProviderLogins
 	// GitHubBrokering enables per-project GitHub opt-in (github_access.go).
 	GitHubBrokering bool
 	// Reference is the deployment's reference rules, shown read only next to
 	// every project's own rules (README "Reference rules").
 	Reference Reference
+	// History reads each project's access history. Nil reads Audit.
+	History HistoryStore
+	// Audit records console actions in each project's history: PostgreSQL
+	// when configured, else audit ConfigMaps in Namespace.
+	Audit *auditlog.Log
+	// Database serves access requests, exact approvals and proxy summaries
+	// (D13). Nil refuses those endpoints with an explanation.
+	Database *Database
+	// OrcaPairing mints spoke desktop pairing offers when hubspoke public
+	// domain is configured. Nil or empty Domain hides the endpoint.
+	OrcaPairing *OrcaPairing
 }
 
 // Reference is the reference list as the console shows it.
@@ -75,6 +91,9 @@ type Reference struct {
 const openUISpinnerStyle = "'sha256-vai9tBS1dbqDlLt2vYYQwJl16j1hMfOCO5KhCK8LRBg='"
 
 type actorKey struct{}
+
+// approverKey holds the approver group of an OIDC session ("" otherwise).
+type approverKey struct{}
 
 func equal(a, b string) bool {
 	aHash := sha256.Sum256([]byte(a))
@@ -132,9 +151,10 @@ func (s *Server) Handler() (http.Handler, error) {
 		}
 		writeJSON(w, repos)
 	})
+	mux.HandleFunc("POST /api/v1/workspaces/{name}/orca-pairing", s.mintOrcaPairing)
 	mux.HandleFunc("GET /api/v1/session", func(w http.ResponseWriter, r *http.Request) {
 		actor, _ := r.Context().Value(actorKey{}).(string)
-		session := map[string]any{"actor": actor, "oidc": s.OIDC != nil, "sandboxControl": s.SandboxControl != nil, "t3Connect": s.T3Connect, "githubOwner": s.GitHubOwner, "runRecords": s.RunRecords != nil}
+		session := map[string]any{"actor": actor, "oidc": s.OIDC != nil, "sandboxControl": s.SandboxControl != nil, "t3Connect": s.T3Connect, "githubOwner": s.GitHubOwner, "runRecords": s.RunRecords != nil, "orcaSpokePairing": s.orcaPairingEnabled()}
 		if s.LAN != nil {
 			session["lanHosts"] = true
 			session["lanAllowed"] = s.LAN.Config.AllowedStrings()
@@ -142,6 +162,11 @@ func (s *Server) Handler() (http.Handler, error) {
 		if s.Providers != nil {
 			session["providers"] = []string{"grok", "cursor"}
 		}
+		session["providerLogins"] = s.ProviderLogins != nil
+		db := s.Database.status()
+		session["database"] = map[string]any{"configured": db.Configured, "ready": db.Ready, "reason": db.Reason}
+		approver, _ := r.Context().Value(approverKey{}).(string)
+		session["approver"] = approver != ""
 		if s.Downloads != nil {
 			session["downloads"] = true
 			session["downloadMaxBytes"] = s.Downloads.MaxBytes
@@ -179,10 +204,19 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.HandleFunc("POST /api/v1/workspaces", s.create)
 	mux.HandleFunc("PATCH /api/v1/workspaces/{name}", s.change)
 	mux.HandleFunc("PATCH /api/v1/workspaces/{name}/access", s.changeAccess)
+	mux.HandleFunc("GET /api/v1/access-profiles", s.accessProfiles)
+	mux.HandleFunc("PATCH /api/v1/workspaces/{name}/access-level", s.changeLevel)
+	mux.HandleFunc("POST /api/v1/workspaces/{name}/lock", s.lockNow)
+	mux.HandleFunc("GET /api/v1/workspaces/{name}/grants", s.listGrants)
+	mux.HandleFunc("POST /api/v1/workspaces/{name}/grants", s.addGrant)
+	mux.HandleFunc("DELETE /api/v1/workspaces/{name}/grants/{grant}", s.removeGrant)
 	mux.HandleFunc("POST /api/v1/workspaces/{name}/repositories", s.enrollRepository)
 	mux.HandleFunc("POST /api/v1/workspaces/{name}/lan-hosts", s.addLANHost)
 	mux.HandleFunc("DELETE /api/v1/workspaces/{name}/lan-hosts/{address}", s.removeLANHost)
 	mux.HandleFunc("GET /api/v1/provider-leases", s.providerLeases)
+	mux.HandleFunc("GET /api/v1/provider-logins", s.providerLoginsStatus)
+	mux.HandleFunc("POST /api/v1/provider-logins/{provider}", s.startProviderLogin)
+	mux.HandleFunc("DELETE /api/v1/provider-logins/{provider}", s.cancelProviderLogin)
 	mux.HandleFunc("GET /api/v1/reference-rules", func(w http.ResponseWriter, r *http.Request) {
 		out := s.Reference
 		if out.Rules == nil {
@@ -196,6 +230,13 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.HandleFunc("DELETE /api/v1/workspaces/{name}/github", s.removeGitHub)
 	mux.HandleFunc("POST /api/v1/workspaces/{name}/github/approvals", s.approveGitHub)
 	mux.HandleFunc("GET /api/v1/workspaces/{name}/audit", s.audit)
+	mux.HandleFunc("GET /api/v1/database", s.databaseStatus)
+	mux.HandleFunc("GET /api/v1/workspaces/{name}/access-requests", s.listRequests)
+	mux.HandleFunc("POST /api/v1/workspaces/{name}/access-requests", s.createRequest)
+	mux.HandleFunc("POST /api/v1/workspaces/{name}/access-requests/{id}/decision", s.decide)
+	mux.HandleFunc("GET /api/v1/workspaces/{name}/approvals", s.listApprovals)
+	mux.HandleFunc("DELETE /api/v1/workspaces/{name}/approvals/{id}", s.revokeApproval)
+	mux.HandleFunc("GET /api/v1/workspaces/{name}/proxy-requests", s.listProxyRequests)
 	mux.HandleFunc("GET /api/v1/workspaces/{name}/clients", s.clients)
 	if s.Downloads != nil {
 		mux.HandleFunc("POST /api/v1/workspaces/{name}/download-checks", s.startDownloadCheck)
@@ -217,7 +258,9 @@ func (s *Server) Handler() (http.Handler, error) {
 	if s.OIDC != nil {
 		mux.HandleFunc("POST /auth/logout", s.OIDC.Logout)
 	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Route patterns come from the mux itself: a fixed set, never raw paths.
+	route := func(r *http.Request) string { _, pattern := mux.Handler(r); return pattern }
+	return telemetry.HTTP("console", route, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
@@ -293,10 +336,16 @@ func (s *Server) Handler() (http.Handler, error) {
 			_ = rc.SetReadDeadline(time.Now().Add(chunkDeadline))
 			_ = rc.SetWriteDeadline(time.Now().Add(timeout + 30*time.Second))
 		}
-		ctx, cancel := context.WithTimeout(context.WithValue(context.WithValue(r.Context(), actorKey{}, subject), authKey{}, method), timeout)
+		approver := ""
+		if method == "oidc" && s.OIDC != nil {
+			// Only an OIDC sign-in carries group membership: the automation
+			// token and static login never approve (D13).
+			approver = s.OIDC.ApproverGroup(r)
+		}
+		ctx, cancel := context.WithTimeout(context.WithValue(context.WithValue(context.WithValue(r.Context(), actorKey{}, subject), authKey{}, method), approverKey{}, approver), timeout)
 		defer cancel()
 		mux.ServeHTTP(w, r.WithContext(ctx))
-	}), nil
+	})), nil
 }
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -356,9 +405,23 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		Repository string          `json:"repository"`
 		HTTPS      []api.HTTPSRule `json:"https,omitempty"`
 		Registries []string        `json:"registries,omitempty"`
+		// AccessProfile names the cell's AccessProfile; empty takes the cluster default.
+		AccessProfile string `json:"accessProfile,omitempty"`
 	}
 	if e := decode(w, r, &request); e != nil || !validName.MatchString(request.Name) || forgejo.ValidateRepository(request.Repository, s.Owner) != nil {
 		http.Error(w, "invalid project name or repository", 400)
+		return
+	}
+	profile := request.AccessProfile
+	if profile == "" {
+		name, e := s.defaultProfile(r.Context())
+		if e != nil {
+			http.Error(w, "access profiles unavailable", 503)
+			return
+		}
+		profile = name
+	} else if _, code, e := s.projectProfile(r.Context(), profile); e != nil {
+		http.Error(w, e.Error(), code)
 		return
 	}
 	rules, e := s.accessRules(request.Repository, request.Registries, request.HTTPS)
@@ -375,7 +438,7 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	obj := &api.ProjectWorkspace{TypeMeta: metav1.TypeMeta{APIVersion: api.GroupVersion.String(), Kind: "ProjectWorkspace"}, ObjectMeta: metav1.ObjectMeta{Name: request.Name, Namespace: s.Namespace, Annotations: map[string]string{"projects.agentwork.dev/requested-by": actor}}, Spec: api.WorkspaceSpec{Repository: request.Repository, DesiredState: "Running", HTTPS: rules}}
+	obj := &api.ProjectWorkspace{TypeMeta: metav1.TypeMeta{APIVersion: api.GroupVersion.String(), Kind: "ProjectWorkspace"}, ObjectMeta: metav1.ObjectMeta{Name: request.Name, Namespace: s.Namespace, Annotations: map[string]string{"projects.agentwork.dev/requested-by": actor}}, Spec: api.WorkspaceSpec{Repository: request.Repository, DesiredState: "Running", HTTPS: rules, AccessProfileName: profile}}
 	if e := s.Client.Create(r.Context(), obj); e != nil {
 		if apierrors.IsAlreadyExists(e) {
 			http.Error(w, "project name already exists", 409)
@@ -396,57 +459,47 @@ func (s *Server) change(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "state and resourceVersion required", 400)
 		return
 	}
-	obj := &api.ProjectWorkspace{}
-	if e := s.Client.Get(r.Context(), types.NamespacedName{Namespace: s.Namespace, Name: r.PathValue("name")}, obj); e != nil {
-		http.Error(w, "project unavailable", 404)
-		return
-	}
-	if obj.ResourceVersion != request.ResourceVersion {
-		http.Error(w, "project changed; refresh before retrying", 409)
-		return
-	}
-	if !obj.DeletionTimestamp.IsZero() || obj.Spec.DesiredState == "Removed" {
-		http.Error(w, "removed projects cannot be reopened; create a new project", 409)
-		return
-	}
-	if request.DesiredState == "Running" && obj.Spec.DesiredState == "Paused" && obj.UID != "" {
-		if obj.Status.ObservedGeneration != obj.Generation || obj.Status.Phase != "Paused" || !s.accessApplied(r, obj) {
-			http.Error(w, "wait for the paused project and access update to reconcile before resuming", 409)
+	actor, _ := r.Context().Value(actorKey{}).(string)
+	name := r.PathValue("name")
+	// Do not require the client's resourceVersion to match. Status updates bump
+	// it constantly, so Pause otherwise fails with a stale poll. Re-get and
+	// retry conflicts while applying only DesiredState.
+	for attempt := 0; attempt < 5; attempt++ {
+		obj := &api.ProjectWorkspace{}
+		if e := s.Client.Get(r.Context(), types.NamespacedName{Namespace: s.Namespace, Name: name}, obj); e != nil {
+			http.Error(w, "project unavailable", 404)
 			return
 		}
-	}
-	actor, _ := r.Context().Value(actorKey{}).(string)
-	if obj.Annotations == nil {
-		obj.Annotations = map[string]string{}
-	}
-	obj.Annotations["projects.agentwork.dev/requested-by"] = actor
-	obj.Spec.DesiredState = request.DesiredState
-	if e := s.Client.Update(r.Context(), obj); e != nil {
-		http.Error(w, "project update failed; refresh before retrying", 409)
-		return
-	}
-	writeJSON(w, obj)
-}
-func (s *Server) audit(w http.ResponseWriter, r *http.Request) {
-	obj := &api.ProjectWorkspace{}
-	if e := s.Client.Get(r.Context(), types.NamespacedName{Namespace: s.Namespace, Name: r.PathValue("name")}, obj); e != nil {
-		http.Error(w, "project unavailable", 404)
-		return
-	}
-	var list corev1.ConfigMapList
-	if e := s.Client.List(r.Context(), &list, client.InNamespace(s.Namespace), client.MatchingLabels{api.OwnerLabel: string(obj.UID)}); e != nil {
-		http.Error(w, "audit unavailable", 503)
-		return
-	}
-	items := []map[string]string{}
-	for _, cm := range list.Items {
-		if strings.HasPrefix(cm.Name, "audit-") {
-			items = append(items, cm.Data)
+		if !obj.DeletionTimestamp.IsZero() || obj.Spec.DesiredState == "Removed" {
+			http.Error(w, "removed projects cannot be reopened; create a new project", 409)
+			return
 		}
+		if request.DesiredState == "Running" && obj.Spec.DesiredState == "Paused" && obj.UID != "" {
+			if obj.Status.ObservedGeneration != obj.Generation || obj.Status.Phase != "Paused" || !s.accessApplied(r, obj) {
+				http.Error(w, "wait for the paused project and access update to reconcile before resuming", 409)
+				return
+			}
+		}
+		if obj.Spec.DesiredState == request.DesiredState {
+			writeJSON(w, obj)
+			return
+		}
+		if obj.Annotations == nil {
+			obj.Annotations = map[string]string{}
+		}
+		obj.Annotations["projects.agentwork.dev/requested-by"] = actor
+		obj.Spec.DesiredState = request.DesiredState
+		if e := s.Client.Update(r.Context(), obj); e != nil {
+			if apierrors.IsConflict(e) && attempt < 4 {
+				continue
+			}
+			http.Error(w, "project update failed; refresh before retrying", 409)
+			return
+		}
+		writeJSON(w, obj)
+		return
 	}
-	writeJSON(w, items)
 }
-
 func (s *Server) clients(w http.ResponseWriter, r *http.Request) {
 	obj := &api.ProjectWorkspace{}
 	if e := s.Client.Get(r.Context(), types.NamespacedName{Namespace: s.Namespace, Name: r.PathValue("name")}, obj); e != nil {

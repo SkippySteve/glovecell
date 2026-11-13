@@ -19,7 +19,12 @@ import (
 const HTTPSLedgerKey = "https-policy"
 
 // policyConfiguration keeps mandatory repository grants separate from optional egress.
-func (r *Reconciler) policyConfiguration(w *api.ProjectWorkspace, https []api.HTTPSRule) (proxy.Config, error) {
+func (r *Reconciler) policyConfiguration(ctx context.Context, w *api.ProjectWorkspace, https []api.HTTPSRule) (proxy.Config, error) {
+	// The cell's access profile adds labelled, read-only rules (access_profiles.go).
+	profile, err := r.profileRules(ctx, w)
+	if err != nil {
+		return proxy.Config{}, err
+	}
 	rules, private, err := AccessRules(r.Config.GitHost, r.Config.ForgejoOrigin, w.Spec.Repository)
 	if err != nil {
 		return proxy.Config{}, err
@@ -75,8 +80,8 @@ func (r *Reconciler) policyConfiguration(w *api.ProjectWorkspace, https []api.HT
 		cfg.Reader = r.ReaderRoute
 		cfg.Rules = append(cfg.Rules, api.HTTPSRule{Host: r.ReaderRoute.Host, Methods: []string{"GET", "HEAD"}, Paths: []string{"/k8s"}}, api.HTTPSRule{Host: r.ReaderRoute.Host, Methods: []string{"POST"}, Paths: []string{"/mcp"}})
 	}
-	// The deployment's reference rules come last (reference_rules.go).
-	cfg = r.withReference(cfg)
+	// Profile rules, then the deployment's reference rules, come last (reference_rules.go).
+	cfg = r.withLabelled(cfg, profile)
 	return cfg, proxy.Validate(cfg)
 }
 
@@ -88,12 +93,30 @@ func (r *Reconciler) processesGone(ctx context.Context, w *api.ProjectWorkspace)
 	return len(pods.Items) == 0, nil
 }
 
+// repositoriesOnlyAdded is true when every previous enrollment remains and the
+// list only grew (or stayed the same). Removals and replacements return false.
+func repositoriesOnlyAdded(previous, current []api.RepositoryProject) bool {
+	for _, old := range previous {
+		found := false
+		for _, p := range current {
+			if p == old {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
 // updateAccessPolicy accepts only a saved policy transition with all project processes stopped.
 // The ledger remains on the old policy until objects() succeeds. After interruption, each
 // resource must match either that old policy or the requested policy; arbitrary drift fails closed.
 func (r *Reconciler) updateAccessPolicy(ctx context.Context, w *api.ProjectWorkspace, ledger *corev1.Secret) error {
 	var previous []api.HTTPSRule
-	desired, err := r.policyConfiguration(w, w.Spec.HTTPS)
+	desired, err := r.policyConfiguration(ctx, w, w.Spec.HTTPS)
 	if err != nil {
 		return err
 	}
@@ -127,7 +150,7 @@ func (r *Reconciler) updateAccessPolicy(ctx context.Context, w *api.ProjectWorks
 	}
 	oldWorkspace := *w
 	oldWorkspace.Spec.Repositories = previousRepositories
-	old, err := r.policyConfiguration(&oldWorkspace, previous)
+	old, err := r.policyConfiguration(ctx, &oldWorkspace, previous)
 	if err != nil {
 		return errors.New("saved access policy is invalid")
 	}
@@ -135,52 +158,71 @@ func (r *Reconciler) updateAccessPolicy(ctx context.Context, w *api.ProjectWorks
 	if string(oldRaw) == string(desiredRaw) {
 		return nil
 	}
-	if w.Spec.DesiredState != "Paused" {
+	// Additive repository enrollment while Running: HTTPS unchanged and every
+	// previous repo still present. Apply the widened policy live (no Pause);
+	// enrollRepositories then grants and refreshes workers. Removals and HTTPS
+	// edits still require Pause so processes stop before a narrower policy.
+	live := w.Spec.DesiredState == "Running" && reflect.DeepEqual(previous, w.Spec.HTTPS) && repositoriesOnlyAdded(previousRepositories, w.Spec.Repositories)
+	if !live && w.Spec.DesiredState != "Paused" {
 		return errors.New("pause the project before changing HTTPS access")
 	}
-	if err = r.suspend(ctx, w); err != nil {
-		return err
-	}
-	// Stop the proxy first, including streams that started under the previous policy.
-	deployment := &appsv1.Deployment{}
-	err = r.Get(ctx, types.NamespacedName{Namespace: namespace(w), Name: "proxy"}, deployment)
-	if err == nil {
-		if err = owner(w, deployment); err != nil {
+	if !live {
+		if err = r.suspend(ctx, w); err != nil {
 			return err
 		}
-		if deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != 0 {
-			before := deployment.DeepCopy()
-			deployment.Spec.Replicas = int32p(0)
-			if err = r.Patch(ctx, deployment, client.MergeFrom(before)); err != nil {
+		// Stop the proxy first, including streams that started under the previous policy.
+		deployment := &appsv1.Deployment{}
+		err = r.Get(ctx, types.NamespacedName{Namespace: namespace(w), Name: "proxy"}, deployment)
+		if err == nil {
+			if err = owner(w, deployment); err != nil {
 				return err
 			}
+			if deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != 0 {
+				before := deployment.DeepCopy()
+				deployment.Spec.Replicas = int32p(0)
+				if err = r.Patch(ctx, deployment, client.MergeFrom(before)); err != nil {
+					return err
+				}
+			}
+		} else if !apierrors.IsNotFound(err) {
+			return err
 		}
-	} else if !apierrors.IsNotFound(err) {
+		gone, err := r.processesGone(ctx, w)
+		if err != nil {
+			return err
+		}
+		if !gone {
+			return errors.New("waiting for worker and proxy processes to stop before applying access")
+		}
+	}
+	if err = r.applyAccessPolicyObjects(ctx, w, cm, cmErr, old, desired, oldRaw, desiredRaw); err != nil {
 		return err
 	}
-	gone, err := r.processesGone(ctx, w)
-	if err != nil {
-		return err
+	// Live enrollment: proxy reads policy at start, so bounce it after the widen.
+	if live {
+		return r.restartRole(ctx, w, "proxy")
 	}
-	if !gone {
-		return errors.New("waiting for worker and proxy processes to stop before applying access")
-	}
+	return nil
+}
+
+// applyAccessPolicyObjects widens or replaces network + proxy-policy when each
+// resource still matches the previous or requested policy (tamper fails closed).
+func (r *Reconciler) applyAccessPolicyObjects(ctx context.Context, w *api.ProjectWorkspace, cm *corev1.ConfigMap, cmErr error, old, desired proxy.Config, oldRaw, desiredRaw []byte) error {
 	oldObjects := r.Network.Objects(namespace(w), string(w.UID), policyHosts(old))
 	newObjects := r.Network.Objects(namespace(w), string(w.UID), policyHosts(desired))
 	if len(oldObjects) != len(newObjects) {
 		return errors.New("network provider changed during access update")
 	}
-	// Validate every resource before any update, so tampered policy is never adopted.
 	currentObjects := make([]*unstructured.Unstructured, len(newObjects))
 	for i, want := range newObjects {
 		if oldObjects[i].GetName() != want.GetName() || oldObjects[i].GroupVersionKind() != want.GroupVersionKind() {
 			return errors.New("network provider changed during access update")
 		}
 		current := want.DeepCopy()
-		if err = r.Get(ctx, client.ObjectKeyFromObject(want), current); err != nil {
+		if err := r.Get(ctx, client.ObjectKeyFromObject(want), current); err != nil {
 			return err
 		}
-		if err = owner(w, current); err != nil {
+		if err := owner(w, current); err != nil {
 			return err
 		}
 		if !same(current.Object["spec"], oldObjects[i].Object["spec"]) && !same(current.Object["spec"], want.Object["spec"]) {
@@ -191,7 +233,7 @@ func (r *Reconciler) updateAccessPolicy(ctx context.Context, w *api.ProjectWorks
 	if cmErr != nil {
 		return errors.New("proxy policy missing during access update")
 	}
-	if err = owner(w, cm); err != nil {
+	if err := owner(w, cm); err != nil {
 		return err
 	}
 	oldData := map[string]string{"policy.json": string(oldRaw)}
@@ -200,23 +242,23 @@ func (r *Reconciler) updateAccessPolicy(ctx context.Context, w *api.ProjectWorks
 		return errors.New("proxy policy drift detected during access update")
 	}
 	for i, current := range currentObjects {
-		if err = r.current(ctx, w); err != nil {
+		if err := r.current(ctx, w); err != nil {
 			return err
 		}
 		if same(current.Object["spec"], newObjects[i].Object["spec"]) {
 			continue
 		}
 		current.Object["spec"] = newObjects[i].Object["spec"]
-		if err = r.Update(ctx, current); err != nil {
+		if err := r.Update(ctx, current); err != nil {
 			return err
 		}
 	}
-	if err = r.current(ctx, w); err != nil {
+	if err := r.current(ctx, w); err != nil {
 		return err
 	}
 	if !reflect.DeepEqual(cm.Data, newData) {
 		cm.Data = newData
-		if err = r.Update(ctx, cm); err != nil {
+		if err := r.Update(ctx, cm); err != nil {
 			return err
 		}
 	}

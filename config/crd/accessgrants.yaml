@@ -1,0 +1,120 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: accessgrants.projects.agentwork.dev
+spec:
+  group: projects.agentwork.dev
+  scope: Namespaced
+  names:
+    plural: accessgrants
+    singular: accessgrant
+    kind: AccessGrant
+    shortNames: [agrant]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Cell
+          type: string
+          jsonPath: .spec.cell
+        - name: Type
+          type: string
+          jsonPath: .spec.type
+        - name: Expires
+          type: string
+          format: date-time
+          jsonPath: .spec.expiresAt
+        - name: State
+          type: string
+          jsonPath: .status.state
+      schema:
+        openAPIV3Schema:
+          description: One time-limited widening of a cell's access (an internet window, a LAN host and ports, or a package), on top of its AccessProfile. Lives in the control namespace, owned by its ProjectWorkspace.
+          type: object
+          required: [spec]
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              required: [cell, type, expiresAt]
+              x-kubernetes-validations:
+                - rule: self.cell == oldSelf.cell && self.type == oldSelf.type
+                  message: cell and type are immutable; create another grant.
+                - rule: "(self.type == 'internet') == has(self.internet) && (self.type == 'lan') == has(self.lan) && (self.type == 'package') == has(self.package)"
+                  message: set exactly the member named by type.
+              properties:
+                cell:
+                  type: string
+                  maxLength: 63
+                  pattern: '^[a-z][a-z0-9-]{0,39}$'
+                type:
+                  type: string
+                  enum: [internet, lan, package]
+                internet:
+                  type: object
+                  properties:
+                    learn:
+                      type: boolean
+                lan:
+                  type: object
+                  required: [address, ports]
+                  properties:
+                    address:
+                      type: string
+                      maxLength: 15
+                      pattern: '^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$'
+                    ports:
+                      type: array
+                      minItems: 1
+                      maxItems: 16
+                      x-kubernetes-list-type: set
+                      items:
+                        type: integer
+                        format: int32
+                        minimum: 1
+                        maximum: 65535
+                    note:
+                      type: string
+                      maxLength: 200
+                package:
+                  type: object
+                  required: [ecosystem, name]
+                  properties:
+                    ecosystem:
+                      type: string
+                      enum: [go, npm, python, rust]
+                    name:
+                      type: string
+                      minLength: 1
+                      maxLength: 214
+                    version:
+                      type: string
+                      maxLength: 128
+                expiresAt:
+                  type: string
+                  format: date-time
+                reason:
+                  type: string
+                  maxLength: 500
+                requestedBy:
+                  type: string
+                  maxLength: 512
+            status:
+              type: object
+              properties:
+                state:
+                  type: string
+                  enum: [Active, Refused, Expired]
+                message:
+                  type: string
+                observedGeneration:
+                  type: integer
+                  format: int64

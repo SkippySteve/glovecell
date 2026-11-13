@@ -7,6 +7,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -28,11 +29,13 @@ import (
 	"time"
 
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/credentials"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/download"
 	"golang.org/x/net/http2"
 )
 
 type Config struct {
+	VendorTelemetry           bool            `json:"vendorTelemetry,omitempty"`
 	IndependentCodex          bool            `json:"independentCodex,omitempty"`
 	Reader                    *ReaderRoute    `json:"reader,omitempty"`
 	Rules                     []api.HTTPSRule `json:"rules"`
@@ -105,6 +108,9 @@ func Allowed(c Config, host, method, path string) bool {
 			return false
 		}
 	}
+	if vendorTelemetryEndpoint(host, path) {
+		return c.VendorTelemetry && method == "POST"
+	}
 	for _, r := range c.Rules {
 		if !hostMatches(r.Host, host) {
 			continue
@@ -148,14 +154,15 @@ func GenerateCA() ([]byte, []byte, error) {
 }
 
 type Server struct {
-	Config              Config
-	CA                  *x509.Certificate
-	Key                 any
-	ReaderTransport     *http.Transport
-	Transport           *http.Transport
-	GitHubToken         func() (string, error)
-	MuseSubscriptionKey func() (string, error)
-	ProviderGrants      func() ([]byte, error)
+	health          *runtimeHealth
+	Config          Config
+	CA              *x509.Certificate
+	Key             any
+	ReaderTransport *http.Transport
+	Transport       *http.Transport
+	// Credentials resolves the secrets the proxy injects (credentials.go).
+	Credentials    credentials.Provider
+	ProviderGrants func() ([]byte, error)
 	// BrokeredList returns the project's opted-in brokered providers (brokered.go).
 	BrokeredList func() ([]byte, error)
 	// GitHubPolicy and GitHubAccess return the project's GitHub policy and
@@ -328,16 +335,24 @@ func failureKind(err error) string {
 	return "transport"
 }
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !s.runtimeReady() {
+		countRequest(r.Context(), "recovery", 503)
+		http.Error(w, "proxy recovery required", 503)
+		return
+	}
 	if r.Method != "CONNECT" {
+		countRequest(r.Context(), "bad_request", 405)
 		http.Error(w, "CONNECT required", 405)
 		return
 	}
 	host, port, e := net.SplitHostPort(r.Host)
 	if e != nil || port != "443" || host != strings.ToLower(host) {
+		countRequest(r.Context(), "destination_denied", 403)
 		http.Error(w, "destination denied", 403)
 		return
 	}
 	if !s.inRules(host) && !s.grants.hostLive(host) && s.brokeredProvider(host) == "" && !s.githubHostLive(host) {
+		countRequest(r.Context(), "destination_denied", 403)
 		http.Error(w, "destination denied", 403)
 		return
 	}
@@ -348,16 +363,19 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if os.Getenv("APC_TRACE_PROXY_ROUTES") == "1" {
 			slog.Info("operator proxy capacity diagnostic", "active_tunnels", len(s.slots))
 		}
+		countRequest(r.Context(), "busy", 503)
 		http.Error(w, "proxy busy", 503)
 		return
 	}
 	cert, e := s.certificate(host)
 	if e != nil {
+		countRequest(r.Context(), "inspection_unavailable", 503)
 		http.Error(w, "inspection unavailable", 503)
 		return
 	}
 	hj, ok := w.(http.Hijacker)
 	if !ok {
+		countRequest(r.Context(), "inspection_unavailable", 503)
 		http.Error(w, "inspection unavailable", 503)
 		return
 	}
@@ -365,7 +383,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if e != nil {
 		return
 	}
+	tunnelCtx, cancelTunnel := context.WithCancel(r.Context())
+	defer cancelTunnel()
+	if s.health != nil {
+		stop := context.AfterFunc(s.health.ctx, cancelTunnel)
+		defer stop()
+	}
+	r = r.WithContext(tunnelCtx)
 	defer raw.Close()
+	if s.health != nil {
+		if !s.health.track(raw) {
+			return
+		}
+		defer s.health.untrack(raw)
+	}
 	raw.SetDeadline(time.Now().Add(10 * time.Minute))
 	if _, e = rw.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n"); e != nil {
 		return
@@ -383,11 +414,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	reader := bufio.NewReaderSize(conn, 32<<10)
 	for {
+		if !s.runtimeReady() {
+			return
+		}
 		req, e := readRequest(reader)
 		if e != nil {
+			countRequest(r.Context(), "bad_request", 431)
 			writeError(conn, 431, "invalid or oversized request headers")
 			return
 		}
+		req = req.WithContext(tunnelCtx)
 		// A one-time download grant is served on its own path: exact URL, fixed
 		// method and headers, no project credentials. A request that presents
 		// a grant token never falls through to the project's rules.
@@ -396,9 +432,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			grant, why := s.grants.claim(host, req)
 			if grant == nil {
 				slog.Warn("download grant refused", "host", host, "reason", why)
+				countRequest(r.Context(), "grant_refused", 403)
 				writeError(conn, 403, "download grant refused: "+why)
 				return
 			}
+			countRequest(r.Context(), "grant_served", 200)
 			s.serveGrant(r.Context(), conn, raw, host, grant)
 			return
 		}
@@ -407,11 +445,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if s.requestMalformed(host, req) {
 			traceRequestStatus(host, req, 403)
 			req.Body.Close()
+			countRequest(r.Context(), "request_denied", 403)
 			writeError(conn, 403, "request denied")
 			return
 		}
 		if req.ContentLength > 128<<20 {
 			req.Body.Close()
+			countRequest(r.Context(), "too_large", 413)
 			writeError(conn, 413, "request too large")
 			return
 		}
@@ -422,12 +462,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if refused != nil {
 			traceRequestStatus(host, req, refused.status)
 			req.Body.Close()
+			countRequest(r.Context(), "github_refused", refused.status)
 			refused.writeTo(conn)
 			return
 		}
 		if call == nil && s.requestDenied(host, req) {
 			traceRequestStatus(host, req, 403)
 			req.Body.Close()
+			countRequest(r.Context(), "request_denied", 403)
 			writeError(conn, 403, "request denied")
 			return
 		}
@@ -442,22 +484,26 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if s.providerAuthorization(req) != nil {
 				traceRequestStatus(host, req, 403)
 				req.Body.Close()
+				countRequest(r.Context(), "provider_denied", 403)
 				writeError(conn, 403, "provider grant expired, revoked or unavailable")
 				return
 			}
 			if !githubGitReadAllowed(s.Config, req) {
 				req.Body.Close()
+				countRequest(r.Context(), "request_denied", 403)
 				writeError(conn, 403, "request denied")
 				return
 			}
-			if s.githubCredentials(req) != nil {
+			if e = s.githubCredentials(req); e != nil {
 				req.Body.Close()
-				writeError(conn, 502, "GitHub repository authorization unavailable")
+				countRequest(r.Context(), "credentials_unavailable", credentials.Status(e))
+				writeError(conn, credentials.Status(e), "GitHub repository authorization unavailable")
 				return
 			}
-			if s.museCredentials(req) != nil {
+			if e = s.museCredentials(req); e != nil {
 				req.Body.Close()
-				writeError(conn, 502, "Muse subscription authorization unavailable")
+				countRequest(r.Context(), "credentials_unavailable", credentials.Status(e))
+				writeError(conn, credentials.Status(e), "Muse subscription authorization unavailable")
 				return
 			}
 		}
@@ -469,11 +515,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			cancel()
 			s.finishGitHub(call, 0, e)
 			slog.Warn("proxy upstream request failed", "failure_kind", failureKind(e))
+			countRequest(r.Context(), "upstream_error", 502)
 			writeError(conn, 502, "upstream unavailable")
 			return
 		}
 		s.finishGitHub(call, res.StatusCode, nil)
 		traceRequestStatus(host, req, res.StatusCode)
+		countRequest(r.Context(), "forwarded", res.StatusCode)
 		dropHopHeaders(res.Header)
 		res.Close = true
 		e = res.Write(conn)
@@ -505,17 +553,25 @@ func (s *Server) serveHTTP2(ctx context.Context, conn net.Conn, host string) {
 		Context:    ctx,
 		BaseConfig: &http.Server{MaxHeaderBytes: 32 << 10, ReadHeaderTimeout: 10 * time.Second},
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			if !s.runtimeReady() {
+				countRequest(ctx, "recovery", 503)
+				http.Error(w, "proxy recovery required", 503)
+				return
+			}
 			if req.Header.Get(download.TokenHeader) != "" {
+				countRequest(ctx, "grant_refused", 403)
 				http.Error(w, "download grants are served over HTTP/1.1 only", http.StatusForbidden)
 				return
 			}
 			traceRequestRoute(host, req)
 			if s.requestMalformed(host, req) {
 				traceRequestStatus(host, req, 403)
+				countRequest(ctx, "request_denied", 403)
 				http.Error(w, "request denied", http.StatusForbidden)
 				return
 			}
 			if req.ContentLength > 128<<20 {
+				countRequest(ctx, "too_large", 413)
 				http.Error(w, "request too large", http.StatusRequestEntityTooLarge)
 				return
 			}
@@ -523,11 +579,13 @@ func (s *Server) serveHTTP2(ctx context.Context, conn net.Conn, host string) {
 			call, refused := s.prepareGitHub(req.Context(), host, req)
 			if refused != nil {
 				traceRequestStatus(host, req, refused.status)
+				countRequest(ctx, "github_refused", refused.status)
 				refused.writeHTTP(w)
 				return
 			}
 			if call == nil && s.requestDenied(host, req) {
 				traceRequestStatus(host, req, 403)
+				countRequest(ctx, "request_denied", 403)
 				http.Error(w, "request denied", http.StatusForbidden)
 				return
 			}
@@ -542,19 +600,23 @@ func (s *Server) serveHTTP2(ctx context.Context, conn net.Conn, host string) {
 			} else {
 				if s.providerAuthorization(forward) != nil {
 					traceRequestStatus(host, req, 403)
+					countRequest(ctx, "provider_denied", 403)
 					http.Error(w, "provider grant expired, revoked or unavailable", http.StatusForbidden)
 					return
 				}
 				if !githubGitReadAllowed(s.Config, forward) {
+					countRequest(ctx, "request_denied", 403)
 					http.Error(w, "request denied", http.StatusForbidden)
 					return
 				}
-				if s.githubCredentials(forward) != nil {
-					http.Error(w, "GitHub repository authorization unavailable", http.StatusBadGateway)
+				if err := s.githubCredentials(forward); err != nil {
+					countRequest(ctx, "credentials_unavailable", credentials.Status(err))
+					http.Error(w, "GitHub repository authorization unavailable", credentials.Status(err))
 					return
 				}
-				if s.museCredentials(forward) != nil {
-					http.Error(w, "Muse subscription authorization unavailable", http.StatusBadGateway)
+				if err := s.museCredentials(forward); err != nil {
+					countRequest(ctx, "credentials_unavailable", credentials.Status(err))
+					http.Error(w, "Muse subscription authorization unavailable", credentials.Status(err))
 					return
 				}
 			}
@@ -564,11 +626,13 @@ func (s *Server) serveHTTP2(ctx context.Context, conn net.Conn, host string) {
 			if e != nil {
 				s.finishGitHub(call, 0, e)
 				slog.Warn("proxy upstream request failed", "failure_kind", failureKind(e))
+				countRequest(ctx, "upstream_error", 502)
 				http.Error(w, "upstream unavailable", http.StatusBadGateway)
 				return
 			}
 			s.finishGitHub(call, res.StatusCode, nil)
 			traceRequestStatus(host, req, res.StatusCode)
+			countRequest(ctx, "forwarded", res.StatusCode)
 			defer res.Body.Close()
 			dropHopHeaders(res.Header)
 			for key, values := range res.Header {
@@ -599,6 +663,8 @@ func writeError(w io.Writer, status int, message string) {
 	_ = res.Write(w)
 }
 func Run(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	raw, e := os.ReadFile("/policy/policy.json")
 	if e != nil {
 		return e
@@ -619,19 +685,67 @@ func Run(ctx context.Context) error {
 	if e != nil {
 		return e
 	}
-	s.GitHubToken = gatewayGitHubToken
-	s.MuseSubscriptionKey = gatewayMuseSubscriptionKey
+	s.Credentials = gatewayCredentials()
 	s.ProviderGrants = gatewayProviderGrants
 	s.BrokeredList = gatewayBrokeredProviders
 	s.GitHubPolicy = gatewayFile(GitHubPolicyKey)
 	s.GitHubAccess = gatewayFile(GitHubAccessKey)
+	guardMode := os.Getenv("APC_PROXY_RUNTIME_GUARD")
+	if guardMode != "" && guardMode != "false" && guardMode != "true" {
+		return errors.New("invalid proxy runtime guard setting")
+	}
+	if guardMode == "true" {
+		s.health, e = newRuntimeHealth("/policy", "/tls", os.Getenv("APC_PROXY_STATE_DIR"))
+		if e != nil {
+			return e
+		}
+	}
+	if s.health != nil {
+		s.health.pinned["/policy/policy.json"] = sha256.Sum256(raw)
+		s.health.pinned["/tls/ca.crt"] = sha256.Sum256(cert)
+		s.health.pinned["/tls/ca.key"] = sha256.Sum256(key)
+	}
+	if addr := os.Getenv(MetricsAddressEnv); addr != "" {
+		if e = serveMetrics(ctx, addr); e != nil {
+			return e
+		}
+	}
 	server := &http.Server{Addr: ":3128", Handler: s, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 32 << 10}
 	control := &http.Server{Addr: ControlAddress, Handler: s.ControlHandler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, MaxHeaderBytes: 8 << 10}
-	go func() {
-		if err := control.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			slog.Warn("download grant control listener stopped; downloads are unavailable", "error", err.Error())
+	listener, err := net.Listen("tcp", ControlAddress)
+	if err != nil {
+		return errors.New("proxy control listener unavailable")
+	}
+	if s.health != nil {
+		s.health.startControl()
+		if !s.health.check() {
+			_ = listener.Close()
+			return errors.New("proxy recovery required")
 		}
+	}
+	go func() {
+		defer func() {
+			if s.health != nil {
+				s.health.stopControl()
+			}
+		}()
+		_ = control.Serve(listener)
 	}()
+	if s.health != nil {
+		go func() {
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					s.runtimeReady()
+				}
+			}
+		}()
+	}
+
 	go func() { <-ctx.Done(); _ = server.Close(); _ = control.Close() }()
 	e = server.ListenAndServe()
 	if errors.Is(e, http.ErrServerClosed) {

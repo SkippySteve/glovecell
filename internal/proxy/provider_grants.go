@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
@@ -34,6 +35,9 @@ type providerGrant struct {
 		Issuer  string  `json:"issuer,omitempty"`
 		Account string  `json:"chatgptAccountId,omitempty"`
 		Plan    string  `json:"chatgptPlanType,omitempty"`
+		// CellToken, when set, is what this cell's worker holds instead of
+		// Token. The proxy accepts only it and forwards Token in its place.
+		CellToken string `json:"cellToken,omitempty"`
 	} `json:"access"`
 }
 
@@ -97,6 +101,19 @@ func (s *Server) providerAuthorization(r *http.Request) error {
 	}
 	// Account credentials must match the current broker projection. Renewal cannot
 	// leave an older credential usable after the gateway consumes its replacement.
+	if grant.Access.CellToken != "" {
+		// Per-cell token: the worker never held the real one. Only the cell
+		// token is accepted (the real token sent from inside means it leaked
+		// from somewhere else), and the real one goes upstream.
+		if name != "grok" && name != "cursor" {
+			return errors.New("cell tokens are reviewed only for grok and cursor")
+		}
+		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+grant.Access.CellToken)) != 1 {
+			return errors.New("provider credential does not match its current grant")
+		}
+		r.Header.Set("Authorization", "Bearer "+grant.Access.Token)
+		return nil
+	}
 	if r.Header.Get("Authorization") != "Bearer "+grant.Access.Token {
 		return errors.New("provider credential does not match its current grant")
 	}

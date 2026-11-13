@@ -14,23 +14,24 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-func TestEnrollmentAPIRequiresPauseAndKeepsOneWorkbench(t *testing.T) {
+func TestEnrollmentAPIAllowsReadyOrPausedAndKeepsOneWorkbench(t *testing.T) {
 	for _, test := range []struct {
-		state, version, project, githubOwner string
-		status                               int
+		desired, phase, version, project, githubOwner string
+		status                                        int
 	}{
-		{"Running", "12", `{"name":"extra","host":"forgejo","repository":"steve/extra"}`, "", 409},
-		{"Paused", "stale", `{"name":"extra","host":"forgejo","repository":"steve/extra"}`, "", 409},
-		{"Paused", "12", `{"name":"extra","host":"forgejo","repository":"other/extra"}`, "", 400},
-		{"Paused", "12", `{"name":"extra","host":"forgejo","repository":"steve/root"}`, "", 409},
-		{"Paused", "12", `{"name":"private","host":"github","repository":"owner/private"}`, "", 400},
-		{"Paused", "12", `{"name":"private","host":"github","repository":"other/private"}`, "owner", 400},
-		{"Paused", "12", `{"name":"extra","host":"forgejo","repository":"steve/extra"}`, "", 202},
-		{"Paused", "12", `{"name":"public","host":"github","repository":"upstream/library","public":true}`, "", 202},
+		{"Running", "Preparing", "12", `{"name":"extra","host":"forgejo","repository":"steve/extra"}`, "", 409},
+		{"Running", "Ready", "12", `{"name":"extra","host":"forgejo","repository":"steve/extra"}`, "", 202},
+		{"Running", "Ready", "stale", `{"name":"extra","host":"forgejo","repository":"steve/extra"}`, "", 202},
+		{"Paused", "Paused", "12", `{"name":"extra","host":"forgejo","repository":"other/extra"}`, "", 400},
+		{"Paused", "Paused", "12", `{"name":"extra","host":"forgejo","repository":"steve/root"}`, "", 409},
+		{"Paused", "Paused", "12", `{"name":"private","host":"github","repository":"owner/private"}`, "", 400},
+		{"Paused", "Paused", "12", `{"name":"private","host":"github","repository":"other/private"}`, "owner", 400},
+		{"Paused", "Paused", "12", `{"name":"extra","host":"forgejo","repository":"steve/extra"}`, "", 202},
+		{"Paused", "Paused", "12", `{"name":"public","host":"github","repository":"upstream/library","public":true}`, "", 202},
 	} {
 		scheme := runtime.NewScheme()
 		_ = api.AddToScheme(scheme)
-		original := &api.ProjectWorkspace{ObjectMeta: metav1.ObjectMeta{Name: "bench", Namespace: "control", UID: types.UID("existing-workbench"), ResourceVersion: "12", Generation: 1}, Spec: api.WorkspaceSpec{Repository: "steve/root", DesiredState: test.state}, Status: api.WorkspaceStatus{Phase: test.state, ObservedGeneration: 1}}
+		original := &api.ProjectWorkspace{ObjectMeta: metav1.ObjectMeta{Name: "bench", Namespace: "control", UID: types.UID("existing-workbench"), ResourceVersion: "12", Generation: 1}, Spec: api.WorkspaceSpec{Repository: "steve/root", DesiredState: test.desired}, Status: api.WorkspaceStatus{Phase: test.phase, ObservedGeneration: 1}}
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(original).Build()
 		password := strings.Repeat("a", 32)
 		s := &Server{Client: c, Host: host{}, Namespace: "control", Owner: "steve", Password: password, Origin: "https://projects.example.com", AllowBasic: true, GitHubOwner: test.githubOwner}

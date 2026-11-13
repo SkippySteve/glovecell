@@ -86,6 +86,16 @@ rule might overlap `main`, the panel shows the shortfall (for example
 Settings > Branches. Fix that rule on Forgejo. The controller retries the same
 request; deleting and recreating the project is unnecessary.
 
+## Access levels
+
+A sandbox's **Internet** page starts with one **Access level** control: Locked, Ask, Standard, Open (time-limited)
+and Custom. Each level lists what it allows and what stays blocked. Choosing one shows the exact rule changes and
+asks for confirmation; nothing changes before that. While a window is open, its expiry and **Lock now** stay on the
+card and in the header. Levels a sandbox's backend cannot enforce are shown disabled with the reason. The
+fine-grained editors (requests, web rules, own HTTPS rules, LAN hosts, packages, credentials) share one table with
+search, filters, bulk select, an expiry column and an empty state that says what to do; editing them makes the level
+Custom. See [access levels](access-levels.md) for the control matrix and the AccessProfile and AccessGrant API.
+
 ## Project access
 
 Open a sandbox and select **Internet** to inspect its HTTPS grants. Add initial

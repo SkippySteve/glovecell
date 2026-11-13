@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Glovecell network: how traffic enters and leaves a cell</title>
+<style>
+:root{
+  --bg:#0f1420;--panel:#161c2b;--panel2:#1c2436;--line:#2c3650;--text:#e6eaf3;--muted:#9aa5bd;
+  --accent:#8fa8ff;--ok:#4cc38a;--warn:#e8b34a;--bad:#ef6b6b;--info:#5fb4e8;--prop:#c79bff;
+  --node:#1b2335;--node-b:#33405f;--hl:#8fa8ff;
+}
+html[data-theme="light"]{
+  --bg:#f6f8fc;--panel:#ffffff;--panel2:#eef2f9;--line:#d5dcea;--text:#162036;--muted:#56627a;
+  --accent:#2f55d4;--ok:#1d8a57;--warn:#a46b00;--bad:#c53030;--info:#1f6fa8;--prop:#7a3fc4;
+  --node:#ffffff;--node-b:#b9c4da;--hl:#2f55d4;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--line)}
+h1{font-size:17px;margin:0;font-weight:600}
+.sub{color:var(--muted);font-size:13px;margin-top:2px}
+.controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{background:transparent;color:var(--muted);border:0;padding:6px 10px;font:inherit;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--panel2);color:var(--text);font-weight:600}
+button:focus-visible,.ch:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.wrap{display:grid;grid-template-columns:270px minmax(0,1fr);gap:0}
+main{min-width:0}
+@media (max-width:900px){.wrap{grid-template-columns:minmax(0,1fr)}}
+nav{border-right:1px solid var(--line);padding:10px;max-height:none}
+@media (max-width:900px){nav{border-right:0;border-bottom:1px solid var(--line)}}
+.group{color:var(--muted);font-size:12px;margin:12px 6px 4px}
+.ch{display:flex;justify-content:space-between;gap:8px;align-items:center;width:100%;text-align:left;background:transparent;border:1px solid transparent;color:var(--text);padding:7px 8px;border-radius:8px;cursor:pointer;font:inherit}
+.ch:hover{background:var(--panel2)}
+.ch[aria-current="true"]{background:var(--panel2);border-color:var(--line)}
+.ch .dir{color:var(--muted);font-size:12px;margin-left:6px}
+.badge{font-size:11px;padding:1px 7px;border-radius:999px;border:1px solid currentColor;white-space:nowrap}
+.b-ok{color:var(--ok)}.b-warn{color:var(--warn)}.b-bad{color:var(--bad)}.b-info{color:var(--info)}.b-prop{color:var(--prop)}
+main{padding:12px 16px 20px}
+.diagram{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:6px;overflow-x:auto}
+svg{display:block;width:100%;min-width:760px;height:auto}
+.node rect{fill:var(--node);stroke:var(--node-b);stroke-width:1.2}
+.node text{fill:var(--text);font-size:12.5px}
+.node .small{fill:var(--muted);font-size:10.5px}
+.node.dim{opacity:.35}
+.node.on rect{stroke:var(--hl);stroke-width:2.4}
+.frame{fill:none;stroke:var(--line);stroke-dasharray:5 4;stroke-width:1.2}
+.frametext{fill:var(--muted);font-size:11.5px}
+.edge{fill:none;stroke:var(--node-b);stroke-width:1.3;opacity:.55}
+.edge.dashed{stroke-dasharray:4 4}
+.edge.on{stroke:var(--hl);stroke-width:3;opacity:1;stroke-dasharray:8 6;animation:flow 1.1s linear infinite}
+.edge.on.refused{stroke:var(--bad)}
+@keyframes flow{to{stroke-dashoffset:-28}}
+@media (prefers-reduced-motion:reduce){.edge.on{animation:none;stroke-dasharray:none}}
+.marker{fill:var(--node-b)}
+.marker-on{fill:var(--hl)}
+.xmark{stroke:var(--bad);stroke-width:3}
+.detail{display:grid;grid-template-columns:1.25fr 1fr;gap:12px;margin-top:12px}
+@media (max-width:1100px){.detail{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.card h2{font-size:15px;margin:0 0 6px}
+.card h3{font-size:13px;margin:12px 0 4px;color:var(--muted);font-weight:600}
+ol{margin:4px 0 0 18px;padding:0}li{margin:3px 0}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:13px}
+.kv dt{color:var(--muted)}.kv dd{margin:0}
+.levels{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:4px}
+@media (max-width:600px){.levels{grid-template-columns:repeat(2,1fr)}}
+.lv{border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:12.5px}
+.lv.cur{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.lv b{display:block;font-size:12px;color:var(--muted);font-weight:600;margin-bottom:2px}
+.layers{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.layer{font-size:12px;border:1px solid var(--line);border-radius:999px;padding:2px 9px;color:var(--muted)}
+.layer.on{color:var(--text);border-color:var(--accent)}
+.legend{display:flex;flex-wrap:wrap;gap:14px;color:var(--muted);font-size:12px;margin:8px 4px 2px}
+.note{color:var(--muted);font-size:12.5px;margin-top:8px}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Glovecell network: one gateway per cell</h1>
+    <div class="sub">Pick a channel to see its path, the checks it passes, and what each access level allows. Design decision D14 (proposed parts are marked).</div>
+  </div>
+  <div class="controls">
+    <span class="sub">Access level</span>
+    <div class="seg" role="group" aria-label="Access level" id="levels"></div>
+    <div class="seg" role="group" aria-label="Theme">
+      <button id="t-dark" aria-pressed="true">Dark</button><button id="t-light" aria-pressed="false">Light</button>
+    </div>
+  </div>
+</header>
+<div class="wrap">
+  <nav id="nav" aria-label="Channels"></nav>
+  <main>
+    <div class="diagram"><svg id="svg" viewBox="0 0 1210 560" role="img" aria-labelledby="svgt"><title id="svgt">Cell network diagram</title></svg></div>
+    <div class="legend">
+      <span>━ flow of the selected channel</span><span>┅ optional or out-of-band</span>
+      <span><span class="badge b-ok">allowed</span> <span class="badge b-warn">asks or needs approval</span> <span class="badge b-info">operator action</span> <span class="badge b-bad">refused</span> <span class="badge b-prop">proposed</span></span>
+    </div>
+    <div class="detail">
+      <section class="card" aria-live="polite">
+        <h2 id="d-title"></h2>
+        <dl class="kv" id="d-kv"></dl>
+        <h3>Path, step by step</h3>
+        <ol id="d-steps"></ol>
+      </section>
+      <section class="card">
+        <h2>Controls</h2>
+        <div id="d-levels" class="levels"></div>
+        <h3>Enforcement layers it passes</h3>
+        <div id="d-layers" class="layers"></div>
+        <h3>Refused, always</h3>
+        <div id="d-refused" class="note"></div>
+        <p class="note">Inbound access is the same at every level: the level controls what the cell may reach, not who may reach the cell. Private, cluster and metadata addresses are refused at every level; LAN devices use timed grants only. Open is time-limited (at most 8h).</p>
+      </section>
+    </div>
+  </main>
+</div>
+<script>
+(function(){
+const LEVELS=["Locked","Ask","Standard","Open"];
+let level="Ask";
+const N={
+  OP:[20,60,140,46,"Operator","browser or phone"],
+  UI:[20,130,140,46,"Agent UIs","Orca, T3, ACP"],
+  EXT:[20,200,140,46,"Outside A2A agents","other systems"],
+  EDGE:[200,60,120,280,"Edge","TLS + OIDC sign-in, routes"],
+  CTRL:[370,60,160,54,"Controller + API","policy, approvals, console"],
+  PG:[370,132,160,44,"PostgreSQL","approvals, history"],
+  A2AI:[370,194,160,44,"A2A intake","proposed"],
+  SCAN:[370,256,160,44,"Scanner jobs","SBOM, CVEs, secrets"],
+  CRED:[370,318,160,44,"Credentials","OpenBao"],
+  IN:[585,80,125,80,"Gateway ingress","approved channels, ports"],
+  SB:[735,80,140,270,"Sandbox pod","agents, orchestrator, /workspace, kit, gVisor"],
+  OUT:[900,80,120,270,"Gateway egress","windows, approvals, broker, cell CA"],
+  LOC:[735,372,140,54,"Local endpoints","blocked, dev-link, cell MCP"],
+  MODEL:[1065,50,135,40,"Model providers",""],
+  FORGE:[1065,102,135,40,"Forge","Git, API"],
+  WEB:[1065,154,135,40,"Web, registries",""],
+  RMCP:[1065,206,135,40,"Remote MCP",""],
+  RA2A:[1065,258,135,40,"Remote A2A agents",""],
+  OTEL:[1065,310,135,40,"OTLP collector","optional"],
+  LAN:[1065,452,135,46,"One LAN host","timed grant"]
+};
+const E={
+  op_edge:["OP","EDGE"],ui_edge:["UI","EDGE"],ext_edge:["EXT","EDGE"],
+  edge_ctrl:["EDGE","CTRL"],edge_a2ai:["EDGE","A2AI"],edge_in:["EDGE","IN","low"],
+  a2ai_pg:["A2AI","PG","v"],ctrl_pg:["CTRL","PG","v"],ctrl_scan:["CTRL","SCAN","left"],ctrl_a2ai:["A2AI","CTRL","left2"],
+  ctrl_in:["CTRL","IN"],ctrl_out:["CTRL","OUT","top"],
+  in_sb:["IN","SB"],sb_out:["SB","OUT"],sb_loc:["SB","LOC","v"],loc_ctrl:["LOC","CTRL","loc"],
+  out_model:["OUT","MODEL"],out_forge:["OUT","FORGE"],out_web:["OUT","WEB"],out_rmcp:["OUT","RMCP"],out_ra2a:["OUT","RA2A"],out_otel:["OUT","OTEL"],
+  out_cred:["OUT","CRED","cred",1],sb_lan:["SB","LAN","lan",1]
+};
+const LAYERS=["Edge sign-in","Network policy","Gateway L7","Admission and RBAC","Isolation runtime","Audit"];
+const ALL_REFUSED="Raw TCP/UDP to the internet, certificate-pinned clients (no passthrough), private/cluster/metadata addresses, inbound that skips the edge, credentials inside WebSocket frames, vendor telemetry.";
+const C=[
+ {id:"session",g:"Sessions",name:"Agent session (Orca, T3)",dir:"in",status:"design",edges:["ui_edge","edge_in","in_sb","sb_out","out_model"],nodes:["UI","EDGE","IN","SB","OUT","MODEL"],
+  proto:"HTTPS and WebSocket",auth:"Operator OIDC at the edge, plus orchestrator pairing",audit:"Session open and close, bytes; conversation content is the agent's own telemetry",
+  steps:["The operator opens the cell in Orca or T3; the edge checks sign-in and that this user may use this cell.","The edge forwards over mTLS to the cell gateway's ingress, session channel.","The ingress checks the channel is enabled and matches the cell's orchestrator class (D12).","The ingress connects to the orchestrator's port in the sandbox, the only inbound port open for sessions.","The agent's model calls leave through the egress side with a placeholder token; the broker swaps in the real one."],
+  lv:{Locked:["ok","Allowed"],Ask:["ok","Allowed"],Standard:["ok","Allowed"],Open:["ok","Allowed"]},layers:[0,1,2,4,5]},
+ {id:"acp",g:"Sessions",name:"Agent session (ACP)",dir:"in",status:"proposed",edges:["ui_edge","edge_in","in_sb"],nodes:["UI","EDGE","IN","SB"],
+  proto:"ACP JSON-RPC, carried over WebSocket",auth:"Operator OIDC",audit:"Session, prompt and tool-call counts",
+  steps:["An ACP editor (Zed, JetBrains, Neovim, T3) connects to the edge with the operator's sign-in.","The ingress routes to an ACP bridge in the sandbox, run by the generic acp orchestrator class.","The bridge speaks ACP over stdio to the agent (Claude Code, Codex, Gemini and others).","The agent's own approvals still apply; the cell's egress level applies to everything the agent does."],
+  lv:{Locked:["ok","Allowed"],Ask:["ok","Allowed"],Standard:["ok","Allowed"],Open:["ok","Allowed"]},layers:[0,1,2,4,5]},
+ {id:"model",g:"Out of the cell",name:"Model providers",dir:"out",status:"design",edges:["sb_out","out_model","out_cred"],nodes:["SB","OUT","MODEL","CRED"],
+  proto:"HTTPS, SSE; WebSocket for header-authenticated APIs (D13)",auth:"Broker injects the real token; the agent holds a placeholder",audit:"One record per request: host, path, decision, credential profile name (never the value)",
+  steps:["The agent calls the provider with a placeholder token.","The egress side matches a reviewed provider route (exact host and paths).","It reads the current token from the credentials backend; a central refresher keeps it fresh (D13).","It forwards with the real token; refreshed tokens in responses are swapped back to placeholders."],
+  lv:{Locked:["ok","Allowed (provider route)"],Ask:["ok","Allowed"],Standard:["ok","Allowed"],Open:["ok","Allowed"]},layers:[1,2,4,5]},
+ {id:"repo",g:"Out of the cell",name:"Repository (own)",dir:"out",status:"design",edges:["sb_out","out_forge","out_cred"],nodes:["SB","OUT","FORGE","CRED"],
+  proto:"Git smart HTTP, forge API",auth:"Short-lived forge token scoped to this cell's repositories",audit:"Per request",
+  steps:["git fetch/push from the sandbox uses a placeholder credential.","The egress side allows only this cell's repository paths on the forge class's host (D12 ForgeClass).","It injects a short-lived token minted per cell by the controller.","Branch protection on the forge: agents push branches and open PRs, never merge."],
+  lv:{Locked:["ok","Allowed (forge route)"],Ask:["ok","Allowed"],Standard:["ok","Allowed"],Open:["ok","Allowed"]},layers:[1,2,4,5]},
+ {id:"web",g:"Out of the cell",name:"Web",dir:"out",status:"design",edges:["sb_out","out_web","ctrl_out","ctrl_pg"],nodes:["SB","OUT","WEB","CTRL","PG"],
+  proto:"HTTPS (HTTP/1.1, HTTP/2); WebSocket per exact host (D13)",auth:"None, or a named profile",audit:"Per request; pending requests and approvals in PostgreSQL",
+  steps:["The request is decrypted with the cell CA and parsed; anything malformed is denied.","Hosts that resolve to private, cluster or metadata addresses are denied.","Fixed rules, package rules, then exact approvals (cached from PostgreSQL) are checked.","With none matching, the access level decides: Ask stores a pending request for one-click approval in the inbox.","Every decision writes one audit record; if the outbox is full, non-credential traffic stops."],
+  lv:{Locked:["bad","Rules and approvals only"],Ask:["warn","New hosts wait for approval"],Standard:["warn","Common hosts allowed, others ask"],Open:["ok","All public hosts, until the grant ends"]},layers:[1,2,3,4,5]},
+ {id:"pkg",g:"Out of the cell",name:"Packages",dir:"out",status:"design",edges:["sb_out","out_web"],nodes:["SB","OUT","WEB"],
+  proto:"HTTPS to npm, PyPI, Go, crates, Maven and container registries",auth:"Registry profile for private registries",audit:"Per request, with ecosystem/name@version",
+  steps:["The proxy recognises registry URLs with code-owned templates (no operator regexes).","An approved name@version allows exactly its metadata and download paths.","A lockfile import drafts a list for review; nothing is approved until confirmed."],
+  lv:{Locked:["bad","Approved versions only"],Ask:["warn","Each new version asks"],Standard:["ok","Common registries allowed"],Open:["ok","All, until the grant ends"]},layers:[1,2,3,4,5]},
+ {id:"filesin",g:"Files",name:"Files into the cell",dir:"in",status:"proposed",edges:["op_edge","edge_ctrl","ctrl_in","in_sb"],nodes:["OP","EDGE","CTRL","IN","SB"],
+  proto:"HTTPS stream",auth:"Operator OIDC",audit:"Name, size, SHA-256, who and when",
+  steps:["The operator uploads in the console; the edge checks sign-in.","The controller applies size caps, hashes the stream and records it.","It streams to the cell's ingress, files channel.","The ingress writes to /workspace/inbox, read-only to the agent."],
+  lv:{Locked:["info","Operator action"],Ask:["info","Operator action"],Standard:["info","Operator action"],Open:["info","Operator action"]},layers:[0,1,2,4,5]},
+ {id:"filesout",g:"Files",name:"Files out of the cell",dir:"out",status:"proposed",edges:["ctrl_scan","ctrl_in","edge_ctrl","op_edge"],nodes:["SB","SCAN","CTRL","IN","EDGE","OP"],
+  proto:"HTTPS stream",auth:"Operator OIDC",audit:"Name, size, hash, scan findings, who downloaded",
+  steps:["The agent writes the file to /workspace/outbox.","The controller runs a scan job with a read-only mount (no token, no internet).","The console lists it with findings; bad results show a warning.","The operator downloads; the controller reads it through the ingress and streams it out."],
+  lv:{Locked:["info","After scan, operator downloads"],Ask:["info","Same"],Standard:["info","Same"],Open:["info","Same"]},layers:[0,1,2,4,5]},
+ {id:"preview",g:"Into the cell",name:"Previews and dev links",dir:"in",status:"design",edges:["sb_loc","loc_ctrl","ctrl_scan","op_edge","edge_in","in_sb"],nodes:["SB","LOC","CTRL","SCAN","OP","EDGE","IN"],
+  proto:"HTTPS and WebSocket to the app's port",auth:"Operator OIDC plus the verification card",audit:"Per request",
+  steps:["The agent publishes: glovecell dev-link publish --port P (a cell tool).","The controller scans the app directory; the scan is required (D13).","The approval card shows findings as warnings; the operator approves.","The ingress enables a route to port P only; the edge serves it at a private URL after sign-in."],
+  lv:{Locked:["info","After scan and approval"],Ask:["info","Same"],Standard:["info","Same"],Open:["info","Same"]},layers:[0,1,2,4,5]},
+ {id:"mcplocal",g:"MCP",name:"MCP, local (stdio)",dir:"none",status:"design",edges:[],nodes:["SB"],
+  proto:"stdio inside the sandbox",auth:"None needed",audit:"The agent's own telemetry; any network calls the server makes go through egress",
+  steps:["MCP server config ships in the agent kit, so every orchestrator gets the same tools.","The agent starts the server as a child process; no network is involved.","If the server makes network calls, they go through the egress side like any other request."],
+  lv:{Locked:["ok","Allowed"],Ask:["ok","Allowed"],Standard:["ok","Allowed"],Open:["ok","Allowed"]},layers:[4,5]},
+ {id:"mcpcell",g:"MCP",name:"MCP, cell tools",dir:"local",status:"proposed",edges:["sb_loc","loc_ctrl"],nodes:["SB","LOC","CTRL"],
+  proto:"MCP over HTTP, sandbox-local",auth:"Per-pod token",audit:"Per call",
+  steps:["The gateway serves one MCP server reachable only from its sandbox pod.","Its tools: blocked report, dev-link publish, files, request access, run status.","Calls go to the controller over mTLS; reports never grant anything by themselves.","This replaces orca-pilot's CLI commands, so any UI or agent can use them."],
+  lv:{Locked:["ok","Allowed"],Ask:["ok","Allowed"],Standard:["ok","Allowed"],Open:["ok","Allowed"]},layers:[1,2,4,5]},
+ {id:"mcpremote",g:"MCP",name:"MCP, remote server",dir:"out",status:"design",edges:["sb_out","out_rmcp","out_cred"],nodes:["SB","OUT","RMCP","CRED"],
+  proto:"Streamable HTTP or SSE",auth:"Broker injects the server's token (a named profile)",audit:"Per request",
+  steps:["The agent calls a remote MCP server with a placeholder token.","Its host must be approved or named in a profile; the broker injects the real token.","Responses stream back; tool results are untrusted input to the agent."],
+  lv:{Locked:["bad","Approved servers only"],Ask:["warn","New servers ask"],Standard:["warn","Named servers allowed"],Open:["ok","All public, until the grant ends"]},layers:[1,2,3,4,5]},
+ {id:"a2ain",g:"A2A",name:"A2A, inbound task",dir:"in",status:"proposed",edges:["ext_edge","edge_a2ai","a2ai_pg","ctrl_a2ai","ctrl_in","in_sb"],nodes:["EXT","EDGE","A2AI","PG","CTRL","IN","SB"],
+  proto:"A2A JSON-RPC over HTTPS, SSE for updates",auth:"OAuth2 client credentials or mTLS at the edge",audit:"Task, caller, decision",
+  steps:["An outside agent sends a task; the edge authenticates the caller.","The A2A intake stores it as a pending request in PostgreSQL; its text is untrusted.","The operator approves it for a cell from the inbox (or it becomes a forge issue).","The controller delivers it through the cell's orchestrator adapter; progress and results flow back to the caller."],
+  lv:{Locked:["warn","Queued for approval"],Ask:["warn","Queued for approval"],Standard:["warn","Queued for approval"],Open:["warn","Queued for approval"]},layers:[0,1,2,3,4,5]},
+ {id:"a2aout",g:"A2A",name:"A2A, outbound call",dir:"out",status:"design",edges:["sb_out","out_ra2a","out_cred"],nodes:["SB","OUT","RA2A","CRED"],
+  proto:"A2A JSON-RPC over HTTPS, SSE",auth:"Named agent profile; the broker injects credentials",audit:"Per request",
+  steps:["The agent calls a remote agent's endpoint.","The egress side applies the same rules as web: named profile, approval or level.","Credentials for that agent are injected from the backend; replies are untrusted input."],
+  lv:{Locked:["bad","Approved agents only"],Ask:["warn","New agents ask"],Standard:["warn","Named agents allowed"],Open:["ok","All public, until the grant ends"]},layers:[1,2,3,4,5]},
+ {id:"lan",g:"Devices",name:"LAN device",dir:"out",status:"design",edges:["sb_lan"],nodes:["SB","LAN","CTRL"],
+  proto:"Plain TCP, not through the gateway",auth:"None; the grant is the permission",audit:"Grant history, Hubble flow logs, learned ports",
+  steps:["The operator opens a grant for one host and port, for 15 minutes up to 24 hours.","Admission checks it against the deployment and cell allowlists.","Cilium allows TCP from this pod only, to that host and port.","On expiry the policy narrows first; restrict now restarts the pod to cut open sockets."],
+  lv:{Locked:["info","Timed grant only"],Ask:["info","Timed grant only"],Standard:["info","Timed grant only"],Open:["info","Timed grant only"]},layers:[1,3,4,5]},
+ {id:"otel",g:"Telemetry",name:"Telemetry (OTLP)",dir:"out",status:"design",edges:["sb_out","out_otel"],nodes:["SB","OUT","OTEL"],
+  proto:"OTLP over HTTP",auth:"Collector token injected",audit:"Counts only",
+  steps:["Agents send their own OpenTelemetry (spans, logs, token usage).","The egress side has one telemetry route to the configured collector; with none configured it is off."],
+  lv:{Locked:["ok","Allowed if configured"],Ask:["ok","Allowed if configured"],Standard:["ok","Allowed if configured"],Open:["ok","Allowed if configured"]},layers:[1,2,4,5]},
+ {id:"vendor",g:"Telemetry",name:"Vendor telemetry",dir:"out",status:"design",edges:["sb_out"],nodes:["SB","OUT"],refused:true,
+  proto:"Any",auth:"—",audit:"Denial recorded",
+  steps:["UI and agent vendor telemetry hosts (for example PostHog) are on a deny list in the gateway.","The kit also switches it off where the tool allows (for example T3CODE_TELEMETRY_ENABLED=false)."],
+  lv:{Locked:["bad","Refused"],Ask:["bad","Refused"],Standard:["bad","Refused"],Open:["bad","Refused"]},layers:[2,5]},
+ {id:"control",g:"Control plane",name:"Policy and state",dir:"internal",status:"design",edges:["ctrl_out","ctrl_pg","ctrl_in","out_cred"],nodes:["CTRL","PG","OUT","IN","CRED"],
+  proto:"mTLS between the controller and the gateway",auth:"Mutual TLS; the gateway has no Kubernetes token",audit:"Policy revisions and decisions",
+  steps:["The controller writes the cell's policy; the gateway reads it plus live state (windows, grants, approvals) over mTLS.","The gateway expires windows and grants on its own clock, so a controller outage can't extend access (D13).","With PostgreSQL down, cached approvals keep working and new writes are refused."],
+  lv:{Locked:["ok","Always on"],Ask:["ok","Always on"],Standard:["ok","Always on"],Open:["ok","Always on"]},layers:[1,4,5]}
+];
+const svg=document.getElementById("svg"),NS="http://www.w3.org/2000/svg";
+function el(t,a,p){const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);(p||svg).appendChild(e);return e}
+const defs=el("defs",{});
+[["arr","marker"],["arr-on","marker-on"]].forEach(([id,c])=>{const m=el("marker",{id,viewBox:"0 0 10 10",refX:"9",refY:"5",markerWidth:"7",markerHeight:"7",orient:"auto-start-reverse"},defs);el("path",{d:"M0,0 L10,5 L0,10 z",class:c},m)});
+el("rect",{x:560,y:30,width:480,height:410,rx:14,class:"frame"});
+el("text",{x:572,y:50,class:"frametext"}).textContent="Cell namespace gc-<uid>";
+el("rect",{x:575,y:62,width:145,height:110,rx:10,class:"frame"});
+el("rect",{x:890,y:62,width:140,height:298,rx:10,class:"frame"});
+el("text",{x:892,y:376,class:"frametext"}).textContent="cell gateway (one pod)";
+el("text",{x:577,y:186,class:"frametext"}).textContent="cell gateway";
+el("rect",{x:360,y:30,width:180,height:345,rx:14,class:"frame"});
+el("text",{x:372,y:50,class:"frametext"}).textContent="glovecell-system";
+const anchors=(n)=>{const [x,y,w,h]=N[n];return{l:[x,y+h/2],r:[x+w,y+h/2],t:[x+w/2,y],b:[x+w/2,y+h],x,y,w,h}};
+const edgeEls={};
+function pathFor(a,b,kind){
+  const A=anchors(a),B=anchors(b);
+  if(kind==="v"){return `M${A.b[0]},${A.b[1]} L${B.t[0]},${B.t[1]}`}
+  if(kind==="left"){return `M${A.x+8},${A.y+A.h} C${A.x-25},${A.y+A.h+40} ${B.x-25},${B.y} ${B.x},${B.y+B.h/2}`}
+  if(kind==="left2"){return `M${A.x},${A.y+A.h/2} C${A.x-40},${A.y+10} ${B.x-40},${B.y+B.h} ${B.x},${B.y+B.h-12}`}
+  if(kind==="top"){return `M${A.t[0]+30},${A.y} C${A.t[0]+30},14 ${B.t[0]},14 ${B.t[0]},${B.y}`}
+  if(kind==="low"){const sx=A.x+A.w/2,ex=B.x+B.w/2,yy=405;return `M${sx},${A.y+A.h} L${sx},${yy-10} Q${sx},${yy} ${sx+10},${yy} L${ex-10},${yy} Q${ex},${yy} ${ex},${yy-10} L${ex},${B.y+B.h}`}
+  if(kind==="loc"){return `M${A.l[0]},${A.l[1]} C${A.x-60},${A.y+A.h/2} ${B.x+B.w+40},${B.y+60} ${B.x+B.w},${B.y+B.h-10}`}
+  if(kind==="cred"){return `M${A.b[0]},${A.b[1]} C${A.b[0]},${A.b[1]+120} ${B.r[0]+120},${B.r[1]+20} ${B.r[0]},${B.r[1]}`}
+  if(kind==="lan"){return `M${A.b[0]+30},${A.b[1]} C${A.b[0]+30},${A.b[1]+110} ${B.x-80},${B.l[1]} ${B.l[0]},${B.l[1]}`}
+  const [x1,y1]=A.r,[x2,y2]=B.l,mx=(x1+x2)/2;return `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`;
+}
+for(const id in E){const [a,b,kind,dashed]=E[id];edgeEls[id]=el("path",{d:pathFor(a,b,kind),class:"edge"+(dashed?" dashed":""),"marker-end":"url(#arr)"})}
+const nodeEls={};
+for(const id in N){const [x,y,w,h,t,s]=N[id];const g=el("g",{class:"node"});el("rect",{x,y,width:w,height:h,rx:8},g);
+  const tt=el("text",{x:x+10,y:y+19},g);tt.textContent=t;
+  if(s){const words=s.split(" ");let line="",ly=y+34;const maxc=Math.floor((w-16)/6);
+    for(const wd of words){if((line+" "+wd).trim().length>maxc){const st=el("text",{x:x+10,y:ly,class:"small"},g);st.textContent=line.trim();line=wd;ly+=13}else line+=" "+wd}
+    if(line.trim()){const st=el("text",{x:x+10,y:ly,class:"small"},g);st.textContent=line.trim()}}
+  nodeEls[id]=g}
+const xm=el("g",{opacity:0});el("line",{x1:1028,y1:206,x2:1048,y2:226,class:"xmark"},xm);el("line",{x1:1048,y1:206,x2:1028,y2:226,class:"xmark"},xm);
+const levelsEl=document.getElementById("levels");
+LEVELS.forEach(l=>{const b=document.createElement("button");b.textContent=l;b.setAttribute("aria-pressed",l===level);b.onclick=()=>{level=l;[...levelsEl.children].forEach(c=>c.setAttribute("aria-pressed",c.textContent===l));renderNav();render()};levelsEl.appendChild(b)});
+let cur=C[0].id;const nav=document.getElementById("nav");
+const cls={ok:"b-ok",warn:"b-warn",bad:"b-bad",info:"b-info"};
+function renderNav(){nav.innerHTML="";let g="";
+  C.forEach(c=>{if(c.g!==g){g=c.g;const h=document.createElement("div");h.className="group";h.textContent=g;nav.appendChild(h)}
+    const b=document.createElement("button");b.className="ch";b.setAttribute("aria-current",c.id===cur);
+    const [k,txt]=c.lv[level];const short={ok:"allowed",warn:"asks",bad:c.refused?"refused":"limited",info:"operator"}[k];
+    b.innerHTML=`<span>${c.name}<span class="dir">${c.dir==="in"?"in":c.dir==="out"?"out":c.dir==="local"?"local":c.dir==="none"?"inside":"internal"}</span></span>`+
+      (c.status==="proposed"?`<span class="badge b-prop">proposed</span>`:`<span class="badge ${cls[k]}">${short}</span>`);
+    b.onclick=()=>{cur=c.id;renderNav();render()};nav.appendChild(b)})}
+function render(){const c=C.find(x=>x.id===cur);
+  for(const id in edgeEls){const on=c.edges.includes(id);edgeEls[id].setAttribute("class","edge"+(E[id][3]?" dashed":"")+(on?" on":"")+(on&&c.refused?" refused":""));edgeEls[id].setAttribute("marker-end",on?"url(#arr-on)":"url(#arr)")}
+  for(const id in nodeEls){nodeEls[id].setAttribute("class","node"+(c.nodes.includes(id)?" on":" dim"))}
+  xm.setAttribute("opacity",c.refused?1:0);
+  document.getElementById("d-title").textContent=c.name+(c.status==="proposed"?" (proposed)":"");
+  document.getElementById("d-kv").innerHTML=`<dt>Direction</dt><dd>${{in:"Into the cell",out:"Out of the cell",local:"Sandbox to its own gateway",none:"Inside the sandbox only",internal:"Control plane"}[c.dir]}</dd><dt>Protocol</dt><dd>${c.proto}</dd><dt>Authentication</dt><dd>${c.auth}</dd><dt>Audit</dt><dd>${c.audit}</dd>`;
+  const ol=document.getElementById("d-steps");ol.innerHTML="";c.steps.forEach(s=>{const li=document.createElement("li");li.textContent=s;ol.appendChild(li)});
+  const lv=document.getElementById("d-levels");lv.innerHTML="";LEVELS.forEach(l=>{const [k,t]=c.lv[l];const d=document.createElement("div");d.className="lv"+(l===level?" cur":"");d.innerHTML=`<b>${l}</b><span class="badge ${cls[k]}">${t}</span>`;lv.appendChild(d)});
+  const la=document.getElementById("d-layers");la.innerHTML="";LAYERS.forEach((n,i)=>{const s=document.createElement("span");s.className="layer"+(c.layers.includes(i)?" on":"");s.textContent=(i+1)+". "+n;la.appendChild(s)});
+  document.getElementById("d-refused").textContent=ALL_REFUSED;}
+function theme(t){document.documentElement.dataset.theme=t;document.getElementById("t-dark").setAttribute("aria-pressed",t==="dark");document.getElementById("t-light").setAttribute("aria-pressed",t==="light")}
+document.getElementById("t-dark").onclick=()=>theme("dark");document.getElementById("t-light").onclick=()=>theme("light");
+renderNav();render();
+})();
+</script>
+</body>
+</html>

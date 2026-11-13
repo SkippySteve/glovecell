@@ -1,0 +1,60 @@
+{{- $t := .Values.telemetry }}
+{{- if and $t.enabled $t.prometheus.podMonitors }}
+{{- if $t.cells.enabled }}
+---
+# Each sandbox's proxy serves reduced agent counters on its metrics port
+# (docs/installation.md, "Cell telemetry"). Only the pods named by
+# telemetry.collector may scrape it, so Prometheus must match those labels.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: glovecell-cells
+{{- with $t.prometheus.labels }}
+  labels:
+{{ toYaml . | indent 4 }}
+{{- end }}
+spec:
+  namespaceSelector:
+    any: true
+  selector:
+    matchLabels:
+      projects.agentwork.dev/role: proxy
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+{{- end }}
+{{- if .Values.voice.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: glovecell-voice
+{{- with $t.prometheus.labels }}
+  labels:
+{{ toYaml . | indent 4 }}
+{{- end }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: glovecell-voice
+  podMetricsEndpoints:
+    - port: health
+      path: /metrics
+{{- end }}
+{{- end }}
+{{- if and $t.enabled $t.dashboards.enabled }}
+---
+# The Glovecell dashboard for Grafana's dashboard sidecar.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: glovecell-dashboard
+{{- with $t.dashboards.namespace }}
+  namespace: {{ . | quote }}
+{{- end }}
+  labels:
+{{ toYaml $t.dashboards.labels | indent 4 }}
+data:
+  glovecell.json: |-
+{{ .Files.Get "files/dashboards/glovecell.json" | indent 4 }}
+{{- end }}

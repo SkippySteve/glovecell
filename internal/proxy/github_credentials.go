@@ -1,10 +1,8 @@
 package proxy
 
 import (
-	"errors"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 )
 
@@ -34,19 +32,12 @@ func (s *Server) githubCredentials(r *http.Request) error {
 	if privateGitHubRepository(s.Config, r) == "" {
 		return nil
 	}
-	// Read the projected gateway Secret per request so credential replacement is consumed.
-	if s.GitHubToken == nil {
-		return errors.New("GitHub repository authorization unavailable")
-	}
-	token, err := s.GitHubToken()
-	if err != nil || token == "" || strings.ContainsAny(token, "\r\n\x00") {
-		return errors.New("GitHub repository authorization unavailable")
+	// Fetched per request so a replaced or revoked grant applies at once.
+	token, err := s.credential(r.Context(), GitHubTokenURI)
+	if err != nil {
+		return err
 	}
 	r.Header.Del("Cookie")
-	r.SetBasicAuth("x-access-token", token)
+	r.SetBasicAuth("x-access-token", string(token))
 	return nil
-}
-func gatewayGitHubToken() (string, error) {
-	raw, err := os.ReadFile("/tls/github-token")
-	return strings.TrimSpace(string(raw)), err
 }

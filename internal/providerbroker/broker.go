@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/telemetry"
 	"io"
 	"log/slog"
 	"math"
@@ -17,12 +18,15 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/connect"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/forgeagent"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -57,6 +61,14 @@ type Broker struct {
 	Execute func(context.Context, Owner, string, []byte) ([]byte, error)
 	HTTP    *http.Client
 	Now     func() time.Time
+}
+
+// ownerMu serializes renewal ticks and login installs on the owner. One broker
+// runs per process.
+var ownerMu sync.Mutex
+
+func (b *Broker) log(ctx context.Context, message, provider string) {
+	slog.InfoContext(ctx, message, "provider", provider)
 }
 
 func validAccess(value Access) bool {
@@ -321,8 +333,10 @@ func (b *Broker) Tick(ctx context.Context) error {
 		}
 		if err != nil || !validAccess(access) || access.Expires <= float64(b.now().Add(time.Minute).Unix()) {
 			failures = append(failures, errors.New(name+" credential owner renewal unavailable"))
+			recordRenewal(ctx, name, false)
 			continue
 		}
+		recordRenewal(ctx, name, true)
 		access.Expires = math.Min(access.Expires, float64(b.now().Add(5*time.Minute).Unix()))
 		grants[name] = Grant{Enabled: true, Access: &access}
 	}
@@ -427,13 +441,22 @@ func Run(ctx context.Context, c client.Client, config *rest.Config) error {
 	}}
 	tick := b.Tick
 	if cfg.Leases != "" {
-		tick = b.TickLeases
+		tick = func(ctx context.Context) error {
+			ownerMu.Lock()
+			defer ownerMu.Unlock()
+			return b.TickLeases(ctx)
+		}
+		if !*once {
+			if err := b.serveLogins(ctx, c, config); err != nil {
+				return err
+			}
+		}
 	}
 	if *once {
 		return tick(ctx)
 	}
 	for {
-		if err := tick(ctx); err != nil {
+		if err := telemetry.Tick(ctx, "provider-broker", tick); err != nil {
 			slog.Warn("provider broker renewal unavailable", "status", err.Error())
 		} else {
 			slog.Info("provider broker access leases renewed", "lease_seconds", strconv.Itoa(300))
@@ -444,4 +467,51 @@ func Run(ctx context.Context, c client.Client, config *rest.Config) error {
 		case <-time.After(30 * time.Second):
 		}
 	}
+}
+
+// serveLogins starts the console sign-in API when the chart configured login
+// pods (PROVIDER_LOGIN_POD). Without it the broker only renews, as before.
+func (b *Broker) serveLogins(ctx context.Context, c client.Client, config *rest.Config) error {
+	raw := os.Getenv("PROVIDER_LOGIN_POD")
+	if raw == "" {
+		return nil
+	}
+	template, err := ParseLoginTemplate(raw)
+	if err != nil {
+		return err
+	}
+	caller := os.Getenv("PROVIDER_BROKER_CALLER")
+	if caller == "" {
+		return errors.New("PROVIDER_BROKER_CALLER is required with PROVIDER_LOGIN_POD")
+	}
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return err
+	}
+	pods := KubePods{Client: c, Config: config, Namespace: b.Config.Control, Template: template}
+	// A restart forgets running sign-ins; remove their pods.
+	for _, p := range b.Config.Providers {
+		cleanup, cancel := context.WithTimeout(ctx, 30*time.Second)
+		_ = pods.Delete(cleanup, p)
+		cancel()
+	}
+	server := &http.Server{Addr: env("PROVIDER_BROKER_LISTEN_ADDR", ":8443"), ReadHeaderTimeout: 10 * time.Second,
+		Handler: &Server{Logins: &Logins{Broker: b, Pods: pods}, Reviewer: forgeagent.TokenReviewer{Client: clientset, Audience: Audience}, Caller: caller}}
+	go func() {
+		<-ctx.Done()
+		_ = server.Close()
+	}()
+	go func() {
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("provider sign-in API stopped", "error", err.Error())
+		}
+	}()
+	return nil
+}
+
+func env(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }

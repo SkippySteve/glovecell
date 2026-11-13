@@ -11,16 +11,18 @@ import (
 )
 
 func TestChartSchemaMatchesSource(t *testing.T) {
-	source, err := os.ReadFile("../../config/crd/projectworkspaces.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	chart, err := os.ReadFile("../../charts/agent-project-controller/crds/projectworkspaces.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(source, chart) {
-		t.Fatal("packaged CRD differs from controller schema")
+	for _, name := range []string{"projectworkspaces.yaml", "providerclasses.yaml", "forgeclasses.yaml"} {
+		source, err := os.ReadFile("../../config/crd/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		chart, err := os.ReadFile("../../charts/agent-project-controller/crds/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(source, chart) {
+			t.Fatal("packaged CRD differs from controller schema", name)
+		}
 	}
 }
 func TestHelmPackage(t *testing.T) {
@@ -377,5 +379,26 @@ func TestHelmLANHostGrants(t *testing.T) {
 	config["NETWORK_POLICY_CLUSTER_CIDRS_JSON"] = `["10.0.0.0/8"]`
 	if _, err := render(); err == nil {
 		t.Fatal("LAN grants accepted with the NetworkPolicy provider")
+	}
+}
+
+// The chart carries copies of the access-level CRDs and default profiles.
+func TestChartAccessLevelCopiesMatchSource(t *testing.T) {
+	for src, dst := range map[string]string{
+		"../../config/crd/accessprofiles.yaml":     "../../charts/agent-project-controller/crds/accessprofiles.yaml",
+		"../../config/crd/accessgrants.yaml":       "../../charts/agent-project-controller/crds/accessgrants.yaml",
+		"../../config/samples/accessprofiles.yaml": "../../charts/agent-project-controller/files/accessprofiles.yaml",
+	} {
+		a, err := os.ReadFile(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := os.ReadFile(dst)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(a, b) {
+			t.Fatalf("%s differs from %s", dst, src)
+		}
 	}
 }

@@ -100,10 +100,13 @@ func (r *Reconciler) projectState(ctx context.Context, w *api.ProjectWorkspace, 
 	return &s, nil
 }
 
-func (r *Reconciler) enrollRepositories(ctx context.Context, w *api.ProjectWorkspace, root *corev1.Secret) error {
+// enrollRepositories grants and records additional checkouts. When Running and
+// projects.json changes, it returns needsWorkerRestart so ensure can refresh
+// workers after objects() widens proxy/network policy for the new remotes.
+func (r *Reconciler) enrollRepositories(ctx context.Context, w *api.ProjectWorkspace, root *corev1.Secret) (needsWorkerRestart bool, err error) {
 	var previous []api.RepositoryProject
 	if raw := root.Data[RepositoriesLedgerKey]; len(raw) > 0 && json.Unmarshal(raw, &previous) != nil {
-		return errors.New("repository enrollment ledger is invalid")
+		return false, errors.New("repository enrollment ledger is invalid")
 	}
 	for _, old := range previous {
 		found := false
@@ -113,11 +116,11 @@ func (r *Reconciler) enrollRepositories(ctx context.Context, w *api.ProjectWorks
 			}
 		}
 		if !found {
-			return errors.New("individual repository removal requires verified revocation and storage cleanup")
+			return false, errors.New("individual repository removal requires verified revocation and storage cleanup")
 		}
 	}
-	if len(w.Spec.Repositories) != len(previous) && w.Spec.DesiredState != "Paused" {
-		return errors.New("pause the workbench before enrolling repositories")
+	if len(w.Spec.Repositories) != len(previous) && w.Spec.DesiredState != "Paused" && w.Spec.DesiredState != "Running" {
+		return false, errors.New("sandbox must be Running or Paused to enroll repositories")
 	}
 	var entries []projects.Entry
 	for _, p := range w.Spec.Repositories {
@@ -131,7 +134,7 @@ func (r *Reconciler) enrollRepositories(ctx context.Context, w *api.ProjectWorks
 			}
 			if !verified {
 				if err := r.authorizeGitHubRead(ctx, p); err != nil {
-					return err
+					return false, err
 				}
 			}
 		}
@@ -139,23 +142,23 @@ func (r *Reconciler) enrollRepositories(ctx context.Context, w *api.ProjectWorks
 			entry.Origin = r.Config.ForgejoOrigin
 			s, err := r.projectState(ctx, w, p)
 			if err != nil {
-				return err
+				return false, err
 			}
 			if string(s.Data["revoked"]) == "true" {
-				return errors.New("repository revocation is terminal")
+				return false, errors.New("repository revocation is terminal")
 			}
 			if err := r.current(ctx, w); err != nil {
-				return err
+				return false, err
 			}
 			token, err := r.Host.Grant(ctx, p.Repository, credentials(s))
 			if err != nil {
-				return err
+				return false, err
 			}
 			if string(s.Data["token"]) != token {
 				before := s.DeepCopy()
 				s.Data["token"] = []byte(token)
 				if err := r.Patch(ctx, s, client.MergeFrom(before)); err != nil {
-					return err
+					return false, err
 				}
 			}
 			entry.Username, entry.Token = string(s.Data["username"]), token
@@ -165,14 +168,37 @@ func (r *Reconciler) enrollRepositories(ctx context.Context, w *api.ProjectWorks
 	// The root recovery ledger never contains an administrative token.
 	raw, err := json.Marshal(entries)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if len(entries) > 0 && string(root.Data["projects.json"]) != string(raw) {
 		before := root.DeepCopy()
 		root.Data["projects.json"] = raw
-		return r.Patch(ctx, root, client.MergeFrom(before))
+		if err := r.Patch(ctx, root, client.MergeFrom(before)); err != nil {
+			return false, err
+		}
+		// Defer worker refresh until after objects() so clone sees widened Git access.
+		if w.Spec.DesiredState == "Running" {
+			return true, nil
+		}
 	}
-	return nil
+	return false, nil
+}
+
+// restartWorkersForEnrollment deletes worker pods so the Sandbox recreates
+// them and bootstrap clones newly enrolled /workspace/projects/<name> paths.
+func (r *Reconciler) restartWorkersForEnrollment(ctx context.Context, w *api.ProjectWorkspace) (bool, error) {
+	var pods corev1.PodList
+	if err := r.List(ctx, &pods, client.InNamespace(namespace(w)), client.MatchingLabels{api.OwnerLabel: string(w.UID), "projects.agentwork.dev/role": "worker"}); err != nil {
+		return false, err
+	}
+	restarted := false
+	for i := range pods.Items {
+		if err := r.Delete(ctx, &pods.Items[i]); err != nil && !apierrors.IsNotFound(err) {
+			return restarted, err
+		}
+		restarted = true
+	}
+	return restarted, nil
 }
 
 func (r *Reconciler) authorizeGitHubRead(ctx context.Context, p api.RepositoryProject) error {

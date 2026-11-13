@@ -72,7 +72,10 @@ spec:
   - name: cursor
 ```
 
-The controller refuses an unknown or repeated name, and any opt-in when the
+Each entry may name a `providerClassName`; without one it uses the
+provider's default class, which matches the behaviour described here (see
+[provider and forge classes](classes.md)). The controller refuses an unknown or
+repeated name, an unknown or unsupported class, and any opt-in when the
 controller has no lease source or the network provider is not Cilium. A
 refused opt-in blocks the project, like an invalid HTTPS rule, and withdraws
 every brokered grant.
@@ -105,7 +108,8 @@ out. Pausing or removing the project stops the worker.
   and its proxy cannot reach Cursor's hosts.
 - **Refresh material never leaves the owner and broker.** The controller,
   proxy and launcher reject any grant with refresh fields.
-- **The access token is shared.** All opted-in projects receive the same
+- **The access token is shared, unless cell tokens are on.** Without
+  `PROVIDER_CELL_TOKENS`, all opted-in projects receive the same
   provider access token, because there is one login per provider. A worker that
   copies the token can use it until it expires (Grok: its lease, within minutes
   of the owner's renewal; Cursor: the access JWT's own lifetime, which can be
@@ -113,12 +117,102 @@ out. Pausing or removing the project stops the worker.
   checks the current grant on every request; outside, it is only as contained as
   the project's other egress. Grant providers only to projects whose other
   HTTPS rules you would trust with that token. Rotating the owner's login (a
-  new sign-in) invalidates a copied Cursor token.
+  new sign-in) invalidates a copied Cursor token. Cell tokens (below) remove
+  the real token from workers.
+- **Cell tokens (`PROVIDER_CELL_TOKENS=grok,cursor`, off by default).** The
+  worker's `provider-access` then carries a token unique to its cell: an HMAC
+  of the provider and the real token, keyed from the cell's own inspection CA
+  key. A Cursor JWT keeps its header and claims and gets a new signature; Grok
+  gets an opaque `apc-cell-…` token. Only the cell's proxy holds the real
+  token (`proxy-ca/provider-access`, with `cellToken`); it accepts only that
+  cell's token, refuses the real one from inside, and forwards the real token
+  upstream. A copied cell token is useless at the provider and in any other
+  cell, and changes with every real token. A cell whose key cannot be read
+  gets the provider disabled, never the shared token. Turn it on only after
+  every cell's proxy runs an image that knows `cellToken` (an older proxy
+  refuses the unknown field, so the provider stops working in that cell
+  until its proxy restarts on the new image), and qualify each provider's CLI
+  with it on one disposable cell first: a CLI that verifies its token locally
+  would refuse the stand-in.
 - **The broker can run commands in the owner pods.** Scope its `pods/exec` to
   exactly those pods by name and add an admission policy that refuses its exec
   anywhere else (the reference deployment does both).
 
 ## Deployment
+
+### With the Helm chart
+
+```yaml
+providerBroker:
+  enabled: true
+  providers: [grok, cursor]   # only the subscriptions you have
+```
+
+This adds one namespace (`<release namespace>-providers`, or
+`providerBroker.namespace`) with:
+
+- `owners-0`, the offline owner (a one-replica StatefulSet, so its name is
+  fixed): the workspace image running `sleep`, no service account token, a
+  Cilium policy that denies all traffic, and one retained volume per listed
+  provider (`<provider>-identity`, kept on `helm uninstall`;
+  `providerBroker.owner.existingClaims` adopts claims you already have);
+- `provider-broker`, the controller image in lease mode, allowed to reach only
+  the API server and the listed providers' token endpoints;
+- three admission policies: the broker may exec only into `owners-0` and its
+  `<provider>-login` pods (never attach or port-forward); the only pods it may
+  create are those login pods with the chart's template (workspace image, no
+  token, emptyDir only, no host access); and the controller may not create,
+  change, exec or delete anything in this namespace. Its only rights here are
+  `get` on `provider-leases` and calls to the sign-in API.
+
+The chart sets the controller's `PROVIDER_LEASES_SECRET` itself (leave
+`config.PROVIDER_LEASES_SECRET` empty) and creates default provider classes
+only for the listed providers.
+
+**Sign in** once per provider, and again whenever the broker log says a login
+needs renewal. There are two ways; both end in the same checked install into
+the owner (the broker validates the file, refuses a different Cursor account
+unless you choose to replace it, clears any interrupted renewal first, writes
+the file atomically and reads it back through the renewal path before saying done).
+
+1. **Console (Connect).** Open any sandbox, **Credentials**, *Your
+   subscription logins*, **Connect**. The broker starts a short-lived
+   `<provider>-login` pod (the workspace image, no service account token,
+   emptyDir volumes only, no login volume, network only to that provider's
+   sign-in hosts), runs the provider's own sign-in (`grok login
+   --device-auth`, `cursor-agent login`) and the console shows its link, plus
+   Grok's code. Approve in your browser; the broker copies the new login from
+   that pod into the owner and deletes the pod. One sign-in runs at a time and
+   each ends after 15 minutes. Only a signed-in OIDC operator can start one or
+   see its code. This gives Glovecell its own session, separate from any on
+   your machine. `providerBroker.consoleSignIn: false` turns this path off.
+2. **Copy from your machine.** If the provider's CLI is already signed in on
+   your computer:
+
+   ```sh
+   agent-project-controller provider import grok     # ~/.grok/auth.json
+   agent-project-controller provider import cursor   # ~/.config/cursor/auth.json
+   # --file PATH, --namespace <release namespace>-providers, --replace-account
+   ```
+
+   It checks the file locally, hands it to the broker as a one-shot Secret
+   `provider-import-<provider>` (with your own kubeconfig), waits for the
+   broker to install it (normally within 30 seconds) and removes the Secret
+   whether it worked or not. Nothing keeps running on your machine.
+   **Caveat:** your machine and Glovecell then share one sign-in session. If
+   the provider rotates its refresh token, whichever side renews first can sign
+   the other out: your local CLI asks you to sign in again, or the broker log
+   reports `credential owner renewal unavailable` and you import or Connect
+   again. Connect avoids this.
+
+The broker's sign-in API listens on 8443 inside the cluster. It accepts only
+the controller's ServiceAccount, through a projected token with its own
+audience checked by TokenReview (like the forge agent), and network policy
+admits only the controller's pod. The controller relays
+`GET/POST/DELETE /api/v1/provider-logins[/{provider}]` from the console and
+logs who started or canceled each sign-in.
+
+### By hand
 
 `config/samples/provider-broker.yaml` is a generic example: namespace,
 ServiceAccount, Roles, the broker Deployment and one owner pod. Replace the

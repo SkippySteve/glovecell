@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/network"
 )
@@ -96,6 +99,49 @@ func TestLANGrantConfigurationFailsClosed(t *testing.T) {
 		lan, err := lanFromEnv(c.provider)
 		if (err == nil) != c.ok || lan.Enabled() != c.on {
 			t.Errorf("%q %q %T: enabled=%v err=%v", c.allowed, c.denied, c.provider, lan.Enabled(), err)
+		}
+	}
+}
+
+func TestDatabaseConfigurationFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	uri := filepath.Join(dir, "uri")
+	ca := filepath.Join(dir, "ca.crt")
+	os.WriteFile(uri, []byte("postgres://apc:secret@apc-db-rw.control:5432/apc\n"), 0o600)
+	os.WriteFile(ca, []byte("not used until connect\n"), 0o600)
+	plain := filepath.Join(dir, "plain")
+	os.WriteFile(plain, []byte("postgres://apc:secret@apc-db-rw.control:5432/apc?sslmode=disable\n"), 0o600)
+	for _, c := range []struct {
+		name                 string
+		env                  map[string]string
+		ok, on               bool
+		history, proxyRetain time.Duration
+	}{
+		{"none", map[string]string{}, true, false, 0, 0},
+		{"ca without url", map[string]string{"DATABASE_CA_FILE": ca}, false, false, 0, 0},
+		{"missing url file", map[string]string{"DATABASE_URL_FILE": filepath.Join(dir, "missing")}, false, false, 0, 0},
+		{"plaintext refused", map[string]string{"DATABASE_URL_FILE": plain, "DATABASE_CA_FILE": ca}, false, false, 0, 0},
+		{"bad pool size", map[string]string{"DATABASE_URL_FILE": uri, "DATABASE_MAX_CONNS": "1"}, false, false, 0, 0},
+		{"short retention", map[string]string{"DATABASE_URL_FILE": uri, "HISTORY_RETENTION": "1h"}, false, false, 0, 0},
+		{"defaults", map[string]string{"DATABASE_URL_FILE": uri}, true, true, 365 * 24 * time.Hour, 30 * 24 * time.Hour},
+		{"keep forever", map[string]string{"DATABASE_URL_FILE": uri, "HISTORY_RETENTION": "0", "PROXY_SUMMARY_RETENTION": "168h"}, true, true, 0, 168 * time.Hour},
+	} {
+		for _, k := range []string{"DATABASE_URL_FILE", "DATABASE_CA_FILE", "DATABASE_MAX_CONNS", "HISTORY_RETENTION", "DECIDED_REQUEST_RETENTION", "PROXY_SUMMARY_RETENTION"} {
+			t.Setenv(k, c.env[k])
+		}
+		db, retention, err := databaseFromEnv(context.Background())
+		if (err == nil) != c.ok || (db != nil) != c.on {
+			t.Errorf("%s: db=%v err=%v", c.name, db != nil, err)
+			continue
+		}
+		if err != nil && strings.Contains(err.Error(), "secret") {
+			t.Errorf("%s: error leaks the password: %v", c.name, err)
+		}
+		if db != nil {
+			if retention.History != c.history || retention.ProxySummaries != c.proxyRetain {
+				t.Errorf("%s: retention %+v", c.name, retention)
+			}
+			db.Close()
 		}
 	}
 }

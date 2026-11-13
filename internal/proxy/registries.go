@@ -32,3 +32,20 @@ func RegistryRules(ids []string) ([]api.HTTPSRule, error) {
 	}
 	return rules, nil
 }
+
+// StandardDownloadHosts are the GitHub hosts of the "standard" access level:
+// web pages, raw files, archives and release assets, read only.
+var StandardDownloadHosts = []string{"github.com", "codeload.github.com", "raw.githubusercontent.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"}
+
+// StandardRules is the "standard" access level for a project's optional
+// HTTPS rules: every reviewed package registry plus read-only GitHub
+// downloads. GET and HEAD only, so nothing can be pushed, posted or uploaded
+// through these rules; Git clone over HTTPS needs POST and is not included.
+// Callers drop hosts that are reserved for the project's own repository.
+func StandardRules() []api.HTTPSRule {
+	rules, _ := RegistryRules([]string{"go", "npm", "python", "rust"})
+	for _, host := range StandardDownloadHosts {
+		rules = append(rules, api.HTTPSRule{Host: host, Methods: []string{"GET", "HEAD"}, Paths: []string{"/"}})
+	}
+	return rules
+}

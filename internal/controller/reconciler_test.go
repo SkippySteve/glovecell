@@ -711,7 +711,7 @@ func TestIndependentCodexLedgerSurvivesMissingProjectionAndControllerRestart(t *
 	if err != nil || string(ledger.Data["independent-model-access"]) != "true" {
 		t.Fatal("lost independent lifecycle marker")
 	}
-	cfg, err := restarted.policyConfiguration(w, w.Spec.HTTPS)
+	cfg, err := restarted.policyConfiguration(context.Background(), w, w.Spec.HTTPS)
 	if err != nil || !cfg.IndependentCodex || !cfg.BrokeredProviders {
 		t.Fatal("missing projection disabled inspection denial")
 	}
