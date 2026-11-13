@@ -1,7 +1,7 @@
 # Packaged tools
 
-The workspace bundles T3 Code 0.0.45 (MIT), Codex 0.159.0 (Apache-2.0), and herdr-core 0.1.19 (Apache-2.0). Their upstream license/notice text is preserved in `licenses/` and included in the workspace image and release artifacts. The Dockerfile pins release assets by SHA-256. Go's license remains under `/usr/local/go/LICENSE`; Debian package copyrights remain with their installed packages. CI publishes an SPDX inventory for each image target.
+The workspace bundles T3 Code 0.0.45 (MIT), Codex 0.159.0 (Apache-2.0), herdr-core 0.1.19 (Apache-2.0) and the GitHub CLI 2.103.3 (MIT). Their upstream license/notice text is preserved in `licenses/` and included in the workspace image and release artifacts. The Dockerfile pins release assets by SHA-256. Go's license remains under `/usr/local/go/LICENSE`; Debian package copyrights remain with their installed packages. CI publishes an SPDX inventory for each image target.
 
-Upstream references: https://github.com/pingdotgg/t3code/tree/v0.0.45 and https://github.com/openai/codex/tree/rust-v0.159.0.
+Upstream references: https://github.com/pingdotgg/t3code/tree/v0.0.45, https://github.com/openai/codex/tree/rust-v0.159.0 and https://github.com/cli/cli/tree/v2.103.3.
 
 The `voice` image (glovecell-voice) links mautrix-go 0.32.0 and go.mau.fi/util 0.11.0, both under the Mozilla Public License 2.0; the license text is in `licenses/mautrix-go-0.32.0-MPL-2.0.txt` and their unmodified source is at https://github.com/mautrix/go/tree/v0.32.0 and https://github.com/mautrix/go-util/tree/v0.11.0.

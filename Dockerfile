@@ -92,6 +92,13 @@ RUN curl --http1.1 --retry 3 -fsSL https://codeberg.org/forgejo-contrib/forgejo-
     && mkdir /opt/fj && tar xzf /tmp/fj.tar.gz -C /opt/fj \
     && rm /tmp/fj.tar.gz
 COPY scripts/apc-fj.py /usr/local/bin/fj
+# Official GitHub CLI for brokered GitHub projects. It runs with a placeholder GH_TOKEN
+# that the project proxy replaces (docs/design/github-brokering.md).
+RUN curl -fsSL https://github.com/cli/cli/releases/download/v2.103.3/gh_2.103.3_linux_amd64.tar.gz -o /tmp/gh.tar.gz \
+    && echo '4c806978ffce1cec70853302a56d70ac6da4f19bae7adca4e1a8ab00633dd91d  /tmp/gh.tar.gz' | sha256sum -c - \
+    && tar xzf /tmp/gh.tar.gz -C /tmp gh_2.103.3_linux_amd64/bin/gh \
+    && install -m 0755 /tmp/gh_2.103.3_linux_amd64/bin/gh /usr/local/bin/gh \
+    && rm -rf /tmp/gh.tar.gz /tmp/gh_2.103.3_linux_amd64
 # Stock subscription clients, pinned independently of the application runtimes.
 RUN curl -fsSL https://x.ai/cli/grok-1.0.46-linux-x86_64.zst -o /tmp/grok.zst \
     && echo '3d6fff352acd5658758f9b7b627313468e779c86fb259273df40eda5bac9d713  /tmp/grok.zst' | sha256sum -c - \

@@ -13,6 +13,7 @@ import (
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/proxy"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -129,5 +130,48 @@ func TestGitHubExpiringLeaseCopiedDisabled(t *testing.T) {
 	lease, err := proxy.ParseGitHubLease(secretData(t, r, w, "proxy-ca")[proxy.GitHubAccessKey])
 	if err != nil || lease.Enabled || lease.Token != "" {
 		t.Fatal("expiring lease copied", lease, err)
+	}
+}
+
+// workerEnv returns the environment of the workspace container, for the
+// containers that run the worker's tools.
+func workerEnv(t *testing.T, r *Reconciler, w *api.ProjectWorkspace) map[string]string {
+	t.Helper()
+	containers, _, err := unstructured.NestedSlice(mustSandbox(t, r, namespace(w)).Object, "spec", "podTemplate", "spec", "containers")
+	if err != nil || len(containers) != 1 {
+		t.Fatal("workspace container not found", err)
+	}
+	out := map[string]string{}
+	env, _ := containers[0].(map[string]any)["env"].([]any)
+	for _, e := range env {
+		entry := e.(map[string]any)
+		out[entry["name"].(string)], _ = entry["value"].(string)
+	}
+	return out
+}
+
+func TestGitHubCLIPlaceholderOnlyForOptedInProjects(t *testing.T) {
+	ctx := context.Background()
+	r, w := githubFixture(t, time.Now().Add(5*time.Minute))
+	if err := r.ensure(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	for name := range workerEnv(t, r, w) {
+		if strings.HasPrefix(name, "GH_") {
+			t.Fatal("project without spec.github got", name)
+		}
+	}
+
+	r, w = githubFixture(t, time.Now().Add(5*time.Minute))
+	w.Spec.GitHub = &api.GitHubAccess{Repositories: []string{"SkippySteve/app"}}
+	if err := r.ensure(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	env := workerEnv(t, r, w)
+	if env["GH_TOKEN"] != githubPlaceholderToken || env["GH_PROMPT_DISABLED"] != "1" || env["GH_NO_UPDATE_NOTIFIER"] != "1" {
+		t.Fatal("gh environment missing", env)
+	}
+	if strings.Contains(env["GH_TOKEN"], githubToken) {
+		t.Fatal("the real token reached the worker environment")
 	}
 }
