@@ -25,3 +25,14 @@ c506e72c35249c81bb15af83c6760d12cfcc044a:docs/design/github-brokering.md:curl-au
 # target tests on branch task/orca-pilot/glovecell-voice. gitleaks scans every
 # fetched branch, so this branch commit failed security / source on main too.
 2596034a85a0cc6325b43782d5d5a8e9eb8038e8:internal/voice/targets/targets_test.go:generic-api-key:120
+
+# False positive: the public OAuth client ID of the official Cursor CLI
+# (providerBroker.cursorOAuthClientID; the value's own comment says it is not a
+# secret, and every Cursor CLI install ships it). Introduced by APC #147/#150.
+462bee3de03985ed5faf8fb0312335762df917be:charts/agent-project-controller/values.yaml:generic-api-key:56
+
+# False positive: a malformed fake Cursor access token in the login-validation
+# test ("cursor no refresh"): three parts of 1, 15 and 1 characters, not a
+# credential. Both commits of the console sign-in work (APC #151) carry it.
+cc79c872a7dd09e6a0ead6a25196779fb2e9c404:internal/providerbroker/enroll_test.go:generic-api-key:135
+ebfb18834f731b888690e801979f7fcab5915a64:internal/providerbroker/enroll_test.go:generic-api-key:135
