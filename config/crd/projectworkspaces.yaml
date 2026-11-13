@@ -86,6 +86,10 @@ spec:
                         pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$'
                       public:
                         type: boolean
+                        # Defaulted so an entry stored as "public: false" equals one
+                        # written without the field: clients that omit false must
+                        # not trip the immutable-entry rules below.
+                        default: false
                 repository:
                   type: string
                   maxLength: 201
