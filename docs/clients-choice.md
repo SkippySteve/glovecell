@@ -7,7 +7,7 @@ how the phone and desktop reach it.
 | Client | OrchestratorClass | Phone | PC | Hub / account |
 | --- | --- | --- | --- | --- |
 | **Orca** | `orca` | Paired once to the Orca hub; new cells appear without a new scan | Orca desktop / Local mounts | In-cluster `orca-hub` + spoke dial ([hubspoke.md](hubspoke.md)) |
-| **Herdr** | `herdr` | Android Herdr SSHs to the hub herdr-core over Wi‑Fi/VPN | Herdr GUI on the same hub core | PC herdr-core + `herdr-via` (APC #129 / `docs/herdr.md` when merged) |
+| **Herdr** | `herdr` | Android Herdr SSHs to the in-cluster glove-hub over Wi‑Fi/VPN | Herdr GUI on the same glove-hub | Chart `gloveHub` + `herdr-via` (`docs/herdr.md`) |
 | **T3** | `t3` | Stock T3 app signed into the controller's T3 account | `app.t3.codes` or desktop T3 | T3 Connect catalog + managed HTTPS ([t3-connect.md](t3-connect.md)) |
 
 Set `spec.orchestratorClassName` when you create the workspace (immutable once

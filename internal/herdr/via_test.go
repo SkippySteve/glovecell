@@ -1,40 +1,17 @@
 package herdr
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
-func TestViaConfigLine(t *testing.T) {
+// The hub's line is ignored: the worker always runs the same argv, with the
+// state directories the worker's `hc server` uses.
+func TestConnectCommandIsFixed(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		name    string
-		line    string
-		want    string
-		wantErr bool
-	}{
-		{name: "default", want: DefaultConnect},
-		{name: "hc connect", line: "hc connect", want: "hc connect"},
-		{name: "herdr-core connect", line: "herdr-core connect", want: "herdr-core connect"},
-		{name: "reject semicolon", line: "hc connect; rm -rf /", wantErr: true},
-		{name: "reject pipe", line: "hc connect | cat", wantErr: true},
-		{name: "reject other binary", line: "bash -c evil", wantErr: true},
-		{name: "reject newline", line: "hc connect\necho x", wantErr: true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			got, err := ViaConfig{RemoteLine: tc.line}.line()
-			if tc.wantErr {
-				if err == nil {
-					t.Fatalf("expected error")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if got != tc.want {
-				t.Fatalf("got %q want %q", got, tc.want)
-			}
-		})
+	want := []string{"env", "HOME=/workspace/home", "XDG_RUNTIME_DIR=/workspace/herdr", "herdr-core", "connect"}
+	if got := ConnectCommand(); !slices.Equal(got, want) {
+		t.Fatalf("got %q want %q", got, want)
 	}
 }
 

@@ -226,3 +226,8 @@ data:
 {{- if .Values.herdrCore.enabled }}
   HERDR_ORCHESTRATOR_CLASS: {{ .Values.herdrCore.className | quote }}
 {{- end }}
+{{- if .Values.gloveHub.enabled }}
+  GLOVE_HUB_EXEC_CLUSTER_ROLE: {{ include "apc.gloveHubExecRole" . | quote }}
+  GLOVE_HUB_NAMESPACE: {{ include "apc.gloveHubNamespace" . | quote }}
+  GLOVE_HUB_SERVICE_ACCOUNT: glove-hub
+{{- end }}

@@ -14,8 +14,9 @@ import (
 
 // Herdr is the projects.agentwork.dev/herdr adapter. Access is the worker's
 // herdr-core (`hc server`) plus an operator-readable ConfigMap with the hub
-// `--via` recipe. Phone and PC reach the cell through a hub herdr-core; this
-// adapter does not open SSH or Traefik routes (docs/herdr.md).
+// `--via` recipe. Phone and PC reach the cell through the glove-hub
+// herdr-core, which enrols ready herdr workspaces itself; this adapter does
+// not open SSH or Traefik routes (docs/herdr.md).
 type Herdr struct {
 	Client    client.Client
 	Namespace string
@@ -49,7 +50,7 @@ func (a *Herdr) Ensure(ctx context.Context, w *api.ProjectWorkspace) error {
 			"workspace": w.Name,
 			"via":       herdr.MachineViaCommand(w.Name),
 			"connect":   herdr.DefaultConnect,
-			"note":      "On the hub: hc machine add --name <cell> --via '" + herdr.MachineViaCommand(w.Name) + "'. Android SSHs to the hub herdr-core over LAN/WireGuard; PC Herdr GUI uses the same hub.",
+			"note":      "glove-hub enrols this workspace as: hc machine add --name " + w.Name + " --via '" + herdr.MachineViaCommand(w.Name) + "'. Phone and PC Herdr SSH to glove-hub over LAN/WireGuard and see the same machines.",
 		},
 	}
 	existing := &corev1.ConfigMap{}

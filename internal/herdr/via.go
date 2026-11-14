@@ -1,5 +1,5 @@
-// Package herdr bridges Glovecell workers that run herdr-core (`hc`) to a
-// hub herdr-core on Steve's PC or phone path. See docs/herdr.md.
+// Package herdr bridges Glovecell workers that run herdr-core (`hc`) to the
+// hub herdr-core (glove-hub, in the cluster). See docs/herdr.md.
 package herdr
 
 import (
@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/connect"
 	"k8s.io/client-go/rest"
@@ -18,57 +17,46 @@ import (
 // already has `hc` on PATH (stdin/stdout protocol).
 const DefaultConnect = "hc connect"
 
+// WorkerHome and WorkerRuntimeDir are where the worker's `hc server` keeps
+// its state and socket (on the workspace PVC). A `kubectl exec` does not
+// inherit the worker command's environment, so the connect line sets them.
+const (
+	WorkerHome       = "/workspace/home"
+	WorkerRuntimeDir = "/workspace/herdr"
+)
+
 // ViaConfig selects the Ready worker for a ProjectWorkspace name.
 type ViaConfig struct {
 	ControlNamespace string
 	Workspace        string
-	// RemoteLine is the shell line hc appends (usually `hc connect`). Empty
-	// uses DefaultConnect.
-	RemoteLine string
 }
 
-func (c ViaConfig) line() (string, error) {
-	line := strings.TrimSpace(c.RemoteLine)
-	if line == "" {
-		line = DefaultConnect
-	}
-	if line == "" || strings.ContainsAny(line, "\x00\r\n") {
-		return "", errors.New("herdr via remote line is invalid")
-	}
-	// Refuse shell metacharacters that would let the hub invent a command
-	// beyond connecting to an already-installed hc.
-	if strings.ContainsAny(line, ";|&`$<>") || strings.Contains(line, "..") {
-		return "", errors.New("herdr via remote line must be a simple hc connect invocation")
-	}
-	if !strings.HasPrefix(line, "hc ") && line != "hc" && !strings.HasPrefix(line, "herdr-core ") {
-		return "", errors.New("herdr via remote line must start with hc or herdr-core")
-	}
-	return line, nil
+// ConnectCommand is the fixed argv run in the worker. herdr-core 0.1.19
+// passes `--via` a probe script (`sh -c 'p=$(command -v herdr-core) ...
+// exec "$p" connect'`); the hub's line is never run, so it cannot choose
+// another command.
+func ConnectCommand() []string {
+	return []string{"env", "HOME=" + WorkerHome, "XDG_RUNTIME_DIR=" + WorkerRuntimeDir, "herdr-core", "connect"}
 }
 
-// Via runs the remote herdr-core connect line inside the workspace worker
-// with a raw stdin/stdout pipe (no TTY). Suitable as:
+// Via runs herdr-core connect inside the workspace worker with a raw
+// stdin/stdout pipe (no TTY). Suitable as:
 //
 //	hc machine add --name <cell> --via 'agent-project-controller herdr-via <workspace>'
 func Via(ctx context.Context, c client.Client, config *rest.Config, cfg ViaConfig, in io.Reader, out, errOut io.Writer) error {
 	if cfg.ControlNamespace == "" || cfg.Workspace == "" {
 		return errors.New("control namespace and workspace required")
 	}
-	line, err := cfg.line()
-	if err != nil {
-		return err
-	}
 	_, pod, err := connect.Pod(ctx, c, cfg.ControlNamespace, cfg.Workspace)
 	if err != nil {
 		return err
 	}
-	// sh -c keeps a single argv for hc's appended shell line while still
-	// refusing metacharacters above.
-	cmd := []string{"/bin/sh", "-c", line}
-	return connect.Exec(ctx, config, pod.Namespace, pod.Name, cmd, in, out, errOut, false)
+	return connect.Exec(ctx, config, pod.Namespace, pod.Name, ConnectCommand(), in, out, errOut, false)
 }
 
-// MachineViaCommand is the local --via recipe for operators.
+// MachineViaCommand is the --via recipe the hub uses for a workspace.
 func MachineViaCommand(workspace string) string {
-	return fmt.Sprintf("agent-project-controller herdr-via %s", workspace)
+	return fmt.Sprintf("%s %s", viaPrefix, workspace)
 }
+
+const viaPrefix = "agent-project-controller herdr-via"

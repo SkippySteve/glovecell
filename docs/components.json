@@ -27,7 +27,8 @@
     {"command": "exec", "class": "operator-cli", "note": "one-shot"},
     {"command": "version", "class": "operator-cli", "note": "one-shot"},
     {"command": "provider", "class": "operator-cli", "note": "one-shot: provider import uploads a local login with the operator's own identity"},
-    {"command": "herdr-via", "class": "operator-cli", "note": "one-shot pipe the Herdr hub runs (hc machine add --via), kubectl exec with the operator's own identity"},
+    {"command": "herdr-via", "class": "operator-cli", "note": "one-shot pipe a hub herdr-core runs (hc machine add --via): exec into one Ready worker; in glove-hub with its own ServiceAccount"},
+    {"command": "glove-hub-enroll", "class": "chart", "template": "glove-hub.yaml", "note": "enroller container of glove-hub, the in-cluster Herdr hub; own pod, namespace and ServiceAccount; off by default"},
 
     {"command": "provider-broker", "class": "cluster-exception",
      "where": "steve/opnsense-kubernetes-bgp infra/agent-workplace/provider-broker",
