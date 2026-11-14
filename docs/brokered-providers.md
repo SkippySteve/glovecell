@@ -95,7 +95,9 @@ provider's default class, which matches the behaviour described here (see
 [provider and forge classes](classes.md)). The controller refuses an unknown or
 repeated name, an unknown or unsupported class, an opt-in whose provider host
 the project also lists in a fixed HTTPS rule (for example `chatgpt.com` for an
-older hand-made Codex grant: remove the rule first), and any opt-in when the
+older hand-made Codex grant: remove the rule first; see
+[moving off an operator-made Codex grant](#moving-off-an-operator-made-codex-grant)),
+and any opt-in when the
 controller has no lease source or the network provider is not Cilium. A
 refused opt-in blocks the project, like an invalid HTTPS rule, and withdraws
 every brokered grant.
@@ -257,3 +259,28 @@ from projects that did not opt in. An operator-made Codex grant (the
 `access-token`, `chatgpt-account-id` and `expires-at` keys) keeps those keys,
 but its `codex` entry is replaced by the brokered one or removed; move such a
 project to `spec.providers: [{name: codex}]`.
+
+### Moving off an operator-made Codex grant
+
+A project that had a hand-made Codex grant needs two cleanups before brokered
+Codex works. Each one blocks the project with its own message:
+
+1. **`brokered provider "codex" manages chatgpt.com; remove that HTTPS rule`**:
+   delete the `chatgpt.com` entry from `spec.https` (or the whole list if it
+   was the only rule).
+2. **`independent Codex requires its inspecting gateway binding`**: the
+   project's `model-access` Secret still carries the operator grant's keys
+   (`access-token`, `chatgpt-account-id`, `chatgpt-plan-type`, `expires-at`).
+   A Secret with any key besides `provider-access` and a `codex` entry counts
+   as independent Codex, which is allowed only for the workspace named by
+   `INDEPENDENT_CODEX_WORKSPACE_UID`. Remove those keys and keep
+   `provider-access`:
+
+   ```sh
+   kubectl -n <project namespace> patch secret model-access --type merge \
+     -p '{"data":{"access-token":null,"chatgpt-account-id":null,"chatgpt-plan-type":null,"expires-at":null}}'
+   ```
+
+The controller retries by itself after each step; the project becomes Ready
+within about a minute. Removing the keys discards that project's copy of the
+operator token; the broker's owner login is unaffected.
