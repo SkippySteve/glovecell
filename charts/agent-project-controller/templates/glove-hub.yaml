@@ -1,0 +1,348 @@
+{{- /*
+glove-hub (docs/herdr.md): the in-cluster Herdr hub. Off by default. One pod
+in its own namespace: herdr-core as the hub that phone and PC Herdr reach over
+SSH, and an enroller that adds every Ready workspace of the Herdr class as a
+machine (hc machine add --via 'agent-project-controller herdr-via <cell>').
+Its ServiceAccount reads ProjectWorkspaces and execs into Herdr cells only:
+the controller binds the exec role in each Herdr cell's namespace and removes
+it when the cell leaves the class. Orca and T3 cells grant it nothing.
+*/ -}}
+{{- if .Values.gloveHub.enabled }}
+{{- $h := .Values.gloveHub }}
+{{- $ns := include "apc.gloveHubNamespace" . }}
+{{- if not .Values.herdrCore.enabled }}
+{{- fail "gloveHub.enabled requires herdrCore.enabled" }}
+{{- end }}
+{{- if ne (default "cilium" (index .Values.config "NETWORK_PROVIDER" | toString)) "cilium" }}
+{{- fail "gloveHub.enabled requires NETWORK_PROVIDER=cilium" }}
+{{- end }}
+{{- if eq $ns .Release.Namespace }}
+{{- fail "gloveHub.namespace must differ from the controller's namespace" }}
+{{- end }}
+{{- if not (regexMatch "^.+@sha256:[a-f0-9]{64}$" (toString $h.image)) }}
+{{- fail "gloveHub.image must be a digest-pinned image (@sha256:...) from the Dockerfile's glove-hub target" }}
+{{- end }}
+{{- range $h.authorizedKeys }}
+{{- if not (regexMatch "^(ssh-ed25519|sk-ssh-ed25519@openssh.com|ecdsa-sha2-nistp(256|384|521)|sk-ecdsa-sha2-nistp256@openssh.com) [A-Za-z0-9+/]+={0,3}( [^\\r\\n]*)?$" (toString .)) }}
+{{- fail "gloveHub.authorizedKeys: each entry is one Ed25519 or ECDSA public key line (no options)" }}
+{{- end }}
+{{- end }}
+{{- range $h.networkPolicy.sshFromCIDRs }}
+{{- if not (regexMatch "^[0-9a-f.:]+/[0-9]{1,3}$" (toString .)) }}
+{{- fail "gloveHub.networkPolicy.sshFromCIDRs: each entry is a CIDR" }}
+{{- end }}
+{{- end }}
+{{- $state := "/var/lib/glove-hub" }}
+{{- $env := printf "- {name: HOME, value: %q}\n- {name: XDG_RUNTIME_DIR, value: %q}\n- {name: CONTROL_NAMESPACE, value: %q}\n- {name: HERDR_ORCHESTRATOR_CLASS, value: %q}\n- {name: GLOVE_HUB_SYNC_INTERVAL, value: %q}" (printf "%s/home" $state) (printf "%s/run" $state) .Release.Namespace .Values.herdrCore.className (toString $h.syncInterval) }}
+{{- $security := "allowPrivilegeEscalation: false\nreadOnlyRootFilesystem: true\ncapabilities:\n  drop: [ALL]" }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $ns }}
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: glove-hub
+  namespace: {{ $ns }}
+---
+# Read ProjectWorkspaces (which cells use the Herdr class, and are Ready).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: glove-hub-workspaces
+rules:
+  - apiGroups: [projects.agentwork.dev]
+    resources: [projectworkspaces]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: glove-hub-workspaces
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: glove-hub-workspaces
+subjects:
+  - kind: ServiceAccount
+    name: glove-hub
+    namespace: {{ $ns }}
+---
+# Find a cell's worker and exec herdr-core connect in it. Bound only by
+# RoleBindings the controller makes in Herdr cells' namespaces
+# (GLOVE_HUB_EXEC_CLUSTER_ROLE), never cluster-wide.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "apc.gloveHubExecRole" . }}
+rules:
+  - apiGroups: ['']
+    resources: [pods]
+    verbs: [get, list]
+  - apiGroups: ['']
+    resources: [pods/exec]
+    verbs: [create]
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: glove-hub
+  namespace: {{ $ns }}
+data:
+  # OpenSSH as the door to the hub's herdr-core and nothing else: every login
+  # runs `herdr-core connect` (Herdr's protocol over stdin/stdout), whatever
+  # the client asks for. No terminal, no forwarding, no other command. sshd
+  # runs as the unprivileged user agent, so only agent can log in.
+  sshd_config: |
+    Port 2222
+    ListenAddress 0.0.0.0
+    PidFile none
+    LogLevel VERBOSE
+    HostKey /tmp/ssh/ssh_host_ed25519_key
+    HostKeyAlgorithms ssh-ed25519
+    KexAlgorithms mlkem768x25519-sha256,sntrup761x25519-sha512,curve25519-sha256
+    AuthorizedKeysFile /etc/glove-hub/authorized_keys
+    # The keys file sits on a read-only, kubelet-managed volume whose
+    # directory modes sshd's ownership walk does not expect.
+    StrictModes no
+    PubkeyAuthentication yes
+    PasswordAuthentication no
+    KbdInteractiveAuthentication no
+    HostbasedAuthentication no
+    UsePAM no
+    PermitRootLogin no
+    AllowUsers agent
+    MaxAuthTries 3
+    LoginGraceTime 20s
+    MaxStartups 10:30:60
+    ForceCommand /usr/local/bin/herdr-core connect
+    SetEnv HOME={{ $state }}/home XDG_RUNTIME_DIR={{ $state }}/run
+    PermitTTY no
+    PermitUserRC no
+    PermitUserEnvironment no
+    DisableForwarding yes
+    PermitTunnel no
+    ClientAliveInterval 30
+    ClientAliveCountMax 4
+    PrintMotd no
+  authorized_keys: |
+{{- range $h.authorizedKeys }}
+    restrict {{ . }}
+{{- end }}
+  # agent's shell runs the forced command; sshd is OpenSSH's own account.
+  passwd: |
+    root:x:0:0:root:/root:/sbin/nologin
+    sshd:x:22:22:sshd privilege separation:/:/sbin/nologin
+    agent:x:1000:1000:glove-hub:{{ $state }}/home:/bin/sh
+  group: |
+    root:x:0:
+    sshd:x:22:
+    agent:x:1000:
+---
+# The hub's machine list and its SSH host key (generated on first start, so
+# phone and PC keep trusting the same key across restarts).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: glove-hub
+  namespace: {{ $ns }}
+spec:
+  accessModes: [ReadWriteOnce]
+{{- with $h.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+{{- end }}
+  resources:
+    requests:
+      storage: {{ $h.persistence.size | quote }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: glove-hub
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/name: glove-hub
+    app.kubernetes.io/part-of: agent-project-controller
+spec:
+  # One herdr-core owns the state volume.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: glove-hub
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ toJson (pick $h "authorizedKeys") | sha256sum }}
+      labels:
+        app.kubernetes.io/name: glove-hub
+        app.kubernetes.io/part-of: agent-project-controller
+    spec:
+      serviceAccountName: glove-hub
+      enableServiceLinks: false
+{{- with $h.scheduling.nodeSelector }}
+      nodeSelector:
+{{ toYaml . | indent 8 }}
+{{- end }}
+{{- with $h.scheduling.tolerations }}
+      tolerations:
+{{ toYaml . | indent 8 }}
+{{- end }}
+{{- with $h.scheduling.affinity }}
+      affinity:
+{{ toYaml . | indent 8 }}
+{{- end }}
+{{- with .Values.controllerImagePullSecrets }}
+      imagePullSecrets:
+{{ toYaml . | indent 8 }}
+{{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        # sshd and the hub's herdr-core. herdr-core runs herdr-via for each
+        # machine, so this container holds the ServiceAccount token.
+        - name: hub
+          image: {{ $h.image | quote }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              mkdir -p "$HOME" "$XDG_RUNTIME_DIR" {{ $state }}/ssh /tmp/ssh
+              key={{ $state }}/ssh/ssh_host_ed25519_key
+              [ -f "$key" ] || ssh-keygen -q -t ed25519 -N '' -C glove-hub -f "$key"
+              # sshd refuses a group-readable key; fsGroup makes the volume's files so.
+              install -m 0600 "$key" /tmp/ssh/ssh_host_ed25519_key
+              herdr-core server start
+              exec /usr/sbin/sshd -D -e -f /etc/glove-hub/sshd_config
+          env:
+{{- $env | nindent 12 }}
+          ports:
+            - name: ssh
+              containerPort: 2222
+          # Exec probe, not TCP: a TCP probe fills sshd's log with pre-auth
+          # disconnects. A stopped herdr-core restarts the container.
+          livenessProbe:
+            exec:
+              command: [herdr-core, server, status]
+            periodSeconds: 30
+            failureThreshold: 3
+          securityContext:
+{{- $security | nindent 12 }}
+{{- with $h.resources }}
+          resources:
+{{ toYaml . | indent 12 }}
+{{- end }}
+          volumeMounts:
+            - {name: state, mountPath: {{ $state }}}
+            - {name: config, mountPath: /etc/glove-hub/sshd_config, subPath: sshd_config, readOnly: true}
+            - {name: config, mountPath: /etc/glove-hub/authorized_keys, subPath: authorized_keys, readOnly: true}
+            - {name: config, mountPath: /etc/passwd, subPath: passwd, readOnly: true}
+            - {name: config, mountPath: /etc/group, subPath: group, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+        # Adds and removes the hub's machines as Herdr cells become Ready or go.
+        - name: enroll
+          image: {{ $h.image | quote }}
+          command: [/usr/local/bin/agent-project-controller, glove-hub-enroll]
+          env:
+{{- $env | nindent 12 }}
+          securityContext:
+{{- $security | nindent 12 }}
+{{- with $h.resources }}
+          resources:
+{{ toYaml . | indent 12 }}
+{{- end }}
+          volumeMounts:
+            - {name: state, mountPath: {{ $state }}}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: glove-hub
+        - name: config
+          configMap:
+            name: glove-hub
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: glove-hub
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/name: glove-hub
+{{- with $h.service.labels }}
+{{ toYaml . | indent 4 }}
+{{- end }}
+{{- with $h.service.annotations }}
+  annotations:
+{{ toYaml . | indent 4 }}
+{{- end }}
+spec:
+  type: {{ $h.service.type }}
+{{- if eq $h.service.type "LoadBalancer" }}
+  # Keeps the client address, which the network policy and sshd's log need.
+  externalTrafficPolicy: Local
+{{- end }}
+  selector:
+    app.kubernetes.io/name: glove-hub
+  ports:
+    - name: ssh
+      port: {{ $h.service.port }}
+      targetPort: ssh
+      protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: {{ $ns }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# In: SSH only from gloveHub.networkPolicy.sshFromCIDRs (home network and
+# WireGuard); none listed, nothing gets in. Out: only the API server (worker
+# lookup and exec go through it; the hub never connects to a cell directly).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: glove-hub
+  namespace: {{ $ns }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: glove-hub
+{{- with $h.networkPolicy.sshFromCIDRs }}
+  ingress:
+    - fromCIDR:
+{{ toYaml . | indent 8 }}
+      toPorts:
+        - ports:
+            - port: "2222"
+              protocol: TCP
+{{- else }}
+  ingressDeny:
+    - fromEntities: [all]
+{{- end }}
+  egress:
+    - toEntities: [kube-apiserver]
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "6443"
+              protocol: TCP
+{{- end }}

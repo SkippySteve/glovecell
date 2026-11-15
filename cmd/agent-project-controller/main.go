@@ -439,6 +439,9 @@ func run(ctx context.Context) error {
 		case "herdr-via":
 			// Hub herdr-core: hc machine add --via 'agent-project-controller herdr-via <workspace>'
 			return herdrViaCLI(ctx, os.Args[2:])
+		case "glove-hub-enroll":
+			// glove-hub's enroller container (chart glove-hub.yaml, docs/herdr.md).
+			return gloveHubEnrollCLI(ctx)
 		case "model":
 			if len(os.Args) != 3 {
 				return errors.New("usage: agent-project-controller model <workspace>")
@@ -529,7 +532,7 @@ func run(ctx context.Context) error {
 	if e != nil {
 		return e
 	}
-	reconciler := &controller.Reconciler{LAN: lan, Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, GitHost: gitHost, ForgejoOrigin: origin, Owner: owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling, RegistrarNamespace: os.Getenv("REGISTRAR_NAMESPACE"), WorkerExecClusterRole: os.Getenv("WORKER_EXEC_CLUSTER_ROLE"), ProjectAccessClusterRole: os.Getenv("PROJECT_ACCESS_CLUSTER_ROLE"), ControllerServiceAccount: env("CONTROLLER_SERVICE_ACCOUNT", controller.DefaultControllerServiceAccount), OrcaHubSpoke: orcaHubSpoke, OrcaRuntimeImage: os.Getenv("ORCA_RUNTIME_IMAGE"), OrcaOrchestratorClass: env("HUBSPOKE_ORCHESTRATOR_CLASS", "orca"), OrcaSpokePublicDomain: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_DOMAIN")), OrcaSpokeGatewayName: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_GATEWAY_NAME")), OrcaSpokeGatewayNamespace: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_GATEWAY_NAMESPACE")), OrcaSpokeGatewaySection: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_GATEWAY_SECTION")), OrcaHubNamespace: env("HUBSPOKE_HUB_NAMESPACE", "agent-project-control-orca-hub"), HubLogsClusterRole: strings.TrimSpace(os.Getenv("HUBSPOKE_HUB_LOGS_CLUSTER_ROLE")), HubServiceAccount: strings.TrimSpace(os.Getenv("HUBSPOKE_HUB_SERVICE_ACCOUNT")), AuditAssignmentFeed: auditAssignmentFeed, AuditAssignmentFeedConfigMap: strings.TrimSpace(os.Getenv("AUDIT_ASSIGNMENT_FEED_CONFIGMAP")), HerdrCoreEnabled: herdrCore, HerdrOrchestratorClass: env("HERDR_ORCHESTRATOR_CLASS", "herdr"), PlatformFloors: floors, BootstrapImageSource: os.Getenv("BOOTSTRAP_IMAGE_SOURCE"), ProxyRuntimeGuard: guard}}
+	reconciler := &controller.Reconciler{LAN: lan, Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, GitHost: gitHost, ForgejoOrigin: origin, Owner: owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling, RegistrarNamespace: os.Getenv("REGISTRAR_NAMESPACE"), WorkerExecClusterRole: os.Getenv("WORKER_EXEC_CLUSTER_ROLE"), ProjectAccessClusterRole: os.Getenv("PROJECT_ACCESS_CLUSTER_ROLE"), ControllerServiceAccount: env("CONTROLLER_SERVICE_ACCOUNT", controller.DefaultControllerServiceAccount), OrcaHubSpoke: orcaHubSpoke, OrcaRuntimeImage: os.Getenv("ORCA_RUNTIME_IMAGE"), OrcaOrchestratorClass: env("HUBSPOKE_ORCHESTRATOR_CLASS", "orca"), OrcaSpokePublicDomain: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_DOMAIN")), OrcaSpokeGatewayName: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_GATEWAY_NAME")), OrcaSpokeGatewayNamespace: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_GATEWAY_NAMESPACE")), OrcaSpokeGatewaySection: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_GATEWAY_SECTION")), OrcaHubNamespace: env("HUBSPOKE_HUB_NAMESPACE", "agent-project-control-orca-hub"), HubLogsClusterRole: strings.TrimSpace(os.Getenv("HUBSPOKE_HUB_LOGS_CLUSTER_ROLE")), HubServiceAccount: strings.TrimSpace(os.Getenv("HUBSPOKE_HUB_SERVICE_ACCOUNT")), AuditAssignmentFeed: auditAssignmentFeed, AuditAssignmentFeedConfigMap: strings.TrimSpace(os.Getenv("AUDIT_ASSIGNMENT_FEED_CONFIGMAP")), HerdrCoreEnabled: herdrCore, HerdrOrchestratorClass: env("HERDR_ORCHESTRATOR_CLASS", "herdr"), GloveHubExecClusterRole: strings.TrimSpace(os.Getenv("GLOVE_HUB_EXEC_CLUSTER_ROLE")), GloveHubNamespace: strings.TrimSpace(os.Getenv("GLOVE_HUB_NAMESPACE")), GloveHubServiceAccount: strings.TrimSpace(os.Getenv("GLOVE_HUB_SERVICE_ACCOUNT")), PlatformFloors: floors, BootstrapImageSource: os.Getenv("BOOTSTRAP_IMAGE_SOURCE"), ProxyRuntimeGuard: guard}}
 	if orcaHubSpoke && reconciler.Config.OrcaRuntimeImage == "" {
 		return errors.New("HUBSPOKE_ORCA_ENABLED=true requires ORCA_RUNTIME_IMAGE")
 	}
@@ -908,12 +911,9 @@ func herdrViaCLI(ctx context.Context, args []string) error {
 	if len(args) < 1 {
 		return errors.New("usage: agent-project-controller herdr-via <workspace> [remote-line]")
 	}
+	// hc machine --via appends its own remote shell line as the last argv;
+	// it is ignored and the worker runs a fixed herdr-core connect.
 	workspace := args[0]
-	remote := herdr.DefaultConnect
-	if len(args) >= 2 {
-		// hc machine --via appends the remote shell line as the last argv.
-		remote = args[len(args)-1]
-	}
 	config := ctrl.GetConfigOrDie()
 	scheme := runtime.NewScheme()
 	if e := clientgoscheme.AddToScheme(scheme); e != nil {
@@ -930,8 +930,32 @@ func herdrViaCLI(ctx context.Context, args []string) error {
 	return herdr.Via(ctx, c, config, herdr.ViaConfig{
 		ControlNamespace: env("CONTROL_NAMESPACE", "agent-project-controller"),
 		Workspace:        workspace,
-		RemoteLine:       remote,
 	}, os.Stdin, os.Stdout, os.Stderr)
+}
+
+// gloveHubEnrollCLI keeps the in-cluster hub's herdr-core machine list equal
+// to the Ready workspaces of the Herdr OrchestratorClass.
+func gloveHubEnrollCLI(ctx context.Context) error {
+	interval, e := time.ParseDuration(env("GLOVE_HUB_SYNC_INTERVAL", "30s"))
+	if e != nil || interval < time.Second {
+		return errors.New("GLOVE_HUB_SYNC_INTERVAL must be a duration of at least 1s")
+	}
+	config := ctrl.GetConfigOrDie()
+	scheme := runtime.NewScheme()
+	if e := api.AddToScheme(scheme); e != nil {
+		return e
+	}
+	c, e := client.New(config, client.Options{Scheme: scheme})
+	if e != nil {
+		return e
+	}
+	enroller := &herdr.Enroller{
+		Client:    c,
+		Namespace: env("CONTROL_NAMESPACE", "agent-project-controller"),
+		Class:     env("HERDR_ORCHESTRATOR_CLASS", "herdr"),
+		Core:      herdr.CLICore{Binary: env("HERDR_CORE_BIN", "herdr-core"), Env: os.Environ()},
+	}
+	return enroller.Run(ctx, interval)
 }
 
 func connectCLI(ctx context.Context, workspace string, command []string) error {

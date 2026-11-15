@@ -64,7 +64,8 @@ jobs:
       matrix:
         # t3-controller: T3 Connect account + cloudflared on the controller
         # (docs/t3-connect.md, docs/clients-choice.md). Proxy stays on runtime.
-        target: [runtime, workspace, voice, t3-controller]
+        # glove-hub: the in-cluster Herdr hub (docs/herdr.md).
+        target: [runtime, workspace, voice, t3-controller, glove-hub]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install pinned Trivy
@@ -184,5 +185,23 @@ jobs:
           CI_PUBLISHER_TOKEN: ${{ secrets.CI_PUBLISHER_TOKEN }}
         run: >-
           python3 /tmp/monorepo/.forgejo/scripts/promote.py --component project-t3-controller
+          --image "$IMAGE" --source-repo "$GITHUB_REPOSITORY" --source-sha "$GITHUB_SHA"
+          --require-status "CI / checks (push)"
+      # glove-hub (Dockerfile target glove-hub): the in-cluster Herdr hub.
+      - name: Push the gated glove-hub image
+        if: matrix.target == 'glove-hub' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          CI_IMAGE_TOKEN: ${{ secrets.CI_IMAGE_TOKEN }}
+        run: /tmp/monorepo/.forgejo/scripts/push-image.sh "candidate-glove-hub:${GITHUB_SHA}" git.cluster.aimingupward.com/image-publisher/glovecell-glove-hub
+      # Off until the monorepo's .forgejo/scripts/promote.py knows the
+      # glovecell-glove-hub component and its pin; until then promote.py
+      # rejects it and main would go red. Switch on with repository variable
+      # GLOVE_HUB_PROMOTE=true.
+      - name: Open the glove-hub promotion PR
+        if: matrix.target == 'glove-hub' && github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.GLOVE_HUB_PROMOTE == 'true'
+        env:
+          CI_PUBLISHER_TOKEN: ${{ secrets.CI_PUBLISHER_TOKEN }}
+        run: >-
+          python3 /tmp/monorepo/.forgejo/scripts/promote.py --component glovecell-glove-hub
           --image "$IMAGE" --source-repo "$GITHUB_REPOSITORY" --source-sha "$GITHUB_SHA"
           --require-status "CI / checks (push)"

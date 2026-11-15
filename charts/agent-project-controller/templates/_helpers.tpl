@@ -50,6 +50,16 @@ project's Secrets and for deleting the project namespace itself. */}}
 {{- default (printf "%s-forge" .Release.Namespace | trunc 63 | trimSuffix "-") .Values.forgeAgent.namespace -}}
 {{- end -}}
 
+{{/* Namespace of glove-hub, the in-cluster Herdr hub (gloveHub.namespace, default <release namespace>-glove-hub). */}}
+{{- define "apc.gloveHubNamespace" -}}
+{{- default (printf "%s-glove-hub" .Release.Namespace | trunc 63 | trimSuffix "-") .Values.gloveHub.namespace -}}
+{{- end -}}
+
+{{/* ClusterRole the controller binds per Herdr cell to glove-hub's ServiceAccount. */}}
+{{- define "apc.gloveHubExecRole" -}}
+{{- printf "%s-%s" .Release.Namespace .Release.Name | trunc 48 | trimSuffix "-" }}-glove-hub-exec
+{{- end -}}
+
 {{/* Namespace of the provider broker and credential owner (providerBroker.namespace, default <release namespace>-providers). */}}
 {{- define "apc.providerBrokerNamespace" -}}
 {{- default (printf "%s-providers" .Release.Namespace | trunc 63 | trimSuffix "-") .Values.providerBroker.namespace -}}

@@ -459,11 +459,54 @@ orchestratorClasses:
     name: herdr
 # herdr-core in Glovecell workers (docs/herdr.md). Off by default. When
 # enabled, workspaces with OrchestratorClass herdr run `hc server` and publish
-# a hub `--via` recipe ConfigMap. Phone/PC still use a hub herdr-core over
-# LAN/WireGuard; this does not open public SSH.
+# a hub `--via` recipe ConfigMap. Phone and PC reach them through a hub
+# herdr-core: gloveHub below, in the cluster.
 herdrCore:
   enabled: false
   className: herdr
+# glove-hub (docs/herdr.md): the in-cluster Herdr hub. Off by default. On, the
+# chart adds one namespace with one pod: herdr-core as the hub that phone and
+# PC Herdr reach over SSH, and an enroller that adds each Ready workspace of the
+# Herdr class as a machine. Its ServiceAccount reads ProjectWorkspaces and can
+# exec only into Herdr cells (bound per cell by the controller). Requires
+# herdrCore.enabled and NETWORK_PROVIDER=cilium.
+gloveHub:
+  enabled: false
+  # Digest-pinned image from the Dockerfile's glove-hub target.
+  image: ''
+  # Its own namespace (default <release namespace>-glove-hub). The chart creates it.
+  namespace: ''
+  # OpenSSH public keys (Ed25519 or ECDSA, one line each) of the Herdr apps
+  # allowed in. Every login runs herdr-core connect and nothing else.
+  authorizedKeys: []
+  service:
+    # LoadBalancer gives the hub an address on your network; ClusterIP keeps
+    # it inside the cluster.
+    type: ClusterIP
+    port: 22
+    # For example the load balancer's address-pinning annotation.
+    annotations: {}
+    labels: {}
+  networkPolicy:
+    # Client networks allowed to reach SSH (home network, VPN). Empty: none.
+    sshFromCIDRs: []
+  # The hub's machine list and SSH host key. '' uses the cluster default class.
+  persistence:
+    storageClass: ''
+    size: 256Mi
+  # How often the enroller compares Herdr cells with the hub's machines.
+  syncInterval: 30s
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  scheduling:
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
 # ProviderClass and ForgeClass (docs/classes.md). The chart generates the
 # defaults from the settings above, so an upgrade changes nothing: a ForgeClass
 # for the configured Forgejo (GIT_HOST=forgejo) and, when PROVIDER_LEASES_SECRET

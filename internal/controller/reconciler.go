@@ -122,6 +122,14 @@ type Config struct {
 	// HerdrOrchestratorClass is the OrchestratorClass name that selects the
 	// herdr-core worker path (default "herdr").
 	HerdrOrchestratorClass string
+	// GloveHubExecClusterRole, when set with HerdrCoreEnabled, is bound to
+	// glove-hub's ServiceAccount (GloveHubServiceAccount in GloveHubNamespace)
+	// in the namespace of each workspace that uses HerdrOrchestratorClass, and
+	// removed when it stops using it: the in-cluster Herdr hub can exec into
+	// Herdr cells and nothing else (glove_hub_access.go).
+	GloveHubExecClusterRole string
+	GloveHubNamespace       string
+	GloveHubServiceAccount  string
 	// Platform floors (APC #106). Empty is inert; copied into every proxy
 	// policy so approvals and project rules cannot override them.
 	PlatformFloors proxy.PlatformFloors
@@ -160,6 +168,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := validateHubLogs(c.HubLogsClusterRole, c.HubServiceAccount, c.OrcaHubSpoke); err != nil {
+		return err
+	}
+	if err := validateGloveHub(c.GloveHubExecClusterRole, c.GloveHubNamespace, c.GloveHubServiceAccount, c.HerdrCoreEnabled); err != nil {
 		return err
 	}
 	if q, e := resource.ParseQuantity(c.StorageSize); e != nil || q.Sign() <= 0 {
@@ -692,6 +703,9 @@ func (r *Reconciler) ensure(ctx context.Context, w *api.ProjectWorkspace) error 
 		return e
 	}
 	if e = r.ensureHubLogsAccess(ctx, w); e != nil {
+		return e
+	}
+	if e = r.ensureGloveHubAccess(ctx, w); e != nil {
 		return e
 	}
 	// LAN grants apply before the rest of the project objects, so removing one

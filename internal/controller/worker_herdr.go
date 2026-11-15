@@ -2,6 +2,7 @@ package controller
 
 import (
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/herdr"
 )
 
 // usesHerdrCore reports whether this workspace's worker should run herdr-core
@@ -29,10 +30,11 @@ func (r *Reconciler) workerCommand(w *api.ProjectWorkspace) []string {
 func (r *Reconciler) herdrSpokeCommand() []string {
 	// hc server start daemonizes; keep the container alive like the default
 	// sleep worker. State stays on the workspace PVC (ReadOnlyRootFilesystem).
+	// herdr-via sets the same two directories (herdr.ConnectCommand).
 	return []string{"/bin/sh", "-c", `set -e
-mkdir -p /workspace/herdr /workspace/home
-export HOME=/workspace/home
-export XDG_RUNTIME_DIR=/workspace/herdr
+mkdir -p ` + herdr.WorkerRuntimeDir + ` ` + herdr.WorkerHome + `
+export HOME=` + herdr.WorkerHome + `
+export XDG_RUNTIME_DIR=` + herdr.WorkerRuntimeDir + `
 if ! command -v hc >/dev/null 2>&1 && ! command -v herdr-core >/dev/null 2>&1; then
   echo "herdr-core missing from workspace image" >&2
   exit 1

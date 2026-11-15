@@ -110,6 +110,14 @@ rules:
     resourceNames: [{{ include "apc.hubLogsRole" . }}]
     verbs: [bind]
 {{- end }}
+{{- if .Values.gloveHub.enabled }}
+  # glove-hub's worker lookup and exec, bound per Herdr cell to the hub's
+  # ServiceAccount (GLOVE_HUB_EXEC_CLUSTER_ROLE).
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterroles]
+    resourceNames: [{{ include "apc.gloveHubExecRole" . }}]
+    verbs: [bind]
+{{- end }}
 {{- if include "apc.workerExec" . }}
   # No cluster-wide exec grant: the controller binds the role below in each
   # project namespace it creates (WORKER_EXEC_CLUSTER_ROLE).

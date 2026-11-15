@@ -57,6 +57,32 @@ USER 1000:1000
 ENTRYPOINT ["/usr/local/bin/glovecell-voice"]
 CMD ["serve"]
 
+# herdr-core, the static release binary verified against its SHA-256; used by
+# the workspace (each Herdr cell's hc server) and glove-hub (the hub).
+FROM ${RUNTIME_IMAGE} AS herdr-core
+RUN apk add --no-cache curl \
+    && curl -fsSL https://releases.herdr.dev/core/0.1.19/herdr-core-linux-x86_64.tar.gz -o /tmp/herdr-core.tar.gz \
+    && echo '4adcfb423d52f24c5cc4a1e2cd2fcad1f62d28bb77876ac472c29082a3eaa424  /tmp/herdr-core.tar.gz' | sha256sum -c - \
+    && mkdir /opt/herdr-core \
+    && tar xzf /tmp/herdr-core.tar.gz -C /opt/herdr-core \
+    && rm /tmp/herdr-core.tar.gz
+
+# glove-hub (docs/herdr.md): the in-cluster Herdr hub. Stock OpenSSH whose
+# every login runs herdr-core connect, the hub's herdr-core, and this binary
+# for herdr-via and the enroller. /etc/passwd comes from the chart.
+FROM ${RUNTIME_IMAGE} AS glove-hub
+RUN apk add --no-cache ca-certificates openssh-server openssh-keygen \
+    && apk upgrade --no-cache openssh-server openssh-keygen
+COPY --from=herdr-core /opt/herdr-core /opt/herdr-core
+RUN ln -s /opt/herdr-core/herdr-core /usr/local/bin/herdr-core \
+    && ln -s /opt/herdr-core/herdr-core /usr/local/bin/hc \
+    && hc --version
+COPY --from=build /agent-project-controller /usr/local/bin/agent-project-controller
+COPY third_party/licenses/ /usr/share/agent-project-controller/licenses/
+USER 1000:1000
+ENTRYPOINT ["/usr/local/bin/agent-project-controller"]
+CMD ["glove-hub-enroll"]
+
 # Optional coding environment. The controller and proxy can use the smaller runtime target.
 FROM ${GO_IMAGE} AS toolchain
 FROM ${WORKSPACE_IMAGE} AS workspace
@@ -115,13 +141,9 @@ RUN curl -fsSL 'https://lookaside.facebook.com/lookaside/muse/download/?channel=
     && mkdir /opt/muse && mv /tmp/muse /opt/muse/muse && chmod 0755 /opt/muse/muse
 # herdr-core (hc): headless runtime for Android/PC Herdr via a hub (docs/herdr.md).
 # Inert until HERDR_CORE_ENABLED=true and OrchestratorClass herdr.
-RUN curl -fsSL https://releases.herdr.dev/core/0.1.19/herdr-core-linux-x86_64.tar.gz -o /tmp/herdr-core.tar.gz \
-    && echo '4adcfb423d52f24c5cc4a1e2cd2fcad1f62d28bb77876ac472c29082a3eaa424  /tmp/herdr-core.tar.gz' | sha256sum -c - \
-    && mkdir /opt/herdr-core \
-    && tar xzf /tmp/herdr-core.tar.gz -C /opt/herdr-core \
-    && ln -s /opt/herdr-core/herdr-core /usr/local/bin/herdr-core \
+COPY --from=herdr-core /opt/herdr-core /opt/herdr-core
+RUN ln -s /opt/herdr-core/herdr-core /usr/local/bin/herdr-core \
     && ln -s /opt/herdr-core/herdr-core /usr/local/bin/hc \
-    && rm /tmp/herdr-core.tar.gz \
     && hc --version
 COPY scripts/apc-provider.py /usr/local/bin/apc-provider
 RUN ln -s apc-provider /usr/local/bin/grok \
