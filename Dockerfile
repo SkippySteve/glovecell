@@ -83,11 +83,27 @@ USER 1000:1000
 ENTRYPOINT ["/usr/local/bin/agent-project-controller"]
 CMD ["glove-hub-enroll"]
 
+# GitHub CLI for the workspace, built from the pinned upstream module. The
+# 2.103.3 release binary links golang.org/x/net v0.60.0 (CVE-2026-78661, fixed
+# in v0.62.0), so the image gate fails on it. The source comes through the Go
+# module proxy and is verified against the checksum database (GOSUMDB), as
+# the controller's own dependencies are. Drop the `go get` and go back to the
+# release tarball with its SHA-256 once a gh release ships x/net >= v0.62.0.
+FROM ${GO_IMAGE} AS gh-build
+ARG GH_VERSION=2.103.3
+RUN dir="$(go mod download -json "github.com/cli/cli/v2@v${GH_VERSION}" | sed -n 's/^[[:space:]]*"Dir": "\(.*\)",$/\1/p')" \
+    && test -n "$dir" && cp -R "$dir" /src && chmod -R u+w /src
+WORKDIR /src
+RUN go get golang.org/x/net@v0.62.0 \
+    && CGO_ENABLED=0 go build -trimpath \
+       -ldflags "-X github.com/cli/cli/v2/internal/build.Version=${GH_VERSION}" -o /gh ./cmd/gh \
+    && /gh --version | grep -q "${GH_VERSION}"
+
 # Optional coding environment. The controller and proxy can use the smaller runtime target.
 FROM ${GO_IMAGE} AS toolchain
 FROM ${WORKSPACE_IMAGE} AS workspace
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git openssh-client build-essential python3 nodejs npm curl jq ripgrep bash \
-    && apt-get install -y --only-upgrade zlib1g \
+    && apt-get install -y --only-upgrade zlib1g libcares2 linux-libc-dev \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -g 1000 agent && useradd -m -u 1000 -g 1000 agent
 COPY --from=toolchain /usr/local/go /usr/local/go
@@ -120,11 +136,7 @@ RUN curl --http1.1 --retry 3 -fsSL https://codeberg.org/forgejo-contrib/forgejo-
 COPY scripts/apc-fj.py /usr/local/bin/fj
 # Official GitHub CLI for brokered GitHub projects. It runs with a placeholder GH_TOKEN
 # that the project proxy replaces (docs/design/github-brokering.md).
-RUN curl -fsSL https://github.com/cli/cli/releases/download/v2.103.3/gh_2.103.3_linux_amd64.tar.gz -o /tmp/gh.tar.gz \
-    && echo '4c806978ffce1cec70853302a56d70ac6da4f19bae7adca4e1a8ab00633dd91d  /tmp/gh.tar.gz' | sha256sum -c - \
-    && tar xzf /tmp/gh.tar.gz -C /tmp gh_2.103.3_linux_amd64/bin/gh \
-    && install -m 0755 /tmp/gh_2.103.3_linux_amd64/bin/gh /usr/local/bin/gh \
-    && rm -rf /tmp/gh.tar.gz /tmp/gh_2.103.3_linux_amd64
+COPY --from=gh-build --chmod=0755 /gh /usr/local/bin/gh
 # Stock subscription clients, pinned independently of the application runtimes.
 RUN curl -fsSL https://x.ai/cli/grok-1.0.46-linux-x86_64.zst -o /tmp/grok.zst \
     && echo '3d6fff352acd5658758f9b7b627313468e779c86fb259273df40eda5bac9d713  /tmp/grok.zst' | sha256sum -c - \
