@@ -53,6 +53,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: glove-hub-workspaces
+  namespace: {{ .Release.Namespace }}
 rules:
   - apiGroups: [projects.agentwork.dev]
     resources: [projectworkspaces]
@@ -62,6 +63,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: glove-hub-workspaces
+  namespace: {{ .Release.Namespace }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
