@@ -79,6 +79,14 @@ func TestHelmGloveHub(t *testing.T) {
 	}
 
 	// The exec role is bound only per cell by the controller.
+	// ProjectWorkspaces live in the release namespace; GitOps tools such as
+	// Flux apply the render without a default namespace.
+	for _, kind := range []string{"Role", "RoleBinding"} {
+		d := docs[kind+"/glove-hub-workspaces"]
+		if d == nil || d["metadata"].(map[string]any)["namespace"] != "test-control" {
+			t.Fatalf("%s glove-hub-workspaces not in the release namespace: %v", kind, d)
+		}
+	}
 	role := docs["ClusterRole/test-control-qualification-glove-hub-exec"]
 	if role == nil {
 		t.Fatal("no exec ClusterRole")
