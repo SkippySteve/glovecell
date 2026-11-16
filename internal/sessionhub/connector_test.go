@@ -137,3 +137,62 @@ func TestPromptText(t *testing.T) {
 		t.Fatalf("prompt %q", got)
 	}
 }
+
+// A "cancelled" answer, or an option the question did not offer, must not
+// reach the hub: with first-answer-wins it would refuse the question for every
+// other app (Orca answers "cancelled" to turns it did not start).
+func TestConfirmationOnlyForChosenOptions(t *testing.T) {
+	ready := &ahptypes.ChatToolCallReadyAction{TurnId: "turn", ToolCallId: "t1", Options: []ahptypes.ConfirmationOption{
+		{Id: "allow", Kind: ahptypes.ConfirmationOptionKindApprove}, {Id: "deny", Kind: ahptypes.ConfirmationOptionKindDeny}}}
+	if c := confirmation(ready, acp.RequestPermissionOutcome{Cancelled: &acp.RequestPermissionOutcomeCancelled{}}); c != nil {
+		t.Fatalf("cancelled dispatched %+v", c)
+	}
+	if c := confirmation(ready, acp.RequestPermissionOutcome{Selected: &acp.RequestPermissionOutcomeSelected{OptionId: "other"}}); c != nil {
+		t.Fatalf("unknown option dispatched %+v", c)
+	}
+	// The hub's rule: approvals carry a confirmed reason and no denial
+	// reason; denials carry reason "denied" and no confirmed reason.
+	allow := confirmation(ready, acp.RequestPermissionOutcome{Selected: &acp.RequestPermissionOutcomeSelected{OptionId: "allow"}})
+	if allow == nil || !allow.Approved || *allow.SelectedOptionId != "allow" || allow.TurnId != "turn" || allow.ToolCallId != "t1" ||
+		allow.Confirmed == nil || *allow.Confirmed != ahptypes.ToolCallConfirmationReasonUserAction || allow.Reason != nil {
+		t.Fatalf("allow %+v", allow)
+	}
+	deny := confirmation(ready, acp.RequestPermissionOutcome{Selected: &acp.RequestPermissionOutcomeSelected{OptionId: "deny"}})
+	if deny == nil || deny.Approved || deny.Confirmed != nil || deny.Reason == nil || *deny.Reason != ahptypes.ToolCallCancellationReasonDenied || *deny.SelectedOptionId != "deny" {
+		t.Fatalf("deny %+v", deny)
+	}
+}
+
+// An app that attaches while a question is open is asked it too.
+func TestOpenQuestions(t *testing.T) {
+	if len(openQuestions(nil)) != 0 {
+		t.Fatal("no active turn, no questions")
+	}
+	options := []ahptypes.ConfirmationOption{{Id: "allow", Kind: ahptypes.ConfirmationOptionKindApprove}}
+	plain := "run ls"
+	active := &ahptypes.ActiveTurn{Id: "turn-1", ResponseParts: []ahptypes.ResponsePart{
+		{Value: &ahptypes.MarkdownResponsePart{Content: "working"}},
+		{Value: &ahptypes.ToolCallResponsePart{ToolCall: ahptypes.ToolCallState{Value: &ahptypes.ToolCallPendingConfirmationState{ToolCallId: "t1", InvocationMessage: ahptypes.StringOrMarkdown{Plain: &plain}, Options: options}}}},
+	}}
+	got := openQuestions(active)
+	if len(got) != 1 || got[0].TurnId != "turn-1" || got[0].ToolCallId != "t1" || len(got[0].Options) != 1 || !needsPermission(got[0]) {
+		t.Fatalf("open questions %+v", got)
+	}
+}
+
+// Each hub turn's user message and reply carry their own message id, so an
+// app shows other apps' turns as separate messages instead of one long reply.
+func TestChunksCarryTurnMessageIDs(t *testing.T) {
+	updates, _ := translate(&ahptypes.ChatTurnStartedAction{TurnId: "t9", Message: ahptypes.Message{Text: "hi"}}, nil)
+	if id := updates[0].UserMessageChunk.MessageId; id == nil || *id != "t9:user" {
+		t.Fatalf("user chunk id %v", id)
+	}
+	updates, _ = translate(&ahptypes.ChatDeltaAction{TurnId: "t9", Content: "x"}, nil)
+	if id := updates[0].AgentMessageChunk.MessageId; id == nil || *id != "t9:agent" {
+		t.Fatalf("agent chunk id %v", id)
+	}
+	replay := replayTurn(ahptypes.Turn{Id: "t1", Message: ahptypes.Message{Text: "q"}, ResponseParts: []ahptypes.ResponsePart{{Value: &ahptypes.MarkdownResponsePart{Content: "a"}}}})
+	if *replay[0].UserMessageChunk.MessageId != "t1:user" || *replay[1].AgentMessageChunk.MessageId != "t1:agent" {
+		t.Fatal("replayed turn ids")
+	}
+}

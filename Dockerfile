@@ -160,8 +160,8 @@ RUN curl -fsSL https://github.com/openai/codex/releases/download/rust-v0.159.0/c
     && ln -s /opt/codex/bin/codex-code-mode-host /usr/local/bin/codex-code-mode-host \
     && rm /tmp/codex-cli.tar.gz \
     && codex --version
-RUN curl -fsSL https://github.com/pingdotgg/t3code/releases/download/v0.0.45/t3-0.0.45-linux-x64.tar.gz -o /tmp/t3.tar.gz \
-    && echo '10505ae74bc6a43cfab0fde0bf06a0e0d6862f74030591be994a640d48a0d6bd  /tmp/t3.tar.gz' | sha256sum -c - \
+RUN curl -fsSL https://github.com/pingdotgg/t3code/releases/download/v0.1.9/t3-0.1.9-linux-x64.tar.gz -o /tmp/t3.tar.gz \
+    && echo '0141025335da334759cecd8db3483e09772f3600ca03674698524e7d94291362  /tmp/t3.tar.gz' | sha256sum -c - \
     && mkdir /opt/t3 && tar xzf /tmp/t3.tar.gz -C /opt/t3 --strip-components=1 \
     && rm /tmp/t3.tar.gz
 COPY scripts/apc-codex /usr/local/bin/apc-codex
