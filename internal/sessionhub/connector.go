@@ -499,16 +499,16 @@ func translate(v any, ownTurns map[string]bool) ([]acp.SessionUpdate, *turnOutco
 		if ownTurns[a.TurnId] {
 			return nil, nil
 		}
-		return []acp.SessionUpdate{acp.UpdateUserMessageText(a.Message.Text)}, nil
+		return []acp.SessionUpdate{userText(a.TurnId, a.Message.Text)}, nil
 	case *ahptypes.ChatResponsePartAction:
 		if md, ok := a.Part.Value.(*ahptypes.MarkdownResponsePart); ok && md.Content != "" {
-			return []acp.SessionUpdate{acp.UpdateAgentMessageText(md.Content)}, nil
+			return []acp.SessionUpdate{agentText(a.TurnId, md.Content)}, nil
 		}
 		if r, ok := a.Part.Value.(*ahptypes.ReasoningResponsePart); ok && r.Content != "" {
 			return []acp.SessionUpdate{acp.UpdateAgentThoughtText(r.Content)}, nil
 		}
 	case *ahptypes.ChatDeltaAction:
-		return []acp.SessionUpdate{acp.UpdateAgentMessageText(a.Content)}, nil
+		return []acp.SessionUpdate{agentText(a.TurnId, a.Content)}, nil
 	case *ahptypes.ChatReasoningAction:
 		return []acp.SessionUpdate{acp.UpdateAgentThoughtText(a.Content)}, nil
 	case *ahptypes.ChatToolCallStartAction:
@@ -557,13 +557,13 @@ func toolText(content []ahptypes.ToolResultContent) string {
 func replayTurn(t ahptypes.Turn) []acp.SessionUpdate {
 	out := []acp.SessionUpdate{}
 	if t.Message.Text != "" {
-		out = append(out, acp.UpdateUserMessageText(t.Message.Text))
+		out = append(out, userText(t.Id, t.Message.Text))
 	}
 	for _, part := range t.ResponseParts {
 		switch p := part.Value.(type) {
 		case *ahptypes.MarkdownResponsePart:
 			if p.Content != "" {
-				out = append(out, acp.UpdateAgentMessageText(p.Content))
+				out = append(out, agentText(t.Id, p.Content))
 			}
 		case *ahptypes.ReasoningResponsePart:
 			if p.Content != "" {
@@ -622,4 +622,25 @@ func confirmation(a *ahptypes.ChatToolCallReadyAction, outcome acp.RequestPermis
 		}
 	}
 	return nil
+}
+
+// userText and agentText tag a chunk with a message id derived from the hub
+// turn, so apps that group chunks by messageId (Agent Orchestrator) show each
+// turn, including turns other apps started, as its own message.
+func userText(turnID, text string) acp.SessionUpdate {
+	u := acp.UpdateUserMessageText(text)
+	if turnID != "" && u.UserMessageChunk != nil {
+		id := turnID + ":user"
+		u.UserMessageChunk.MessageId = &id
+	}
+	return u
+}
+
+func agentText(turnID, text string) acp.SessionUpdate {
+	u := acp.UpdateAgentMessageText(text)
+	if turnID != "" && u.AgentMessageChunk != nil {
+		id := turnID + ":agent"
+		u.AgentMessageChunk.MessageId = &id
+	}
+	return u
 }

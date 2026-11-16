@@ -159,3 +159,20 @@ func TestConfirmationOnlyForChosenOptions(t *testing.T) {
 		t.Fatalf("deny %+v", deny)
 	}
 }
+
+// Each hub turn's user message and reply carry their own message id, so an
+// app shows other apps' turns as separate messages instead of one long reply.
+func TestChunksCarryTurnMessageIDs(t *testing.T) {
+	updates, _ := translate(&ahptypes.ChatTurnStartedAction{TurnId: "t9", Message: ahptypes.Message{Text: "hi"}}, nil)
+	if id := updates[0].UserMessageChunk.MessageId; id == nil || *id != "t9:user" {
+		t.Fatalf("user chunk id %v", id)
+	}
+	updates, _ = translate(&ahptypes.ChatDeltaAction{TurnId: "t9", Content: "x"}, nil)
+	if id := updates[0].AgentMessageChunk.MessageId; id == nil || *id != "t9:agent" {
+		t.Fatalf("agent chunk id %v", id)
+	}
+	replay := replayTurn(ahptypes.Turn{Id: "t1", Message: ahptypes.Message{Text: "q"}, ResponseParts: []ahptypes.ResponsePart{{Value: &ahptypes.MarkdownResponsePart{Content: "a"}}}})
+	if *replay[0].UserMessageChunk.MessageId != "t1:user" || *replay[1].AgentMessageChunk.MessageId != "t1:agent" {
+		t.Fatal("replayed turn ids")
+	}
+}
