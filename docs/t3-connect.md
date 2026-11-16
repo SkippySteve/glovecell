@@ -1,6 +1,6 @@
 # Automatic T3 Connect environments
 
-With T3 Connect enabled, the Go controller starts a stock T3 v0.0.45 server in each ready project sandbox and registers its environment with one T3 account. Sign in to that account once on each phone, browser or desktop. New projects appear in the account's environment catalog. A phone does not need a desktop relay.
+With T3 Connect enabled, the Go controller starts a stock T3 v0.1.9 server in each ready project sandbox and registers its environment with one T3 account. Sign in to that account once on each phone, browser or desktop. New projects appear in the account's environment catalog. A phone does not need a desktop relay.
 
 This is Glovecell's **T3** choice beside Orca and Herdr ([clients-choice.md](clients-choice.md)). Use OrchestratorClass `t3` (or the empty default while T3 Connect is on). The live controller must run the Dockerfile **`t3-controller`** image (stock T3 CLI + cloudflared); the smaller `runtime` image is not enough.
 
@@ -10,7 +10,7 @@ The [single-page diagrams](sandbox-workflow.html) show the network and workflow.
 
 ## Controller setup
 
-Build the `t3-controller` Docker target for the controller and the `workspace` target for project workers. Both contain pinned stock T3. The controller target also contains the pinned cloudflared release used by T3 v0.0.45. Continue using the smaller `runtime` target for inspecting proxies.
+Build the `t3-controller` Docker target for the controller and the `workspace` target for project workers. Both contain pinned stock T3. The controller target also contains the pinned cloudflared release used by T3 v0.1.9. Continue using the smaller `runtime` target for inspecting proxies.
 
 Provision an existing PVC in the control namespace for the controller's account state. Enable the chart settings:
 
@@ -105,4 +105,4 @@ Interactive phone/desktop account selection still needs the operator to sign in 
 
 The initial worker provider profile still enables Codex through its access-only adapter. Grok Build and Cursor credentials, GitLab repository authorization, and optional Forgejo imports are separate additions. This transport does not enable those features implicitly.
 
-See [stock T3 remote access](https://github.com/pingdotgg/t3code/blob/v0.0.45/docs/user/remote-access.md) and [Tailscale operator ingress](https://tailscale.com/docs/kubernetes-operator/ingress).
+See [stock T3 remote access](https://github.com/pingdotgg/t3code/blob/v0.1.9/docs/user/remote-access.md) and [Tailscale operator ingress](https://tailscale.com/docs/kubernetes-operator/ingress).
