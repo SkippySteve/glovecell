@@ -114,7 +114,7 @@ func TestSessionHubCellBoundaries(t *testing.T) {
 	if workspace == nil || hub == nil || launcher == nil {
 		t.Fatalf("containers: %+v", spec.Containers)
 	}
-	if hub.Image != testHubImage || launcher.Image != workspace.Image {
+	if hub.Image != testHubImage || launcher.Image != r.Config.Image {
 		t.Fatalf("images: hub %s launcher %s workspace %s", hub.Image, launcher.Image, workspace.Image)
 	}
 	if *hub.SecurityContext.RunAsUser != sessionHubHubUser || *launcher.SecurityContext.RunAsUser != *workspace.SecurityContext.RunAsUser {
@@ -213,7 +213,7 @@ func TestSessionHubImagesRoll(t *testing.T) {
 		t.Fatal(err)
 	}
 	spec := workerPodSpec(t, r, namespace(w))
-	if container(spec, sessionHubLauncher).Image != r.orcaSpokeImage(w) || container(spec, sessionHubContainer).Image != r.Config.SessionHubImage {
+	if container(spec, sessionHubLauncher).Image != r.Config.Image || container(spec, sessionHubContainer).Image != r.Config.SessionHubImage {
 		t.Fatalf("hub containers did not roll: %s %s", container(spec, sessionHubLauncher).Image, container(spec, sessionHubContainer).Image)
 	}
 }
@@ -230,5 +230,24 @@ func TestValidateSessionHub(t *testing.T) {
 	}
 	if err := validateSessionHub(true, testHubImage, testHubAgents); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// In an Orca cell the workspace container runs the Orca runtime image, but the
+// launcher always runs Glovecell's workspace image: that image carries the ACP
+// adapters and the brokered provider launchers that work inside cells.
+func TestSessionHubLauncherUsesWorkspaceImageInOrcaCells(t *testing.T) {
+	r, w, _ := fixture(t)
+	hubOn(r, w)
+	r.Config.OrcaHubSpoke = true
+	r.Config.OrcaRuntimeImage = "example.com/orca@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+	w.Spec.OrchestratorClassName = "orca"
+	if !r.usesOrcaSpoke(w) {
+		t.Skip("fixture does not select the Orca spoke")
+	}
+	spec := corev1.PodSpec{Containers: []corev1.Container{{Name: "workspace", Image: r.orcaSpokeImage(w)}}}
+	addSessionHub(&spec, testHubImage, r.Config.Image, spec.Containers[0], nil, &corev1.SecurityContext{RunAsUser: int64p(1000)})
+	if got := container(spec, sessionHubLauncher).Image; got != r.Config.Image || got == r.Config.OrcaRuntimeImage {
+		t.Fatalf("launcher image %s", got)
 	}
 }

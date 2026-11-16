@@ -21,9 +21,11 @@ import (
 //   - session-hub: AHP-ACP Gateway, user 1001, loopback listener with the
 //     cell's token. It reads gateway.json from the cell's Secret and never
 //     runs an agent itself.
-//   - session-hub-launcher: the workspace image with the workspace's mounts
-//     and environment. It starts allowlisted agents for the hub over a unix
-//     socket. It sees agents.json only, never the token.
+//   - session-hub-launcher: Glovecell's workspace image (whatever the cell's
+//     orchestrator class) with the workspace's mounts and environment. That
+//     image carries the ACP adapters and the brokered provider launchers. It
+//     starts allowlisted agents for the hub over a unix socket. It sees
+//     agents.json only, never the token.
 const (
 	sessionHubSecret    = "session-hub"
 	sessionHubContainer = "session-hub"
@@ -87,8 +89,9 @@ func (r *Reconciler) sessionHubSecretFor(ctx context.Context, w *api.ProjectWork
 
 // addSessionHub adds the hub and launcher containers and their volumes to a
 // worker pod spec. workspace is the workspace container as built, so the
-// launcher gets the same image, mounts and environment (without telemetry).
-func addSessionHub(spec *corev1.PodSpec, hubImage string, workspace corev1.Container, env []corev1.EnvVar, security *corev1.SecurityContext) {
+// launcher gets the same mounts and environment (without telemetry); its
+// image is launcherImage, Glovecell's workspace image.
+func addSessionHub(spec *corev1.PodSpec, hubImage, launcherImage string, workspace corev1.Container, env []corev1.EnvVar, security *corev1.SecurityContext) {
 	spec.Volumes = append(spec.Volumes,
 		corev1.Volume{Name: "session-hub-run", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		corev1.Volume{Name: "session-hub-state", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
@@ -119,7 +122,7 @@ func addSessionHub(spec *corev1.PodSpec, hubImage string, workspace corev1.Conta
 		corev1.EnvVar{Name: "SESSION_HUB_DIR", Value: "/workspace/repo"},
 	)
 	launcher := corev1.Container{
-		Name: sessionHubLauncher, Image: workspace.Image,
+		Name: sessionHubLauncher, Image: launcherImage,
 		Command:         []string{sessionhub.Binary, "session-hub-launcher"},
 		Env:             launcherEnv,
 		WorkingDir:      workspace.WorkingDir,

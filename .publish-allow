@@ -24,3 +24,8 @@ path internal/telemetry/redact_test.go private-key
 # Upstream licence text kept verbatim: the MIT licence requires the copyright
 # notice, which names the ws author's address. Not a Glovecell contact.
 path third_party/licenses/ahp-acp-gateway/ws-*-MIT.txt personal-email
+# Upstream licence texts of the workspace image's ACP adapters, kept verbatim:
+# the MIT and BSD licences require their copyright notices, which name the
+# authors' addresses (open and its helpers; diff). Not Glovecell contacts.
+path third_party/licenses/acp-adapters/sindresorhus-MIT.txt personal-email
+path third_party/licenses/acp-adapters/diff-*-BSD-3-Clause.txt personal-email
