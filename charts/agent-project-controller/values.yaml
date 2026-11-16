@@ -533,6 +533,21 @@ gloveHub:
     nodeSelector: {}
     tolerations: []
     affinity: {}
+# Session hub (docs/session-hub.md): several operator apps share one live
+# agent chat. Off by default. On, a workspace created with
+# spec.sessionHub.enabled gets two more worker containers: the hub
+# (AHP-ACP Gateway, image from the Dockerfile's session-hub target, its own
+# user, loopback only, per-cell token) and a launcher (the workspace image)
+# that starts the allowlisted agents below in the workspace. Existing
+# workspaces never change.
+sessionHub:
+  enabled: false
+  # Digest-pinned image from the Dockerfile's session-hub target.
+  image: ''
+  # ACP agents the launcher may start: absolute command, no shell. Ids must
+  # not reuse a gateway built-in (claude, codex, ...); use e.g. cell-codex.
+  # Example: [{id: cell-codex, displayName: Codex, command: /usr/local/bin/codex-acp}]
+  agents: []
 # ProviderClass and ForgeClass (docs/classes.md). The chart generates the
 # defaults from the settings above, so an upgrade changes nothing: a ForgeClass
 # for the configured Forgejo (GIT_HOST=forgejo) and, when PROVIDER_LEASES_SECRET

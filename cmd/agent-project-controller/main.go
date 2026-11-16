@@ -37,6 +37,7 @@ import (
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/proxy"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/reader"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/registration"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/sessionhub"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/store"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/t3"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/telemetry"
@@ -411,6 +412,22 @@ func run(ctx context.Context) error {
 		case "telemetry-relay":
 			// Second container of each cell's proxy pod (decision GT A).
 			return cellrelay.Run(ctx)
+		case "session-hub-launcher":
+			// Launcher container of a session-hub cell (docs/session-hub.md).
+			l := &sessionhub.Launcher{Socket: env("SESSION_HUB_SOCKET", sessionhub.SocketPath), AgentsFile: env("SESSION_HUB_AGENTS_FILE", "/run/session-hub-agents/agents.json"), Dir: os.Getenv("SESSION_HUB_DIR")}
+			return l.Serve(ctx)
+		case "session-hub-connect":
+			// The hub's provider command: one agent through the launcher.
+			fs := flag.NewFlagSet("session-hub-connect", flag.ContinueOnError)
+			agent := fs.String("agent", "", "allowlisted agent id")
+			socket := fs.String("socket", sessionhub.SocketPath, "launcher socket")
+			if err := fs.Parse(os.Args[2:]); err != nil {
+				return err
+			}
+			if *agent == "" {
+				return errors.New("session-hub-connect: --agent required")
+			}
+			return sessionhub.Connect(*socket, *agent, os.Stdin, os.Stdout)
 		case "proxy-ready":
 			return proxy.ReadyCLI(ctx)
 		case "hub-admin":
@@ -535,6 +552,10 @@ func run(ctx context.Context) error {
 		slog.Warn("AGENT_ORCHESTRATOR_ENABLED=true but AGENT_ORCHESTRATOR_IMAGE is the :unpromoted placeholder; Agent Orchestrator stays off until a digest is promoted")
 		agentOrchestrator = false
 	}
+	sessionHub, sessionHubAgents, e := sessionHubFromEnv()
+	if e != nil {
+		return e
+	}
 	floors, e := platformFloorsFromEnv()
 	if e != nil {
 		return e
@@ -543,7 +564,7 @@ func run(ctx context.Context) error {
 	if e != nil {
 		return e
 	}
-	reconciler := &controller.Reconciler{LAN: lan, Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, GitHost: gitHost, ForgejoOrigin: origin, Owner: owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling, RegistrarNamespace: os.Getenv("REGISTRAR_NAMESPACE"), WorkerExecClusterRole: os.Getenv("WORKER_EXEC_CLUSTER_ROLE"), ProjectAccessClusterRole: os.Getenv("PROJECT_ACCESS_CLUSTER_ROLE"), ControllerServiceAccount: env("CONTROLLER_SERVICE_ACCOUNT", controller.DefaultControllerServiceAccount), OrcaHubSpoke: orcaHubSpoke, OrcaRuntimeImage: os.Getenv("ORCA_RUNTIME_IMAGE"), OrcaOrchestratorClass: env("HUBSPOKE_ORCHESTRATOR_CLASS", "orca"), OrcaSpokePublicDomain: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_DOMAIN")), OrcaSpokeGatewayName: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_GATEWAY_NAME")), OrcaSpokeGatewayNamespace: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_GATEWAY_NAMESPACE")), OrcaSpokeGatewaySection: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_GATEWAY_SECTION")), OrcaHubNamespace: env("HUBSPOKE_HUB_NAMESPACE", "agent-project-control-orca-hub"), HubLogsClusterRole: strings.TrimSpace(os.Getenv("HUBSPOKE_HUB_LOGS_CLUSTER_ROLE")), HubServiceAccount: strings.TrimSpace(os.Getenv("HUBSPOKE_HUB_SERVICE_ACCOUNT")), AuditAssignmentFeed: auditAssignmentFeed, AuditAssignmentFeedConfigMap: strings.TrimSpace(os.Getenv("AUDIT_ASSIGNMENT_FEED_CONFIGMAP")), HerdrCoreEnabled: herdrCore, HerdrOrchestratorClass: env("HERDR_ORCHESTRATOR_CLASS", "herdr"), GloveHubExecClusterRole: strings.TrimSpace(os.Getenv("GLOVE_HUB_EXEC_CLUSTER_ROLE")), GloveHubNamespace: strings.TrimSpace(os.Getenv("GLOVE_HUB_NAMESPACE")), GloveHubServiceAccount: strings.TrimSpace(os.Getenv("GLOVE_HUB_SERVICE_ACCOUNT")), AgentOrchestratorEnabled: agentOrchestrator, AgentOrchestratorImage: strings.TrimSpace(os.Getenv("AGENT_ORCHESTRATOR_IMAGE")), AgentOrchestratorClass: env("AGENT_ORCHESTRATOR_CLASS", "ao"), AgentOrchestratorDomain: strings.TrimSpace(os.Getenv("AGENT_ORCHESTRATOR_DOMAIN")), AgentOrchestratorGatewayName: strings.TrimSpace(os.Getenv("AGENT_ORCHESTRATOR_GATEWAY_NAME")), AgentOrchestratorGatewayNamespace: strings.TrimSpace(os.Getenv("AGENT_ORCHESTRATOR_GATEWAY_NAMESPACE")), AgentOrchestratorGatewaySection: strings.TrimSpace(os.Getenv("AGENT_ORCHESTRATOR_GATEWAY_SECTION")), PlatformFloors: floors, BootstrapImageSource: os.Getenv("BOOTSTRAP_IMAGE_SOURCE"), ProxyRuntimeGuard: guard}}
+	reconciler := &controller.Reconciler{LAN: lan, Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, GitHost: gitHost, ForgejoOrigin: origin, Owner: owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling, RegistrarNamespace: os.Getenv("REGISTRAR_NAMESPACE"), WorkerExecClusterRole: os.Getenv("WORKER_EXEC_CLUSTER_ROLE"), ProjectAccessClusterRole: os.Getenv("PROJECT_ACCESS_CLUSTER_ROLE"), ControllerServiceAccount: env("CONTROLLER_SERVICE_ACCOUNT", controller.DefaultControllerServiceAccount), OrcaHubSpoke: orcaHubSpoke, OrcaRuntimeImage: os.Getenv("ORCA_RUNTIME_IMAGE"), OrcaOrchestratorClass: env("HUBSPOKE_ORCHESTRATOR_CLASS", "orca"), OrcaSpokePublicDomain: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_DOMAIN")), OrcaSpokeGatewayName: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_GATEWAY_NAME")), OrcaSpokeGatewayNamespace: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_GATEWAY_NAMESPACE")), OrcaSpokeGatewaySection: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_GATEWAY_SECTION")), OrcaHubNamespace: env("HUBSPOKE_HUB_NAMESPACE", "agent-project-control-orca-hub"), HubLogsClusterRole: strings.TrimSpace(os.Getenv("HUBSPOKE_HUB_LOGS_CLUSTER_ROLE")), HubServiceAccount: strings.TrimSpace(os.Getenv("HUBSPOKE_HUB_SERVICE_ACCOUNT")), AuditAssignmentFeed: auditAssignmentFeed, AuditAssignmentFeedConfigMap: strings.TrimSpace(os.Getenv("AUDIT_ASSIGNMENT_FEED_CONFIGMAP")), HerdrCoreEnabled: herdrCore, HerdrOrchestratorClass: env("HERDR_ORCHESTRATOR_CLASS", "herdr"), GloveHubExecClusterRole: strings.TrimSpace(os.Getenv("GLOVE_HUB_EXEC_CLUSTER_ROLE")), GloveHubNamespace: strings.TrimSpace(os.Getenv("GLOVE_HUB_NAMESPACE")), GloveHubServiceAccount: strings.TrimSpace(os.Getenv("GLOVE_HUB_SERVICE_ACCOUNT")), AgentOrchestratorEnabled: agentOrchestrator, AgentOrchestratorImage: strings.TrimSpace(os.Getenv("AGENT_ORCHESTRATOR_IMAGE")), AgentOrchestratorClass: env("AGENT_ORCHESTRATOR_CLASS", "ao"), AgentOrchestratorDomain: strings.TrimSpace(os.Getenv("AGENT_ORCHESTRATOR_DOMAIN")), AgentOrchestratorGatewayName: strings.TrimSpace(os.Getenv("AGENT_ORCHESTRATOR_GATEWAY_NAME")), AgentOrchestratorGatewayNamespace: strings.TrimSpace(os.Getenv("AGENT_ORCHESTRATOR_GATEWAY_NAMESPACE")), AgentOrchestratorGatewaySection: strings.TrimSpace(os.Getenv("AGENT_ORCHESTRATOR_GATEWAY_SECTION")), PlatformFloors: floors, BootstrapImageSource: os.Getenv("BOOTSTRAP_IMAGE_SOURCE"), ProxyRuntimeGuard: guard, SessionHubEnabled: sessionHub, SessionHubImage: strings.TrimSpace(os.Getenv("SESSION_HUB_IMAGE")), SessionHubAgents: sessionHubAgents}}
 	if orcaHubSpoke && reconciler.Config.OrcaRuntimeImage == "" {
 		return errors.New("HUBSPOKE_ORCA_ENABLED=true requires ORCA_RUNTIME_IMAGE")
 	}
@@ -1056,4 +1077,26 @@ func providerCLI(ctx context.Context, args []string) error {
 		return e
 	}
 	return providerbroker.Import(ctx, c, providerbroker.ImportOptions{Provider: args[1], File: *file, Namespace: *namespace, ReplaceAccount: *replace}, os.Stdout)
+}
+
+// sessionHubFromEnv reads SESSION_HUB_ENABLED and SESSION_HUB_AGENTS_JSON
+// (docs/session-hub.md). The allowlist is parsed even when the switch is off,
+// so a bad value fails at startup rather than at switch-on.
+func sessionHubFromEnv() (bool, []sessionhub.Agent, error) {
+	v := os.Getenv("SESSION_HUB_ENABLED")
+	if v != "" && v != "true" && v != "false" {
+		return false, nil, errors.New("SESSION_HUB_ENABLED must be true or false")
+	}
+	raw := strings.TrimSpace(os.Getenv("SESSION_HUB_AGENTS_JSON"))
+	if raw == "" || raw == "[]" {
+		if v == "true" {
+			return false, nil, errors.New("SESSION_HUB_ENABLED needs SESSION_HUB_AGENTS_JSON with at least one agent")
+		}
+		return false, nil, nil
+	}
+	agents, err := sessionhub.ParseAgents([]byte(raw))
+	if err != nil {
+		return false, nil, err
+	}
+	return v == "true", agents, nil
 }

@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "listener": {
+    "host": "127.0.0.1",
+    "port": 8765,
+    "path": "/ahp",
+    "allowAnyOrigin": false,
+    "allowedOrigins": []
+  },
+  "database": {
+    "path": "/var/lib/session-hub/gateway.db"
+  },
+  "providers": [
+    {
+      "id": "copilot",
+      "enabled": false
+    },
+    {
+      "id": "claude",
+      "enabled": false
+    },
+    {
+      "id": "gemini",
+      "enabled": false
+    },
+    {
+      "id": "qwen",
+      "enabled": false
+    },
+    {
+      "id": "auggie",
+      "enabled": false
+    },
+    {
+      "id": "qoder",
+      "enabled": false
+    },
+    {
+      "id": "codex",
+      "enabled": false
+    },
+    {
+      "id": "opencode",
+      "enabled": false
+    },
+    {
+      "id": "openclaw",
+      "enabled": false
+    },
+    {
+      "id": "kiro",
+      "enabled": false
+    },
+    {
+      "id": "hermes",
+      "enabled": false
+    },
+    {
+      "id": "kimi",
+      "enabled": false
+    },
+    {
+      "id": "pi",
+      "enabled": false
+    },
+    {
+      "id": "cell",
+      "displayName": "Cell agent",
+      "description": "An agent started in this cell's workspace container.",
+      "command": "/usr/local/bin/agent-project-controller",
+      "args": [
+        "session-hub-connect",
+        "--agent",
+        "cell"
+      ],
+      "installHint": "Outside a session-hub cell there is no launcher; see docs/session-hub.md."
+    }
+  ]
+}

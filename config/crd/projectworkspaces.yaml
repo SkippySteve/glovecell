@@ -55,7 +55,15 @@ spec:
                   message: orchestratorClassName is immutable once set; request a new workspace.
                 - rule: "(has(self.forgeClassName) ? self.forgeClassName : '') == (has(oldSelf.forgeClassName) ? oldSelf.forgeClassName : '')"
                   message: forgeClassName is immutable; revocation must reach the forge that granted access.
+                - rule: "(has(self.sessionHub) && has(self.sessionHub.enabled) && self.sessionHub.enabled) == (has(oldSelf.sessionHub) && has(oldSelf.sessionHub.enabled) && oldSelf.sessionHub.enabled)"
+                  message: sessionHub is fixed when the workspace is created; request a new workspace.
               properties:
+                sessionHub:
+                  description: Opts the cell into a shared session hub (docs/session-hub.md). Needs the installation's sessionHub.enabled. Fixed at creation.
+                  type: object
+                  properties:
+                    enabled:
+                      type: boolean
                 orchestratorClassName:
                   description: Name of the OrchestratorClass whose adapter manages agent orchestrator access. Empty means none (the deployment default). Immutable once set.
                   type: string
