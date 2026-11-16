@@ -1,10 +1,12 @@
 package controller
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
+	ao "git.cluster.aimingupward.com/steve/agent-project-controller/internal/agentorchestrator"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -121,6 +123,43 @@ func TestAgentOrchestratorUnpromotedPlaceholder(t *testing.T) {
 	} {
 		if got := AgentOrchestratorUnpromoted(image); got != want {
 			t.Fatalf("%q: got %v", image, got)
+		}
+	}
+}
+
+// An AO cell created with a session hub starts the daemon with the slot
+// prelude, which reads the hub's allowlist inside the container; nothing about
+// slots is in the pod spec, so an allowlist change never counts as drift.
+// AO cells without a hub keep today's command.
+func TestAgentOrchestratorSessionHubSlots(t *testing.T) {
+	ctx := context.Background()
+	for _, hub := range []bool{true, false} {
+		r, w, _ := fixture(t)
+		hubOn(r, w)
+		if !hub {
+			w.Spec.SessionHub = nil
+		}
+		r.Config.AgentOrchestratorEnabled = true
+		r.Config.AgentOrchestratorImage = aoTestImage
+		r.Config.AgentOrchestratorClass = "ao"
+		w.Spec.OrchestratorClassName = "ao"
+		if err := r.ensure(ctx, w); err != nil {
+			t.Fatal(err)
+		}
+		spec := workerPodSpec(t, r, namespace(w))
+		want := ao.WorkerCommand()
+		if hub {
+			want = ao.HubWorkerCommand()
+		}
+		if got := container(spec, "workspace").Command; strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+			t.Fatalf("hub=%v command: %v", hub, got)
+		}
+		for _, c := range append(append(spec.InitContainers[:0:0], spec.InitContainers...), spec.Containers...) {
+			for _, e := range c.Env {
+				if strings.HasPrefix(e.Name, "GLOVECELL_AO_HUB_") {
+					t.Fatalf("%s has %s in the pod spec", c.Name, e.Name)
+				}
+			}
 		}
 	}
 }

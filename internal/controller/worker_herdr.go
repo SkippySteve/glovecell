@@ -26,6 +26,9 @@ func (r *Reconciler) workerCommand(w *api.ProjectWorkspace) []string {
 		return r.herdrSpokeCommand()
 	}
 	if r.usesAgentOrchestrator(w) {
+		if r.usesSessionHub(w) {
+			return ao.HubWorkerCommand()
+		}
 		return ao.WorkerCommand()
 	}
 	return r.orcaSpokeCommand(w)

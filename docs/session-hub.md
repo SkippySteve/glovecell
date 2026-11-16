@@ -227,6 +227,12 @@ T3 lists the hub's sessions under that provider and can import one started in
 another app as a thread. Writing this into T3's settings in hub cells, and
 mounting the token into the workspace container, is a separate change.
 
+**Agent Orchestrator** (0.15) has no setting for a custom chat agent. In AO
+hub cells, its built-in Droid and DeepSeek Harness entries open the first and
+second agent of `sessionHub.agents`. AO shows chats started there to the
+other apps, but it lists only the sessions it created itself
+([details and limits](agent-orchestrator.md#session-hub)).
+
 Checked locally, against the gateway, launcher and a fake ACP agent in
 separate containers:
 - **Two connectors on one session.** One created a session and prompted; the
