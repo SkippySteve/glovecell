@@ -2,6 +2,8 @@ package t3
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -47,18 +49,21 @@ func TestServerSettingsHubProviders(t *testing.T) {
 	}
 }
 
-func TestHubAgentsFromEnv(t *testing.T) {
-	t.Setenv("SESSION_HUB_CLIENT_AGENTS", "")
-	if hubAgentsFromEnv() != nil {
-		t.Fatal("unset must add no hub providers")
+func TestHubAgentsFrom(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agents.json")
+	if hubAgentsFrom(path) != nil {
+		t.Fatal("no file must add no hub providers")
 	}
-	t.Setenv("SESSION_HUB_CLIENT_AGENTS", "not json")
-	if hubAgentsFromEnv() != nil {
+	os.WriteFile(path, []byte("not json"), 0o600)
+	if hubAgentsFrom(path) != nil {
 		t.Fatal("malformed must add no hub providers")
 	}
-	t.Setenv("SESSION_HUB_CLIENT_AGENTS", `[{"id":"cell-codex","displayName":"Codex"},{"id":"--evil","displayName":"x"},{"id":"Bad Id"}]`)
-	got := hubAgentsFromEnv()
-	if len(got) != 1 || got[0].ID != "cell-codex" {
+	// The controller's allowlist carries command and args too; only id and
+	// displayName are used.
+	os.WriteFile(path, []byte(`[{"id":"cell-codex","displayName":"Codex","command":"/usr/local/bin/codex-acp"},{"id":"--evil","displayName":"x"},{"id":"Bad Id"}]`), 0o600)
+	got := hubAgentsFrom(path)
+	if len(got) != 1 || got[0].ID != "cell-codex" || got[0].DisplayName != "Codex" {
 		t.Fatalf("only valid ids pass: %v", got)
 	}
 }

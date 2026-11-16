@@ -201,7 +201,7 @@ func serve(instance string, managed bool) error {
 	if err = os.Rename(file.Name(), pidFile); err != nil {
 		return err
 	}
-	raw, _ := json.Marshal(serverSettings(hubAgentsFromEnv()))
+	raw, _ := json.Marshal(serverSettings(hubAgentsFrom(HubAgentsFile)))
 	// Overwrite provider configuration on each launch. Device/session state is retained separately.
 	if err := os.WriteFile(Data+"/userdata/settings.json", raw, 0600); err != nil {
 		return err
@@ -249,8 +249,13 @@ func parseProcessStartTime(stat string) (string, error) {
 	return fields[19], nil
 }
 
-// HubAgent is one allowlisted agent of the cell's session hub, as the
-// controller passes it in SESSION_HUB_CLIENT_AGENTS (docs/session-hub.md).
+// HubAgentsFile is the session hub's allowlist as the controller mounts it
+// into the workspace container of a session-hub cell (docs/session-hub.md).
+// A file, not an environment variable: an allowlist change then reaches the
+// running worker without changing its pod spec.
+const HubAgentsFile = "/run/session-hub-client/agents.json"
+
+// HubAgent is one allowlisted agent of the cell's session hub.
 type HubAgent struct {
 	ID          string `json:"id"`
 	DisplayName string `json:"displayName"`
@@ -258,15 +263,15 @@ type HubAgent struct {
 
 var hubAgentID = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 
-// hubAgentsFromEnv reads SESSION_HUB_CLIENT_AGENTS. It is unset outside
-// session-hub cells; a malformed value adds no hub providers.
-func hubAgentsFromEnv() []HubAgent {
-	raw := os.Getenv("SESSION_HUB_CLIENT_AGENTS")
-	if raw == "" {
+// hubAgentsFrom reads the hub allowlist. The file is absent outside
+// session-hub cells; a malformed one adds no hub providers.
+func hubAgentsFrom(path string) []HubAgent {
+	raw, err := os.ReadFile(path)
+	if err != nil || len(raw) > 65536 {
 		return nil
 	}
 	var agents []HubAgent
-	if json.Unmarshal([]byte(raw), &agents) != nil {
+	if json.Unmarshal(raw, &agents) != nil {
 		return nil
 	}
 	out := []HubAgent{}
