@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 500" font-family="system-ui,-apple-system,Segoe UI,sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">Why a cell is one trust zone</title>
+  <desc id="desc">Path A: an agent in the workspace container reads the hub token directly. Path B: a hub agent in the launcher plants a file on the shared volume that the workspace container later runs, which then reads the token.</desc>
+  <style>
+    .box{fill:#fafafa;stroke:#d4d4d4;stroke-width:1.5}
+    .bad{fill:none;stroke:#dc2626;stroke-width:2}
+    .badt{fill:#dc2626;font-size:12.5px;font-weight:600}
+    .t{fill:#171717;font-size:13px}
+    .ts{fill:#5f5f5f;font-size:11.5px}
+    .th{fill:#171717;font-size:14px;font-weight:600}
+    .num{fill:#dc2626;font-size:13px;font-weight:700}
+    .shared{fill:#f1f1f1;stroke:#d4d4d4;stroke-width:1.5}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  </style>
+  <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/></marker></defs>
+  <rect x="0" y="0" width="900" height="500" fill="#ffffff"/>
+  <text class="th" x="20" y="26">Why a cell is one trust zone: two ways to the hub token</text>
+
+  <rect class="box" x="20" y="50" width="330" height="230" rx="10"/>
+  <text class="th" x="36" y="76">workspace container (token readable)</text>
+  <text class="t" x="36" y="104">apps + their connectors</text>
+  <rect x="36" y="124" width="298" height="58" rx="8" fill="none" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="5 3"/>
+  <text class="t" x="48" y="146">an agent running here, e.g. a terminal</text>
+  <text class="t" x="48" y="166">agent in a Herdr pane, an app's own Codex</text>
+  <text class="t mono" x="36" y="216">/run/session-hub-client/token</text>
+  <text class="t" x="36" y="246">runs files from /workspace as user 1000</text>
+  <text class="ts" x="36" y="264">(git hooks, shell start-up files, app shims in $HOME)</text>
+
+  <rect class="box" x="560" y="50" width="320" height="140" rx="10"/>
+  <text class="th" x="576" y="76">hub (gateway)</text>
+  <text class="t" x="576" y="104">accepts anyone with the token:</text>
+  <text class="t" x="576" y="126">• read every shared chat</text>
+  <text class="t" x="576" y="146">• send prompts as if a person typed them</text>
+  <text class="t" x="576" y="166">• answer permission questions (first wins)</text>
+
+  <rect class="box" x="560" y="230" width="320" height="110" rx="10"/>
+  <text class="th" x="576" y="256">launcher container (no token)</text>
+  <text class="t" x="576" y="284">a hub agent</text>
+  <text class="t" x="576" y="306">can write to /workspace as user 1000</text>
+
+  <rect class="shared" x="20" y="370" width="860" height="80" rx="10"/>
+  <text class="th" x="36" y="396">/workspace volume (shared, read-write)</text>
+  <text class="t" x="36" y="422"><tspan class="mono">.git/hooks/*</tspan> · <tspan class="mono">.git/config</tspan> (core.fsmonitor, core.hooksPath) · <tspan class="mono">~/.bashrc</tspan> · <tspan class="mono">~/.local/bin/*</tspan> · app configuration</text>
+
+  <path class="bad" d="M334 153 C450 153 450 120 560 120" marker-end="url(#arr)"/>
+  <circle cx="447" cy="138" r="11" fill="#ffffff" stroke="#dc2626" stroke-width="2"/><text class="num" x="443" y="143">A</text>
+  <text class="badt" x="372" y="108">reads the token, connects</text>
+
+  <path class="bad" d="M720 340 C720 352 700 362 680 368" marker-end="url(#arr)"/>
+  <text class="badt" x="730" y="362">B1 plants a file</text>
+  <path class="bad" d="M240 368 C230 330 210 300 200 282" marker-end="url(#arr)"/>
+  <text class="badt" x="40" y="330">B2 the workspace runs it</text>
+  <path class="bad" d="M300 216 C420 216 470 170 560 160" marker-end="url(#arr)"/>
+  <text class="badt" x="392" y="248">B3 reads the token</text>
+  <circle cx="420" cy="200" r="11" fill="#ffffff" stroke="#dc2626" stroke-width="2"/><text class="num" x="415" y="205">B</text>
+
+  <text class="ts" x="20" y="478">Neither path grants access a process in the cell lacked; both make hub permission prompts unreliable as proof that a person approved.</text>
+</svg>

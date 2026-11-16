@@ -99,6 +99,8 @@ Checked locally before the first PR:
 
 ## In a cell
 
+![A cell with a session hub: the workspace, hub and launcher containers, the shared loopback and the shared /workspace volume, and who holds the hub token](images/session-hub-cell.svg)
+
 An operator turns it on in the chart and then creates a workspace that asks
 for it:
 
@@ -166,6 +168,7 @@ allowlist:
 | Container | Image | User | Sees | Does |
 | --- | --- | --- | --- | --- |
 | `session-hub` | session-hub | 1001 | `gateway.json` (with the token), the launcher socket, its own state | Runs the gateway on `127.0.0.1:8765`. Never runs an agent: each agent is `agent-project-controller session-hub-connect --agent <id>`. No proxy settings, no ports, no workspace volume. |
+| `workspace` (existing) | unchanged | 1000 | also `/run/session-hub-client/token` and `agents.json` (read-only) | Runs the operator apps; their connector (`session-hub-acp`) joins the hub with the token. Apps read the allowlist from `agents.json` to offer one provider per hub agent. A file, so an allowlist change reaches running workers without changing the pod spec. |
 | `session-hub-launcher` | the workspace image | 1000 | the workspace's volumes and environment, `agents.json`, the launcher socket | `agent-project-controller session-hub-launcher`: on a request over the unix socket it starts that allowlisted agent in `/workspace/repo` and relays its standard input and output. |
 
 **Boundaries:**
@@ -189,6 +192,75 @@ allowlist:
 - **The token itself.** It is generated once per cell and kept. If it is
   overwritten with an invalid value, it is regenerated. Allowlist changes
   update the Secret without a new token; the hub reads its config at start.
+
+## Trust model: a cell is one trust zone
+
+![Two ways to the hub token: an agent in the workspace container reads it directly (A), or a hub agent plants a file on the shared volume that the workspace container later runs (B)](images/session-hub-trust.svg)
+
+The session hub shares chats between apps. It is not a security boundary
+inside the cell, and it does not try to be one.
+
+- **Who holds the token.** It is readable in the hub container and in the
+  workspace container, where the apps and their connectors run. The workspace
+  container also runs every agent the apps start themselves, such as an app's
+  own Codex, a terminal agent in a Herdr pane or Orca tab, and shells. Any of
+  them can read the token and do what an app can: read the shared chats, send
+  prompts into them, and answer their permission questions.
+- **The launcher is a speed bump, not a wall.** The hub's own agents run in
+  the launcher container, which does not get the token, so they cannot simply
+  read it. But the launcher and the workspace share the read-write
+  `/workspace` volume, and the workspace container runs files from it: git
+  hooks and `core.fsmonitor`, shell start-up files, and anything an app
+  executes from `$HOME`. An agent that plants such a file can get code run
+  where the token is.
+- **Nothing gains access.** Every process in the cell already shares one
+  user, one volume, the cell's egress proxy and the cell's brokered
+  credentials, so holding the token grants no access that process lacked.
+- **What it does weaken is the approval signal.** Inside a cell, an agent
+  permission prompt answered through the hub is a convenience, not a
+  security control: something else in the same cell may have answered it,
+  and a prompt sent through the hub may not have come from a person. Many
+  apps also auto-approve by default.
+- **The boundary is the cell.** It is enforced by the sandbox runtime, the
+  inspecting egress proxy and network policy, brokered credentials and
+  per-cell tokens.
+
+Examples of files the workspace container runs or obeys from the shared
+volume, as found while connecting the apps:
+- **Git:** hooks and `core.fsmonitor` or `core.hooksPath` in `.git/config`.
+  The apps run git all the time.
+- **Orca's login shell:** Orca captures its environment with `$SHELL -ilc env`,
+  which sources `~/.profile` from `/workspace/home`. It does this on every
+  agent check and every Orca terminal.
+- **Orca's settings in `/workspace/orca`:** they include the command each agent
+  is started with.
+- **The `omp` shim in `~/.local/bin`:** Orca's hub slot needs it there. Orca
+  resolves agents with the `PATH` from that login shell, and Debian's
+  `/etc/profile` resets it, so a read-only directory put first on `PATH` would
+  not be seen. A planted `omp` would still be found through `~/.local/bin`.
+
+Consequences for integrations:
+- **Placement:** put shims and configuration that point at the connector in
+  the image or a read-only mount wherever the app can find them there.
+  Agent Orchestrator's slots are in the image. Where an app only finds agents
+  through `$HOME` (Orca), the shim lives on the volume. That adds nothing
+  beyond the files the app already runs from it.
+- **Containment:** do not rely on hub permission prompts to contain an agent.
+  Use the cell's controls (egress rules, credential grants, repository access)
+  for that.
+- **Possible later hardening:** give the launcher its own `$HOME` and keep the
+  apps' state out of its reach. That would remove the `$HOME` and
+  app-settings routes. The repository and its `.git` stay shared, because
+  sharing them is the point, so a cell remains one trust zone.
+
+What qualification checks in a disposable cell:
+- **The launcher cannot read the token.** No such file exists there.
+- **A connection without the token is refused.**
+- **The executed-from-volume paths are listed** in the qualification
+  report, per app class: git hooks and `core.fsmonitor`, shell start-up files
+  (including the login shell Orca uses to capture its environment), app
+  settings under `/workspace` (such as Orca's), and shims in `~/.local/bin`. A reader can then see exactly what "speed bump" means for
+  their apps.
 
 ## Connecting an app
 
@@ -227,6 +299,50 @@ T3 lists the hub's sessions under that provider and can import one started in
 another app as a thread. Writing this into T3's settings in hub cells, and
 mounting the token into the workspace container, is a separate change.
 
+**Orca** (1.4) runs a fixed list of ACP chat agents and has no user-defined
+ones yet ([orca#38083](https://github.com/stablyai/orca/issues/38083)). So in
+an Orca cell (`orchestratorClassName: orca`) that has the hub, Glovecell
+borrows one of them, **OMP**, which the workspace images don't ship. At start
+the worker writes `~/.local/bin/omp`, a folder Orca searches for agent
+programs. At each chat start that small script reads the cell's allowlist,
+`/run/session-hub-client/agents.json` in the workspace container, and runs
+`session-hub-acp --agent <id>` for its **first** agent. Orca then lists "OMP"
+as a chat agent in the desktop and mobile apps, and each OMP chat is a hub
+session. Without that file, `omp --version` fails too, so Orca offers no OMP
+chat. Because the script reads the file, changing `sessionHub.agents` doesn't
+change the worker's command or restart it.
+
+- **How Orca calls it:** Orca starts an OMP chat as `omp acp` (plus
+  `--plugin-dir` for its visuals skill) and first asks `omp --version`.
+  The script answers `17.0.5`, the oldest OMP that Orca 1.4 accepts, and drops
+  Orca's arguments.
+- **What it refuses:** Orca lists OMP's models by opening a throwaway session
+  with `--session-dir`. The script refuses that, so listing models never
+  creates a hub session. Orca shows no model list, and the hub agent uses its
+  own default. Any other use, such as typing `omp` in a terminal, is refused
+  with a note.
+- **What it leaves alone:** an `omp` that isn't Glovecell's script. Other
+  cells' workers start exactly as before. If the script can't be written,
+  Orca starts without it.
+
+What Orca 1.4.237 does with a hub session (checked against its source and a
+local `orcad` with a stand-in connector):
+- **Session list:** Orca never calls `session/list`. Its chat list holds only
+  the chats it started, so it can't open a session started in another app.
+  The other apps can open Orca's chats.
+- **Reopening:** Orca reopens its own chat with `session/load`, but keeps its
+  own copy of the conversation and drops the replay. Turns other apps sent
+  while that chat was closed don't appear in Orca.
+- **Live turns from other apps:** their replies and tool calls appear in the
+  open chat, outside any turn. The other app's prompt itself isn't shown,
+  because Orca ignores live user messages.
+- **Permission questions from other apps' turns:** Orca answers `cancelled` at
+  once, because nobody in Orca is waiting on that turn. The connector currently
+  sends any answer other than a selected option to the hub as a refusal, so
+  while an Orca chat is open, it refuses those questions before the other app
+  can answer. Fix this in the connector before using Orca together with other
+  apps on one session.
+
 Checked locally, against the gateway, launcher and a fake ACP agent in
 separate containers:
 - **Two connectors on one session.** One created a session and prompted; the
@@ -238,8 +354,10 @@ separate containers:
 Known limits:
 - Hub state is an `emptyDir`, so sessions don't survive a worker restart.
 - The launcher uses the workspace's resource profile.
-- Herdr is connected through its own client (below); the other apps' settings
-  are separate changes.
+- Each app connects as described in "Connecting an app"; Herdr uses its own
+  client (below).
+- Orca's chats start the agent in `/workspace/repo` (the launcher's
+  directory), even when the chat belongs to another worktree.
 - Codex sessions need a live Codex grant, so the adapter is checked locally only
   as far as the ACP handshake; a full session is part of the qualification run.
 

@@ -297,14 +297,24 @@ func (c *Connector) attach(ctx context.Context, id acp.SessionId) ([]ahptypes.Tu
 		return nil, err
 	}
 	var turns []ahptypes.Turn
+	var active *ahptypes.ActiveTurn
 	if state := chatSnap.Snapshot.State.Chat; state != nil {
-		turns = state.Turns
+		turns, active = state.Turns, state.ActiveTurn
+	}
+	if active != nil {
+		// Replay the running turn too, as far as it has got.
+		turns = append(append([]ahptypes.Turn{}, turns...), ahptypes.Turn{Id: active.Id, Message: active.Message, ResponseParts: active.ResponseParts})
 	}
 	s := &hubSession{id: id, chat: chat, sub: sub, asked: map[string]bool{}, ownTurns: map[string]bool{}, pending: map[string]pendingQuestion{}}
 	c.mu.Lock()
 	c.sessions[id] = s
 	c.mu.Unlock()
 	go c.pump(s)
+	// A question that was already open when this app attached is asked too;
+	// its later toolCallReady action never comes.
+	for _, q := range openQuestions(active) {
+		c.ask(s, q)
+	}
 	return turns, nil
 }
 
@@ -439,19 +449,7 @@ func (c *Connector) pump(s *hubSession) {
 		switch act := a.Envelope.Action.Value.(type) {
 		case *ahptypes.ChatToolCallReadyAction:
 			if needsPermission(act) {
-				s.mu.Lock()
-				first := !s.asked[act.ToolCallId]
-				s.asked[act.ToolCallId] = true
-				var qctx context.Context
-				if first {
-					var cancel context.CancelFunc
-					qctx, cancel = context.WithCancel(context.Background())
-					s.pending[act.ToolCallId] = pendingQuestion{turn: act.TurnId, cancel: cancel}
-				}
-				s.mu.Unlock()
-				if first {
-					go c.askPermission(qctx, s, act)
-				}
+				c.ask(s, act)
 			}
 		case *ahptypes.ChatToolCallConfirmedAction:
 			s.settle(act.TurnId, act.ToolCallId)
@@ -499,16 +497,16 @@ func translate(v any, ownTurns map[string]bool) ([]acp.SessionUpdate, *turnOutco
 		if ownTurns[a.TurnId] {
 			return nil, nil
 		}
-		return []acp.SessionUpdate{acp.UpdateUserMessageText(a.Message.Text)}, nil
+		return []acp.SessionUpdate{userText(a.TurnId, a.Message.Text)}, nil
 	case *ahptypes.ChatResponsePartAction:
 		if md, ok := a.Part.Value.(*ahptypes.MarkdownResponsePart); ok && md.Content != "" {
-			return []acp.SessionUpdate{acp.UpdateAgentMessageText(md.Content)}, nil
+			return []acp.SessionUpdate{agentText(a.TurnId, md.Content)}, nil
 		}
 		if r, ok := a.Part.Value.(*ahptypes.ReasoningResponsePart); ok && r.Content != "" {
 			return []acp.SessionUpdate{acp.UpdateAgentThoughtText(r.Content)}, nil
 		}
 	case *ahptypes.ChatDeltaAction:
-		return []acp.SessionUpdate{acp.UpdateAgentMessageText(a.Content)}, nil
+		return []acp.SessionUpdate{agentText(a.TurnId, a.Content)}, nil
 	case *ahptypes.ChatReasoningAction:
 		return []acp.SessionUpdate{acp.UpdateAgentThoughtText(a.Content)}, nil
 	case *ahptypes.ChatToolCallStartAction:
@@ -557,13 +555,13 @@ func toolText(content []ahptypes.ToolResultContent) string {
 func replayTurn(t ahptypes.Turn) []acp.SessionUpdate {
 	out := []acp.SessionUpdate{}
 	if t.Message.Text != "" {
-		out = append(out, acp.UpdateUserMessageText(t.Message.Text))
+		out = append(out, userText(t.Id, t.Message.Text))
 	}
 	for _, part := range t.ResponseParts {
 		switch p := part.Value.(type) {
 		case *ahptypes.MarkdownResponsePart:
 			if p.Content != "" {
-				out = append(out, acp.UpdateAgentMessageText(p.Content))
+				out = append(out, agentText(t.Id, p.Content))
 			}
 		case *ahptypes.ReasoningResponsePart:
 			if p.Content != "" {
@@ -596,20 +594,101 @@ func (c *Connector) askPermission(ctx context.Context, s *hubSession, a *ahptype
 	if err != nil || ctx.Err() != nil {
 		return
 	}
-	confirm := &ahptypes.ChatToolCallConfirmedAction{Type: ahptypes.ActionTypeChatToolCallConfirmed, TurnId: a.TurnId, ToolCallId: a.ToolCallId}
-	switch {
-	case res.Outcome.Selected != nil:
-		id := string(res.Outcome.Selected.OptionId)
-		confirm.SelectedOptionId = &id
-		for _, o := range a.Options {
-			if o.Id == id {
-				confirm.Approved = o.Kind == ahptypes.ConfirmationOptionKindApprove
-			}
-		}
-		reason := ahptypes.ToolCallConfirmationReasonUserAction
-		confirm.Confirmed = &reason
-	default:
-		confirm.Approved = false
+	confirm := confirmation(a, res.Outcome)
+	if confirm == nil {
+		return
 	}
 	_, _ = c.hub.Dispatch(context.Background(), s.chat, ahptypes.StateAction{Value: confirm})
+}
+
+// confirmation turns an app's answer into the hub action, or nil when the app
+// did not answer. A "cancelled" outcome is not a refusal: ACP clients send it
+// when they cancel their own turn, and some (Orca) send it for every question
+// from a turn they did not start. Dispatching it as a refusal would let one app
+// refuse every other app's questions ("first answer wins"). An option id the
+// question did not offer is also not an answer.
+func confirmation(a *ahptypes.ChatToolCallReadyAction, outcome acp.RequestPermissionOutcome) *ahptypes.ChatToolCallConfirmedAction {
+	if outcome.Selected == nil {
+		return nil
+	}
+	id := string(outcome.Selected.OptionId)
+	for _, o := range a.Options {
+		if o.Id != id {
+			continue
+		}
+		confirm := &ahptypes.ChatToolCallConfirmedAction{Type: ahptypes.ActionTypeChatToolCallConfirmed, TurnId: a.TurnId, ToolCallId: a.ToolCallId, SelectedOptionId: &id}
+		// The hub accepts an approval with a confirmed reason and no denial
+		// reason, and a denial with reason "denied" and no confirmed reason;
+		// anything else is rejected and the question stays open.
+		if o.Kind == ahptypes.ConfirmationOptionKindApprove {
+			confirmed := ahptypes.ToolCallConfirmationReasonUserAction
+			confirm.Approved, confirm.Confirmed = true, &confirmed
+		} else {
+			denied := ahptypes.ToolCallCancellationReasonDenied
+			confirm.Reason = &denied
+		}
+		return confirm
+	}
+	return nil
+}
+
+// userText and agentText tag a chunk with a message id derived from the hub
+// turn, so apps that group chunks by messageId (Agent Orchestrator) show each
+// turn, including turns other apps started, as its own message.
+func userText(turnID, text string) acp.SessionUpdate {
+	u := acp.UpdateUserMessageText(text)
+	if turnID != "" && u.UserMessageChunk != nil {
+		id := turnID + ":user"
+		u.UserMessageChunk.MessageId = &id
+	}
+	return u
+}
+
+func agentText(turnID, text string) acp.SessionUpdate {
+	u := acp.UpdateAgentMessageText(text)
+	if turnID != "" && u.AgentMessageChunk != nil {
+		id := turnID + ":agent"
+		u.AgentMessageChunk.MessageId = &id
+	}
+	return u
+}
+
+// ask puts a question to the app once per tool call, withdrawable once the
+// hub settles it.
+func (c *Connector) ask(s *hubSession, q *ahptypes.ChatToolCallReadyAction) {
+	s.mu.Lock()
+	first := !s.asked[q.ToolCallId]
+	s.asked[q.ToolCallId] = true
+	var qctx context.Context
+	if first {
+		var cancel context.CancelFunc
+		qctx, cancel = context.WithCancel(context.Background())
+		s.pending[q.ToolCallId] = pendingQuestion{turn: q.TurnId, cancel: cancel}
+	}
+	s.mu.Unlock()
+	if first {
+		go c.askPermission(qctx, s, q)
+	}
+}
+
+// openQuestions lists tool calls of the running turn that wait for a
+// permission answer, in the shape of the action that announced them.
+func openQuestions(active *ahptypes.ActiveTurn) []*ahptypes.ChatToolCallReadyAction {
+	if active == nil {
+		return nil
+	}
+	out := []*ahptypes.ChatToolCallReadyAction{}
+	for _, part := range active.ResponseParts {
+		tc, ok := part.Value.(*ahptypes.ToolCallResponsePart)
+		if !ok {
+			continue
+		}
+		p, ok := tc.ToolCall.Value.(*ahptypes.ToolCallPendingConfirmationState)
+		if !ok || len(p.Options) == 0 {
+			continue
+		}
+		out = append(out, &ahptypes.ChatToolCallReadyAction{Type: ahptypes.ActionTypeChatToolCallReady, TurnId: active.Id, ToolCallId: p.ToolCallId,
+			InvocationMessage: p.InvocationMessage, ConfirmationTitle: p.ConfirmationTitle, Options: p.Options})
+	}
+	return out
 }
