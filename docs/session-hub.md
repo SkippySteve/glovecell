@@ -190,6 +190,51 @@ allowlist:
   overwritten with an invalid value, it is regenerated. Allowlist changes
   update the Secret without a new token; the hub reads its config at start.
 
+## Connecting an app
+
+`agent-project-controller session-hub-acp --agent <id>` is what an operator app
+starts as an ACP agent. It speaks ACP to the app on stdin and stdout, and AHP
+to the hub on `ws://127.0.0.1:8765/ahp` with the cell's token from
+`/run/session-hub-client/token`. It runs where the app's server runs: the
+workspace container.
+
+| App does (ACP) | Connector does (AHP) |
+| --- | --- |
+| `initialize` | connects; advertises `loadSession`, `sessionCapabilities.list` and `.resume` |
+| `session/new` | `createSession` for the allowlisted agent, subscribes to its chat |
+| `session/prompt` | dispatches `chat/turnStarted`, streams the turn, returns on its `turnComplete`, `turnCancelled` or `error` |
+| `session/cancel` | dispatches `chat/turnCancelled` |
+| `session/list` | `listSessions`, only this agent's sessions, from whichever app |
+| `session/load` / `session/resume` | subscribes; `load` replays the chat so far |
+| answers `session/request_permission` | dispatches `chat/toolCallConfirmed`; the hub keeps the first answer |
+
+What other apps do in the same session reaches this app live. Their messages
+arrive as user message chunks and their replies as agent chunks. When another
+app answers a permission question first, this app's open question is
+withdrawn. The connector refuses a non-loopback hub, a missing or malformed
+token, and a session of a different agent.
+
+**T3 Code** (0.1 and later) runs it as an ACP provider instance with a local
+command:
+
+```json
+{"providerInstances": {"cell-codex": {"driver": "acpRegistry", "enabled": true,
+  "config": {"source": "local", "commandPath": "/usr/local/bin/agent-project-controller",
+             "commandArgs": ["session-hub-acp", "--agent", "cell-codex"]}}}}
+```
+
+T3 lists the hub's sessions under that provider and can import one started in
+another app as a thread. Writing this into T3's settings in hub cells, and
+mounting the token into the workspace container, is a separate change.
+
+Checked locally, against the gateway, launcher and a fake ACP agent in
+separate containers:
+- **Two connectors on one session.** One created a session and prompted; the
+  other listed it and loaded it (history replayed).
+- **Live following.** Each then saw the other's turns live.
+- **Permissions.** A permission question went to both. The first answer was
+  used, and the other app's question was withdrawn.
+
 Known limits:
 - Hub state is an `emptyDir`, so sessions don't survive a worker restart.
 - The launcher uses the workspace's resource profile.

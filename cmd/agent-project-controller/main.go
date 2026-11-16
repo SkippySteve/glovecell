@@ -416,6 +416,17 @@ func run(ctx context.Context) error {
 			// Launcher container of a session-hub cell (docs/session-hub.md).
 			l := &sessionhub.Launcher{Socket: env("SESSION_HUB_SOCKET", sessionhub.SocketPath), AgentsFile: env("SESSION_HUB_AGENTS_FILE", "/run/session-hub-agents/agents.json"), Dir: os.Getenv("SESSION_HUB_DIR")}
 			return l.Serve(ctx)
+		case "session-hub-acp":
+			// What an operator app starts as an ACP agent: the cell's session
+			// hub for one allowlisted agent (docs/session-hub.md).
+			fs := flag.NewFlagSet("session-hub-acp", flag.ContinueOnError)
+			agent := fs.String("agent", "", "allowlisted hub agent id")
+			hubURL := fs.String("url", "ws://127.0.0.1:8765/ahp", "session hub AHP endpoint (loopback)")
+			tokenFile := fs.String("token-file", "/run/session-hub-client/token", "session hub token")
+			if err := fs.Parse(os.Args[2:]); err != nil {
+				return err
+			}
+			return sessionhub.RunConnector(ctx, *hubURL, *tokenFile, *agent, os.Stdin, os.Stdout)
 		case "session-hub-connect":
 			// The hub's provider command: one agent through the launcher.
 			fs := flag.NewFlagSet("session-hub-connect", flag.ContinueOnError)
