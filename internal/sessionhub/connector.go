@@ -596,20 +596,30 @@ func (c *Connector) askPermission(ctx context.Context, s *hubSession, a *ahptype
 	if err != nil || ctx.Err() != nil {
 		return
 	}
-	confirm := &ahptypes.ChatToolCallConfirmedAction{Type: ahptypes.ActionTypeChatToolCallConfirmed, TurnId: a.TurnId, ToolCallId: a.ToolCallId}
-	switch {
-	case res.Outcome.Selected != nil:
-		id := string(res.Outcome.Selected.OptionId)
-		confirm.SelectedOptionId = &id
-		for _, o := range a.Options {
-			if o.Id == id {
-				confirm.Approved = o.Kind == ahptypes.ConfirmationOptionKindApprove
-			}
-		}
-		reason := ahptypes.ToolCallConfirmationReasonUserAction
-		confirm.Confirmed = &reason
-	default:
-		confirm.Approved = false
+	confirm := confirmation(a, res.Outcome)
+	if confirm == nil {
+		return
 	}
 	_, _ = c.hub.Dispatch(context.Background(), s.chat, ahptypes.StateAction{Value: confirm})
+}
+
+// confirmation turns an app's answer into the hub action, or nil when the app
+// did not answer. A "cancelled" outcome is not a refusal: ACP clients send it
+// when they cancel their own turn, and some (Orca) send it for every question
+// from a turn they did not start. Dispatching it as a refusal would let one app
+// refuse every other app's questions ("first answer wins"). An option id the
+// question did not offer is also not an answer.
+func confirmation(a *ahptypes.ChatToolCallReadyAction, outcome acp.RequestPermissionOutcome) *ahptypes.ChatToolCallConfirmedAction {
+	if outcome.Selected == nil {
+		return nil
+	}
+	id := string(outcome.Selected.OptionId)
+	for _, o := range a.Options {
+		if o.Id == id {
+			reason := ahptypes.ToolCallConfirmationReasonUserAction
+			return &ahptypes.ChatToolCallConfirmedAction{Type: ahptypes.ActionTypeChatToolCallConfirmed, TurnId: a.TurnId, ToolCallId: a.ToolCallId,
+				Approved: o.Kind == ahptypes.ConfirmationOptionKindApprove, SelectedOptionId: &id, Confirmed: &reason}
+		}
+	}
+	return nil
 }

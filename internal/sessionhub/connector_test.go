@@ -137,3 +137,25 @@ func TestPromptText(t *testing.T) {
 		t.Fatalf("prompt %q", got)
 	}
 }
+
+// A "cancelled" answer, or an option the question did not offer, must not
+// reach the hub: with first-answer-wins it would refuse the question for every
+// other app (Orca answers "cancelled" to turns it did not start).
+func TestConfirmationOnlyForChosenOptions(t *testing.T) {
+	ready := &ahptypes.ChatToolCallReadyAction{TurnId: "turn", ToolCallId: "t1", Options: []ahptypes.ConfirmationOption{
+		{Id: "allow", Kind: ahptypes.ConfirmationOptionKindApprove}, {Id: "deny", Kind: ahptypes.ConfirmationOptionKindDeny}}}
+	if c := confirmation(ready, acp.RequestPermissionOutcome{Cancelled: &acp.RequestPermissionOutcomeCancelled{}}); c != nil {
+		t.Fatalf("cancelled dispatched %+v", c)
+	}
+	if c := confirmation(ready, acp.RequestPermissionOutcome{Selected: &acp.RequestPermissionOutcomeSelected{OptionId: "other"}}); c != nil {
+		t.Fatalf("unknown option dispatched %+v", c)
+	}
+	allow := confirmation(ready, acp.RequestPermissionOutcome{Selected: &acp.RequestPermissionOutcomeSelected{OptionId: "allow"}})
+	if allow == nil || !allow.Approved || *allow.SelectedOptionId != "allow" || allow.TurnId != "turn" || allow.ToolCallId != "t1" {
+		t.Fatalf("allow %+v", allow)
+	}
+	deny := confirmation(ready, acp.RequestPermissionOutcome{Selected: &acp.RequestPermissionOutcomeSelected{OptionId: "deny"}})
+	if deny == nil || deny.Approved {
+		t.Fatalf("deny %+v", deny)
+	}
+}
