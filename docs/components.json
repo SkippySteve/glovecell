@@ -21,6 +21,7 @@
     {"command": "t3-codex", "class": "controller-pod", "note": "inside a worker"},
     {"command": "telemetry-relay", "class": "controller-pod", "note": "relay container in each proxy pod (cell telemetry, pull only)"},
     {"command": "session-hub-launcher", "class": "controller-pod", "note": "launcher container of a session-hub cell; starts allowlisted agents for the hub (docs/session-hub.md)"},
+    {"command": "session-hub-acp", "class": "controller-pod", "note": "ACP agent an operator app (T3, Orca, Agent Orchestrator) starts in the workspace container; connects it to the cell's session hub"},
     {"command": "session-hub-connect", "class": "controller-pod", "note": "the session hub's provider command inside the hub container; relays one agent through the launcher"},
 
     {"command": "t3", "class": "operator-cli", "note": "one-shot, operator's own identity; nothing depends on it running"},
