@@ -166,6 +166,7 @@ allowlist:
 | Container | Image | User | Sees | Does |
 | --- | --- | --- | --- | --- |
 | `session-hub` | session-hub | 1001 | `gateway.json` (with the token), the launcher socket, its own state | Runs the gateway on `127.0.0.1:8765`. Never runs an agent: each agent is `agent-project-controller session-hub-connect --agent <id>`. No proxy settings, no ports, no workspace volume. |
+| `workspace` (existing) | unchanged | 1000 | also `/run/session-hub-client/token` and `agents.json` (read-only) | Runs the operator apps; their connector (`session-hub-acp`) joins the hub with the token. Apps read the allowlist from `agents.json` to offer one provider per hub agent. A file, so an allowlist change reaches running workers without changing the pod spec. |
 | `session-hub-launcher` | the workspace image | 1000 | the workspace's volumes and environment, `agents.json`, the launcher socket | `agent-project-controller session-hub-launcher`: on a request over the unix socket it starts that allowlisted agent in `/workspace/repo` and relays its standard input and output. |
 
 **Boundaries:**
