@@ -143,3 +143,39 @@ func TestCRDOrchestratorClassValidation(t *testing.T) {
 		t.Fatal("status subresource", e)
 	}
 }
+
+// spec.sessionHub.enabled is fixed at creation: the hub adds worker
+// containers, so it is neither switched on nor off on an existing workspace.
+func TestCRDSessionHubFixedAtCreation(t *testing.T) {
+	c := startEnvtest(t)
+	ctx := context.Background()
+	if e := c.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "control"}}); e != nil {
+		t.Fatal(e)
+	}
+	hub := &ProjectWorkspace{ObjectMeta: metav1.ObjectMeta{Name: "hub", Namespace: "control"}, Spec: WorkspaceSpec{Repository: "operator/repo", DesiredState: "Running", SessionHub: &SessionHubSpec{Enabled: true}}}
+	if e := c.Create(ctx, hub); e != nil {
+		t.Fatal("create with hub", e)
+	}
+	hub.Spec.SessionHub = nil
+	if e := c.Update(ctx, hub); !apierrors.IsInvalid(e) {
+		t.Fatal("hub removed", e)
+	}
+	_ = c.Get(ctx, client.ObjectKeyFromObject(hub), hub)
+	hub.Spec.DesiredState = "Paused"
+	if e := c.Update(ctx, hub); e != nil || !hub.Spec.SessionHubEnabled() {
+		t.Fatal("unrelated update on a hub workspace rejected", e)
+	}
+	plain := &ProjectWorkspace{ObjectMeta: metav1.ObjectMeta{Name: "plain", Namespace: "control"}, Spec: WorkspaceSpec{Repository: "operator/repo", DesiredState: "Running"}}
+	if e := c.Create(ctx, plain); e != nil {
+		t.Fatal(e)
+	}
+	plain.Spec.SessionHub = &SessionHubSpec{Enabled: true}
+	if e := c.Update(ctx, plain); !apierrors.IsInvalid(e) {
+		t.Fatal("hub added to an existing workspace", e)
+	}
+	_ = c.Get(ctx, client.ObjectKeyFromObject(plain), plain)
+	plain.Spec.SessionHub = &SessionHubSpec{Enabled: false}
+	if e := c.Update(ctx, plain); e != nil {
+		t.Fatal("explicit enabled:false on a plain workspace rejected", e)
+	}
+}

@@ -67,9 +67,13 @@
       "id": "cell",
       "displayName": "Cell agent",
       "description": "An agent started in this cell's workspace container.",
-      "command": "/usr/local/bin/glovecell-acp-launch",
-      "args": [],
-      "installHint": "Not wired into cells yet: the cell launcher arrives with sessionHub.enabled (docs/session-hub.md)."
+      "command": "/usr/local/bin/agent-project-controller",
+      "args": [
+        "session-hub-connect",
+        "--agent",
+        "cell"
+      ],
+      "installHint": "Outside a session-hub cell there is no launcher; see docs/session-hub.md."
     }
   ]
 }

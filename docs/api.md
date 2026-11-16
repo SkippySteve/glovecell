@@ -55,6 +55,8 @@ Phase changes and new not-ready reasons are published as Kubernetes Events regar
 
 `spec.orchestratorClassName` selects a cluster-scoped `OrchestratorClass` (T3, Orca, a custom command client). It is immutable once set; empty means the deployment default. A missing or unsupported class blocks the workspace and grants nothing. See [orchestrator classes](orchestrators.md).
 
+`spec.sessionHub.enabled` gives the cell a shared session hub, so several operator apps can show and drive the same agent chat ([session hub](session-hub.md)). It is fixed when the workspace is created, and needs the installation's `sessionHub.enabled`. A workspace that asks for it on an installation with the switch off gets no worker rather than a worker without the hub.
+
 Normal Kubernetes deletion triggers the cleanup finalizer. The dashboard uses the terminal `Removed` desired state so history remains visible. Removed project data cannot be reopened through a state update.
 
 ## Extending providers

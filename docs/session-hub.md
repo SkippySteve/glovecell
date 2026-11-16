@@ -1,7 +1,8 @@
 # Session hub: shared agent sessions
 
-Status: the image is built and scanned in CI. No cell runs it yet: the cell
-wiring and the `sessionHub.enabled` chart value come in a later change.
+Status: the image is built and scanned in CI, and the controller can add the
+hub to cells. Both are off: the chart's `sessionHub.enabled` defaults to false,
+and only a workspace created with `spec.sessionHub.enabled` gets a hub.
 
 ## In plain words
 
@@ -11,14 +12,16 @@ wiring and the `sessionHub.enabled` chart value come in a later change.
 - **Change:** a cell can run one *session hub*. Every chat agent in the cell
   runs once, behind the hub, and each app connects to the hub, so a chat
   started in any app shows up in the others. You can type into it and answer
-  its permission prompts from any of them. This page covers the hub image.
-  Adding it to cells comes later.
+  its permission prompts from any of them. Connecting each app to the hub
+  (adapters) is a later change.
 - **Why this way:** the apps share no session format, but each can speak ACP,
   or can run a client that does. The hub uses AHP, which is built for several
   apps sharing one live session. The alternative was writing our own hub,
   which means owning event ordering, replay and permission races.
-- **Risk and undo:** the image alone changes nothing, because no workload uses
-  it. Remove the Dockerfile target and the CI matrix entry to undo.
+- **Risk and undo:** nothing changes until an operator turns on
+  `sessionHub.enabled` and creates a workspace with `spec.sessionHub.enabled`.
+  Existing workspaces never change. To undo, remove the hub workspaces and set
+  the value back to false.
 
 **Words.**
 - **ACP** ([Agent Client Protocol](https://agentclientprotocol.com/)): how an
@@ -85,7 +88,7 @@ To move the pin:
 | User | 1001:1001 (`hub`), not the workspace user 1000 |
 | Listener | `ws://127.0.0.1:8765/ahp` (inside the pod only) |
 | State | `/var/lib/session-hub/gateway.db`; mount a writable volume there and keep the root filesystem read-only |
-| Agents | One placeholder, `cell`, pointing at `/usr/local/bin/glovecell-acp-launch`, which isn't in the image. Upstream refuses to start with no agent enabled, and agents start only when a session is created, so opening one fails with a message that names this page. |
+| Agents | The image's own config has one placeholder, `cell`, which goes through the launcher. Outside a session-hub cell there is no launcher, so opening a session fails with a message that names this page. Upstream refuses to start with no agent enabled. In a cell, the controller's config replaces this one. |
 
 Checked locally before the first PR:
 - It starts with a read-only root, all capabilities dropped and
@@ -94,21 +97,76 @@ Checked locally before the first PR:
 - `createSession` for `cell` fails with the missing-launcher message.
 - Trivy reports no fixable HIGH or CRITICAL findings.
 
-## Cell wiring (next change, not in this image)
+## In a cell
 
-- **Hub container.** It runs in the cell's worker pod beside the workspace
-  container. It holds sessions only and never runs agents itself.
-- **Agents.** Each chat agent runs in the **workspace** container. That is
-  where the repository, proxy settings, CA trust and provider sign-ins already
-  are. The hub's `cell` agent is a small launcher that asks the workspace
-  container, over a unix socket, to start the agent and relay its standard
-  input and output.
-- **Access.** v0.2.2 listens only on TCP, and every container in a pod shares
-  loopback. So the wiring gives each cell a generated token and puts it in the
-  hub's config. Upstream reads the token only from that config file.
-  `listener.host` stays `127.0.0.1`, and no Service, Ingress or route exposes
-  the port.
-- **Before `sessionHub.enabled` is switched on**, a qualification run proves
-  that a process in the workspace container can't use the hub to answer its
-  own permission prompts. A unix-socket listener upstream would make that
-  boundary simpler; that is one of the features to contribute.
+An operator turns it on in the chart and then creates a workspace that asks
+for it:
+
+```yaml
+# values.yaml
+sessionHub:
+  enabled: true
+  image: registry.example.com/glovecell-session-hub@sha256:<digest>
+  agents:
+    - {id: cell-codex, displayName: Codex, command: /usr/local/bin/codex-acp}
+---
+# the workspace
+spec:
+  sessionHub: {enabled: true}
+```
+
+The chart refuses a tag instead of a digest, an empty agent list, a relative
+command and unknown fields. Agent ids may not reuse a gateway built-in
+(`claude`, `codex` and so on), because a built-in override would inherit its
+`npx` launcher. The workspace image ships no ACP adapters yet, so the agents
+listed must exist in the workspace image you run.
+
+The controller then adds two containers to that cell's worker, plus one Secret
+(`session-hub`) holding the cell's token, the gateway config and the
+allowlist:
+
+| Container | Image | User | Sees | Does |
+| --- | --- | --- | --- | --- |
+| `session-hub` | session-hub | 1001 | `gateway.json` (with the token), the launcher socket, its own state | Runs the gateway on `127.0.0.1:8765`. Never runs an agent: each agent is `agent-project-controller session-hub-connect --agent <id>`. No proxy settings, no ports, no workspace volume. |
+| `session-hub-launcher` | the workspace image | 1000 | the workspace's volumes and environment, `agents.json`, the launcher socket | `agent-project-controller session-hub-launcher`: on a request over the unix socket it starts that allowlisted agent in `/workspace/repo` and relays its standard input and output. |
+
+**Boundaries:**
+
+- **The token.** It stays in the hub container. Agents run in the launcher
+  container, which mounts only `agents.json`; the workspace container mounts
+  neither file nor the socket. Every container in a pod shares loopback, so
+  the token is what stops a process in the cell from driving the hub. Without
+  it, or with a wrong one, the gateway answers 401.
+- **The launcher.**
+  - Its socket is `0660`, reachable through the pod's fsGroup.
+  - It starts only allowlisted commands, with no shell, and re-reads the
+    allowlist on every request. A broken allowlist refuses every request.
+  - It runs at most 8 agents at once.
+  - If the hub side disconnects, the agent's whole process group is killed
+    after 5 seconds.
+- **Fixed at creation.** `spec.sessionHub` is fixed when the workspace is
+  created (CRD rule), so a running worker never gains or loses containers.
+- **Image updates.** Workspace and hub image promotions roll the hub
+  containers with the worker, the same way as the workspace image.
+- **The token itself.** It is generated once per cell and kept. If it is
+  overwritten with an invalid value, it is regenerated. Allowlist changes
+  update the Secret without a new token; the hub reads its config at start.
+
+Known limits:
+- Hub state is an `emptyDir`, so sessions don't survive a worker restart.
+- The launcher uses the workspace's resource profile.
+- No operator app is connected yet; adapters come next.
+
+Before production use, a qualification run in a disposable cell must show
+that a process in the workspace or launcher container can't use the hub to
+answer its own permission prompts. A unix-socket listener upstream would
+remove the shared-loopback question altogether, and it is one of the features
+to contribute.
+
+Checked locally:
+- The hub as 1001 (with the fsGroup) and the launcher as 1000 ran in separate
+  read-only containers with all capabilities dropped, sharing only the socket
+  volume.
+- AHP clients with no token or a wrong token got 401.
+- With the token, `createSession` started the allowlisted agent through
+  `session-hub-connect` and the launcher.
