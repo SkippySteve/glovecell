@@ -99,6 +99,8 @@ Checked locally before the first PR:
 
 ## In a cell
 
+![A cell with a session hub: the workspace, hub and launcher containers, the shared loopback and the shared /workspace volume, and who holds the hub token](images/session-hub-cell.svg)
+
 An operator turns it on in the chart and then creates a workspace that asks
 for it:
 
@@ -192,6 +194,8 @@ allowlist:
   update the Secret without a new token; the hub reads its config at start.
 
 ## Trust model: a cell is one trust zone
+
+![Two ways to the hub token: an agent in the workspace container reads it directly (A), or a hub agent plants a file on the shared volume that the workspace container later runs (B)](images/session-hub-trust.svg)
 
 The session hub shares chats between apps. It is not a security boundary
 inside the cell, and it does not try to be one.

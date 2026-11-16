@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 560" font-family="system-ui,-apple-system,Segoe UI,sans-serif" role="img" aria-labelledby="title desc">
+  <title id="title">A Glovecell cell with a session hub</title>
+  <desc id="desc">One pod with three containers: workspace (apps, holds the hub token), hub (gateway, checks the token) and launcher (the hub's agents, no token). They share the pod's loopback network and the read-write /workspace volume.</desc>
+  <style>
+    .box{fill:#fafafa;stroke:#d4d4d4;stroke-width:1.5}
+    .pod{fill:none;stroke:#888;stroke-width:1.5;stroke-dasharray:6 4}
+    .t{fill:#171717;font-size:13px}
+    .ts{fill:#5f5f5f;font-size:11.5px}
+    .th{fill:#171717;font-size:14px;font-weight:600}
+    .key{fill:none;stroke:#2563eb;stroke-width:1.5}
+    .keytext{fill:#2563eb;font-size:12px;font-weight:600}
+    .shared{fill:#f1f1f1;stroke:#d4d4d4;stroke-width:1.5}
+    .ln{stroke:#888;stroke-width:1.5;fill:none}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+    .warn{fill:#dc2626;font-size:13px;font-weight:600}
+  </style>
+  <rect x="0" y="0" width="900" height="560" fill="#ffffff"/>
+  <text class="th" x="20" y="26">A cell with a session hub (one pod)</text>
+  <rect class="pod" x="10" y="40" width="880" height="470" rx="14"/>
+  <text class="ts" x="26" y="62">Pod "project" in the cell's namespace · every container runs under the sandbox runtime · egress only through the cell's proxy</text>
+
+  <rect class="box" x="30" y="80" width="300" height="260" rx="10"/>
+  <text class="th" x="46" y="106">workspace container</text>
+  <text class="ts" x="46" y="124">user 1000 · the operator apps live here</text>
+  <text class="t" x="46" y="150">• T3 server, Orca runtime, Agent Orchestrator</text>
+  <text class="t" x="58" y="168">daemon or herdr-core (one per cell class)</text>
+  <text class="t" x="46" y="192">• each app's hub connector</text>
+  <text class="t mono" x="58" y="210">session-hub-acp</text>
+  <text class="t" x="46" y="234">• agents the apps start themselves:</text>
+  <text class="t" x="58" y="252">an app's own Codex, terminal agents, shells</text>
+  <rect class="key" x="46" y="270" width="268" height="52" rx="6"/>
+  <text class="keytext mono" x="58" y="290">/run/session-hub-client/token</text>
+  <text class="ts" x="58" y="310">+ agents.json · read-only · any user-1000 process</text>
+
+  <rect class="box" x="370" y="80" width="220" height="190" rx="10"/>
+  <text class="th" x="386" y="106">hub container</text>
+  <text class="ts" x="386" y="124">user 1001</text>
+  <text class="t" x="386" y="150">AHP-ACP Gateway</text>
+  <text class="t" x="386" y="168">keeps the shared chats</text>
+  <text class="t" x="386" y="186">listens on 127.0.0.1:8765</text>
+  <rect class="key" x="386" y="206" width="190" height="46" rx="6"/>
+  <text class="keytext" x="398" y="226">gateway.json (token)</text>
+  <text class="ts" x="398" y="243">checks it on every connection</text>
+
+  <rect class="box" x="630" y="80" width="240" height="190" rx="10"/>
+  <text class="th" x="646" y="106">launcher container</text>
+  <text class="ts" x="646" y="124">user 1000 · workspace image</text>
+  <text class="t" x="646" y="150">the hub's agents run here</text>
+  <text class="t" x="646" y="168">(codex-acp; claude-acp if added)</text>
+  <text class="t" x="646" y="194">sees the allowlist only</text>
+  <text class="warn" x="646" y="220">no token mounted</text>
+
+  <rect class="shared" x="370" y="300" width="500" height="54" rx="10"/>
+  <text class="th" x="386" y="324">shared loopback (the pod's network namespace)</text>
+  <text class="ts" x="386" y="342">every container can open 127.0.0.1:8765 · the token is the only gate</text>
+
+  <rect class="shared" x="30" y="374" width="840" height="122" rx="10"/>
+  <text class="th" x="46" y="400">/workspace volume (the cell's disk) · read-write in workspace AND launcher, as user 1000</text>
+  <text class="t" x="46" y="426"><tspan class="mono">/workspace/repo</tspan> — the project, including <tspan class="mono">.git/config</tspan> and <tspan class="mono">.git/hooks</tspan></text>
+  <text class="t" x="46" y="448"><tspan class="mono">/workspace/home</tspan> — HOME: shell start-up files, <tspan class="mono">~/.local/bin</tspan>, app configuration</text>
+  <text class="ts" x="46" y="476">What one container writes here, the other can read or run.</text>
+
+  <path class="ln" d="M330 200 C350 200 352 327 370 327"/>
+  <path class="ln" d="M480 270 L480 300"/>
+  <path class="ln" d="M750 270 L750 300"/>
+  <path class="ln" d="M180 340 L180 374"/>
+  <path class="ln" d="M750 354 L750 374"/>
+
+  <rect x="30" y="526" width="12" height="12" fill="none" stroke="#2563eb" stroke-width="1.5"/>
+  <text class="ts" x="48" y="537">holds the hub token</text>
+  <rect x="190" y="526" width="12" height="12" class="shared"/>
+  <text class="ts" x="208" y="537">shared by more than one container</text>
+</svg>
