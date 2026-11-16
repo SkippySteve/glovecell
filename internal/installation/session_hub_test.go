@@ -38,6 +38,17 @@ func TestHelmSessionHub(t *testing.T) {
 			t.Fatalf("missing %s", want)
 		}
 	}
+	if bytes.Contains(out, []byte("SESSION_HUB_LAUNCHER_IMAGE")) {
+		t.Fatal("launcher image set without a value")
+	}
+	launcher := "registry.example.com/launcher@sha256:" + strings.Repeat("e", 64)
+	out, err = renderGloveHub(t, func(v map[string]any) {
+		base(v)
+		v["sessionHub"] = map[string]any{"enabled": true, "image": hub, "agents": agents, "launcherImage": launcher}
+	})
+	if err != nil || !bytes.Contains(out, []byte(`SESSION_HUB_LAUNCHER_IMAGE: "`+launcher+`"`)) {
+		t.Fatalf("launcher image render: %v", err)
+	}
 
 	refused := map[string]func(v map[string]any){
 		"tag image": func(v map[string]any) {
@@ -51,6 +62,9 @@ func TestHelmSessionHub(t *testing.T) {
 		},
 		"unknown field": func(v map[string]any) {
 			v["sessionHub"] = map[string]any{"enabled": true, "image": hub, "agents": []map[string]any{{"id": "a", "displayName": "A", "command": "/bin/a", "shell": true}}}
+		},
+		"tag launcher image": func(v map[string]any) {
+			v["sessionHub"] = map[string]any{"enabled": true, "image": hub, "agents": agents, "launcherImage": "registry.example.com/launcher:latest"}
 		},
 		"config override": func(v map[string]any) {
 			v["config"].(map[string]any)["SESSION_HUB_ENABLED"] = "true"

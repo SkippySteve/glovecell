@@ -760,6 +760,7 @@
       "properties": {
         "enabled": {"type": "boolean"},
         "image": {"type": "string"},
+        "launcherImage": {"type": "string"},
         "agents": {
           "type": "array",
           "maxItems": 16,

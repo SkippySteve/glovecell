@@ -35,6 +35,15 @@ const (
 
 var errSessionHubOff = errors.New("spec.sessionHub.enabled needs the installation's sessionHub.enabled; this installation has it off")
 
+// sessionHubLauncherImage is the launcher's image: the override, or
+// Glovecell's workspace image.
+func (c Config) sessionHubLauncherImage() string {
+	if c.SessionHubLauncherImage != "" {
+		return c.SessionHubLauncherImage
+	}
+	return c.Image
+}
+
 // validateSessionHub checks the installation's switch, image and allowlist.
 func validateSessionHub(enabled bool, image string, agents []sessionhub.Agent) error {
 	if !enabled {

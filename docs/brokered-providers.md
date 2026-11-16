@@ -56,7 +56,12 @@ controller ---> per opted-in project, in its own namespace:
   refresh material or expires within a minute becomes `{"enabled": false}`.
 - **Worker launchers.** `grok`, `cursor-agent`, `codex` and `claude` in the
   worker image read the projected `provider-access` (see
-  [provider launchers](provider-launchers.md)).
+  [provider launchers](provider-launchers.md)). Glovecell's published images
+  carry no Claude Code; `apc-provider` runs it when a deployment's own image
+  puts it at `/opt/claude/claude` and links `claude` to `apc-provider`. It
+  passes only the cell's stand-in token (`CLAUDE_CODE_OAUTH_TOKEN`), refuses
+  any other token, clears `ANTHROPIC_*` endpoint and key variables, and turns
+  off the updater and non-essential traffic.
   They refuse sign-in, updates, credential overrides and alternate endpoints.
 - **Project proxy.** A request to a provider host is admitted only when the
   provider is in `brokered-providers`, its grant is enabled and valid for over a
