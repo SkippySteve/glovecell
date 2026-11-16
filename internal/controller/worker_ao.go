@@ -169,3 +169,11 @@ func (c Config) validateAgentOrchestrator() error {
 	}
 	return nil
 }
+
+// AgentOrchestratorUnpromoted reports whether image is the deployment's pin
+// placeholder (<repository>:unpromoted) that CI replaces with the first
+// digest. The controller then keeps AO off instead of refusing to start.
+func AgentOrchestratorUnpromoted(image string) bool {
+	image = strings.TrimSpace(image)
+	return strings.HasSuffix(image, ":unpromoted") && !strings.Contains(image, "@")
+}

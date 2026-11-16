@@ -528,6 +528,13 @@ func run(ctx context.Context) error {
 		return errors.New("AGENT_ORCHESTRATOR_ENABLED must be true or false")
 	}
 	agentOrchestrator := os.Getenv("AGENT_ORCHESTRATOR_ENABLED") == "true"
+	if agentOrchestrator && controller.AgentOrchestratorUnpromoted(os.Getenv("AGENT_ORCHESTRATOR_IMAGE")) {
+		// A deployment may switch AO on before CI has promoted the first
+		// ao-workspace digest (pin placeholder ":unpromoted"). AO stays off,
+		// so workspaces of its class are refused, until a digest arrives.
+		slog.Warn("AGENT_ORCHESTRATOR_ENABLED=true but AGENT_ORCHESTRATOR_IMAGE is the :unpromoted placeholder; Agent Orchestrator stays off until a digest is promoted")
+		agentOrchestrator = false
+	}
 	floors, e := platformFloorsFromEnv()
 	if e != nil {
 		return e

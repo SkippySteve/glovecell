@@ -106,6 +106,10 @@ and the build fails if AO's patched Claude adapter changes.
 4. Create a disposable workspace with `spec.orchestratorClassName: ao`. When
    it is Ready, mint a code and add the cell on the PC and the phone.
 
+While `image` is still a `<repository>:unpromoted` placeholder (a deployment
+switched on before CI promoted the first digest), the controller logs a
+warning and keeps AO off; workspaces of the class are refused until then.
+
 Switch off with `agentOrchestrator.enabled=false`: the class and its adapter
 go away, so workspaces of the class are refused and suspended like any
 refused class. Their volumes, and the daemon state on them, stay. Removing

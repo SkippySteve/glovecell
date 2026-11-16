@@ -111,3 +111,16 @@ func TestAgentOrchestratorConfigValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestAgentOrchestratorUnpromotedPlaceholder(t *testing.T) {
+	for image, want := range map[string]bool{
+		"registry.example.com/image-publisher/glovecell-ao-workspace:unpromoted": true,
+		aoTestImage:                      false,
+		"registry.example.com/ao:latest": false,
+		"":                               false,
+	} {
+		if got := AgentOrchestratorUnpromoted(image); got != want {
+			t.Fatalf("%q: got %v", image, got)
+		}
+	}
+}
