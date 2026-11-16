@@ -127,18 +127,37 @@ func TestSessionHubCellBoundaries(t *testing.T) {
 		}
 	}
 	// Only the hub sees the token; the launcher (where agents run) sees the
-	// allowlist only; the workspace sees neither, nor the socket.
+	// allowlist only; the workspace (operator apps) gets the client volume
+	// (token and allowlist) but not the hub config, launcher allowlist or socket.
 	if m := mounts(hub); !m["session-hub-config"] || m["session-hub-agents"] || m["workspace"] {
 		t.Fatalf("hub mounts %v", m)
 	}
 	if m := mounts(launcher); m["session-hub-config"] || !m["session-hub-agents"] || !m["session-hub-run"] || !m["workspace"] {
 		t.Fatalf("launcher mounts %v", m)
 	}
-	if m := mounts(workspace); m["session-hub-config"] || m["session-hub-agents"] || m["session-hub-run"] {
+	if m := mounts(workspace); m["session-hub-config"] || m["session-hub-agents"] || m["session-hub-run"] || !m["session-hub-client"] {
 		t.Fatalf("workspace mounts %v", m)
+	}
+	// The apps' connector reads the token in the workspace container; the
+	// launcher (agents) and the hub never mount the client volume.
+	for _, c := range []*corev1.Container{hub, launcher} {
+		if mounts(c)["session-hub-client"] {
+			t.Fatalf("%s mounts the client token", c.Name)
+		}
+	}
+	for _, v := range workspace.VolumeMounts {
+		if v.Name == "session-hub-client" && (v.MountPath != SessionHubClientDir || !v.ReadOnly) {
+			t.Fatalf("client mount %+v", v)
+		}
 	}
 	for _, v := range spec.Volumes {
 		if v.Secret != nil && v.Secret.SecretName == sessionHubSecret {
+			if v.Name == "session-hub-client" {
+				if len(v.Secret.Items) != 2 || v.Secret.Items[0].Key != "token" || v.Secret.Items[1].Key != "agents.json" {
+					t.Fatalf("client volume projects %v", v.Secret.Items)
+				}
+				continue
+			}
 			if len(v.Secret.Items) != 1 || v.Secret.Items[0].Key == "token" {
 				t.Fatalf("volume %s projects %v", v.Name, v.Secret.Items)
 			}

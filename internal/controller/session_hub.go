@@ -21,6 +21,12 @@ import (
 //   - session-hub: AHP-ACP Gateway, user 1001, loopback listener with the
 //     cell's token. It reads gateway.json from the cell's Secret and never
 //     runs an agent itself.
+//
+// The workspace container, where operator apps (T3, Orca, Agent Orchestrator,
+// Herdr) run, gets the token and allowlist under /run/session-hub-client, so
+// their hub connector (session-hub-acp) can join the hub. The launcher, where
+// the hub's agents run, never gets the token.
+//
 //   - session-hub-launcher: Glovecell's workspace image (whatever the cell's
 //     orchestrator class) with the workspace's mounts and environment. That
 //     image carries the ACP adapters and the brokered provider launchers. It
@@ -32,6 +38,10 @@ const (
 	sessionHubLauncher  = "session-hub-launcher"
 	sessionHubHubUser   = 1001
 )
+
+// SessionHubClientDir holds the hub token and allowlist in the workspace
+// container of a session-hub cell (docs/session-hub.md).
+const SessionHubClientDir = "/run/session-hub-client"
 
 var errSessionHubOff = errors.New("spec.sessionHub.enabled needs the installation's sessionHub.enabled; this installation has it off")
 
@@ -143,4 +153,16 @@ func addSessionHub(spec *corev1.PodSpec, hubImage, launcherImage string, workspa
 		),
 	}
 	spec.Containers = append(spec.Containers, hub, launcher)
+	// Added after the launcher copied the workspace mounts, so it stays
+	// token-free.
+	spec.Volumes = append(spec.Volumes, corev1.Volume{Name: "session-hub-client", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+		SecretName: sessionHubSecret, DefaultMode: int32p(0440),
+		Items: []corev1.KeyToPath{{Key: "token", Path: "token"}, {Key: "agents.json", Path: "agents.json"}},
+	}}})
+	for i := range spec.Containers {
+		if spec.Containers[i].Name == workspace.Name {
+			spec.Containers[i].VolumeMounts = append(spec.Containers[i].VolumeMounts,
+				corev1.VolumeMount{Name: "session-hub-client", MountPath: SessionHubClientDir, ReadOnly: true})
+		}
+	}
 }
