@@ -552,6 +552,7 @@ sessionHub:
   # not reuse a gateway built-in (claude, codex, ...); use e.g. cell-codex.
   # The workspace image ships /usr/local/bin/codex-acp (brokered Codex), e.g.
   # [{id: cell-codex, displayName: Codex, command: /usr/local/bin/codex-acp}]
+  # In Orca cells, Orca's "OMP" chat agent connects to the first entry.
   agents: []
 # ProviderClass and ForgeClass (docs/classes.md). The chart generates the
 # defaults from the settings above, so an upgrade changes nothing: a ForgeClass

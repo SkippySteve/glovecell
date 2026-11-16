@@ -227,6 +227,50 @@ T3 lists the hub's sessions under that provider and can import one started in
 another app as a thread. Writing this into T3's settings in hub cells, and
 mounting the token into the workspace container, is a separate change.
 
+**Orca** (1.4) runs a fixed list of ACP chat agents and has no user-defined
+ones yet ([orca#38083](https://github.com/stablyai/orca/issues/38083)). So in
+an Orca cell (`orchestratorClassName: orca`) that has the hub, Glovecell
+borrows one of them, **OMP**, which the workspace images don't ship. At start
+the worker writes `~/.local/bin/omp`, a folder Orca searches for agent
+programs. At each chat start that small script reads the cell's allowlist,
+`/run/session-hub-client/agents.json` in the workspace container, and runs
+`session-hub-acp --agent <id>` for its **first** agent. Orca then lists "OMP"
+as a chat agent in the desktop and mobile apps, and each OMP chat is a hub
+session. Without that file, `omp --version` fails too, so Orca offers no OMP
+chat. Because the script reads the file, changing `sessionHub.agents` doesn't
+change the worker's command or restart it.
+
+- **How Orca calls it:** Orca starts an OMP chat as `omp acp` (plus
+  `--plugin-dir` for its visuals skill) and first asks `omp --version`.
+  The script answers `17.0.5`, the oldest OMP that Orca 1.4 accepts, and drops
+  Orca's arguments.
+- **What it refuses:** Orca lists OMP's models by opening a throwaway session
+  with `--session-dir`. The script refuses that, so listing models never
+  creates a hub session. Orca shows no model list, and the hub agent uses its
+  own default. Any other use, such as typing `omp` in a terminal, is refused
+  with a note.
+- **What it leaves alone:** an `omp` that isn't Glovecell's script. Other
+  cells' workers start exactly as before. If the script can't be written,
+  Orca starts without it.
+
+What Orca 1.4.237 does with a hub session (checked against its source and a
+local `orcad` with a stand-in connector):
+- **Session list:** Orca never calls `session/list`. Its chat list holds only
+  the chats it started, so it can't open a session started in another app.
+  The other apps can open Orca's chats.
+- **Reopening:** Orca reopens its own chat with `session/load`, but keeps its
+  own copy of the conversation and drops the replay. Turns other apps sent
+  while that chat was closed don't appear in Orca.
+- **Live turns from other apps:** their replies and tool calls appear in the
+  open chat, outside any turn. The other app's prompt itself isn't shown,
+  because Orca ignores live user messages.
+- **Permission questions from other apps' turns:** Orca answers `cancelled` at
+  once, because nobody in Orca is waiting on that turn. The connector currently
+  sends any answer other than a selected option to the hub as a refusal, so
+  while an Orca chat is open, it refuses those questions before the other app
+  can answer. Fix this in the connector before using Orca together with other
+  apps on one session.
+
 Checked locally, against the gateway, launcher and a fake ACP agent in
 separate containers:
 - **Two connectors on one session.** One created a session and prompted; the
@@ -238,7 +282,9 @@ separate containers:
 Known limits:
 - Hub state is an `emptyDir`, so sessions don't survive a worker restart.
 - The launcher uses the workspace's resource profile.
-- No operator app is connected yet; adapters come next.
+- Only Orca (OMP slot, above) is wired in a cell; the other apps come next.
+- Orca's chats start the agent in `/workspace/repo` (the launcher's
+  directory), even when the chat belongs to another worktree.
 - Codex sessions need a live Codex grant, so the adapter is checked locally only
   as far as the ACP handshake; a full session is part of the qualification run.
 
