@@ -30,6 +30,7 @@ panes. Nothing runs on the operator's machines except the Herdr apps
 | `agent-project-controller herdr-via <workspace>` | Always available | Hub `--via` pipe: exec a fixed `herdr-core connect` in the worker |
 | ConfigMap `herdr-machine-<uid>` | When Ensure runs | Operator-readable via recipe |
 | Chart `gloveHub` (image `glovecell-glove-hub`) | `enabled: false` | In-cluster hub: sshd + herdr-core + enroller |
+| `agent-project-controller session-hub-herdr` / `session-hub-chat` | Only in `herdr` cells with `spec.sessionHub` | One herdr-core terminal per session-hub chat, so chats from the other apps show up in Herdr ([session hub](session-hub.md#herdr)) |
 
 ### glove-hub
 
