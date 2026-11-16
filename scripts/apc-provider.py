@@ -17,7 +17,16 @@ import time
 
 GRANTS = Path('/run/model/provider-access')
 BINARIES = {'grok': '/opt/grok/grok', 'cursor': '/opt/cursor-agent/cursor-agent',
-            'muse': '/opt/muse/muse'}
+            'muse': '/opt/muse/muse', 'claude': '/opt/claude/claude'}
+# Claude Code is not part of Glovecell's published images (Anthropic's terms).
+# A deployment that installs it at /opt/claude/claude in its own image gets it
+# brokered here; the worker only ever holds the cell's stand-in token, which
+# the project proxy swaps for the subscription token (docs/brokered-providers.md).
+CLAUDE_CELL_TOKEN_PREFIX = 'sk-ant-oat01-apc-cell-'
+CLAUDE_ENV_DENIED = ('ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL',
+                     'ANTHROPIC_BEDROCK_BASE_URL', 'ANTHROPIC_VERTEX_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS',
+                     'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_OAUTH_TOKEN',
+                     'CLAUDE_CONFIG_DIR')
 
 
 def validate(value, now=None):
@@ -77,11 +86,25 @@ def enrolled_directory(directory, root=Path('/workspace/repo'), registry=Path('/
 
 
 def arguments_allowed(arguments):
-    if arguments and arguments[0] in {'login', 'logout', 'auth', 'update', 'worker', 'cursor-worker'}:
+    if arguments and arguments[0] in {'login', 'logout', 'auth', 'update', 'worker', 'cursor-worker',
+                                      'setup-token', 'install', 'migrate-installer'}:
         raise ValueError('account authorization and client updates belong to the trusted backend')
     forbidden = {'--api-key', '--api-key-stdin', '--auth-token', '--endpoint', '-e', '--base-url', '--insecure', '-k'}
     if any(argument.split('=', 1)[0] in forbidden for argument in arguments):
         raise ValueError('provider credential or endpoint overrides are denied')
+
+
+def claude_environment(access, home, env):
+    """Claude Code with the cell's stand-in token only: no API key, no other
+    endpoint, no updater. The proxy refuses a grant without a cell token, and
+    this refuses one too, so a real subscription token never reaches Claude."""
+    token = access['accessToken']
+    if not token.startswith(CLAUDE_CELL_TOKEN_PREFIX):
+        raise ValueError('Claude needs the cell stand-in token; the subscription token stays at the proxy')
+    for key in CLAUDE_ENV_DENIED:
+        env.pop(key, None)
+    return {'CLAUDE_CODE_OAUTH_TOKEN': token, 'CLAUDE_CONFIG_DIR': str(home / '.claude'),
+            'DISABLE_AUTOUPDATER': '1', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC': '1'}
 
 
 def main():
@@ -101,6 +124,8 @@ def main():
     if provider not in BINARIES:
         raise ValueError('unsupported provider')
     binary = BINARIES[provider]
+    if not Path(binary).is_file():
+        raise ValueError(f'{name} is not installed in this image')
     if arguments in [['--version'], ['-V'], ['--help'], ['-h']]:
         os.execv(binary, [binary, *arguments])
     if os.getuid() != 1000 or Path('/var/run/secrets/kubernetes.io/serviceaccount/token').exists():
@@ -136,6 +161,8 @@ def main():
         existing.setdefault('network', {})['useHttp1ForAgent'] = True
         settings.write_text(json.dumps(existing))
         env['CURSOR_AUTH_TOKEN'] = access['accessToken']
+    elif provider == 'claude':
+        env.update(claude_environment(access, home, env))
     else:
         # The non-secret placeholder is accepted only by the inspecting gateway,
         # which injects the subscription credential obtained by official sign-in.

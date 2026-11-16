@@ -218,6 +218,34 @@ func TestSessionHubImagesRoll(t *testing.T) {
 	}
 }
 
+// A deployment's own launcher image (for example with Claude Code added)
+// replaces the workspace image for the launcher only, and rolls like it.
+func TestSessionHubLauncherImageOverride(t *testing.T) {
+	ctx := context.Background()
+	r, w, _ := fixture(t)
+	hubOn(r, w)
+	own := "example.com/private-launcher@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+	r.Config.SessionHubLauncherImage = own
+	if err := r.ensure(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	spec := workerPodSpec(t, r, namespace(w))
+	if container(spec, sessionHubLauncher).Image != own || container(spec, "workspace").Image == own {
+		t.Fatalf("launcher %s workspace %s", container(spec, sessionHubLauncher).Image, container(spec, "workspace").Image)
+	}
+	next := "example.com/private-launcher@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+	r.Config.SessionHubLauncherImage = next
+	if err := r.ensure(ctx, w); err == nil || !strings.Contains(err.Error(), "being updated") {
+		t.Fatalf("launcher image roll: %v", err)
+	}
+	if err := r.ensure(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	if got := container(workerPodSpec(t, r, namespace(w)), sessionHubLauncher).Image; got != next {
+		t.Fatalf("launcher did not roll: %s", got)
+	}
+}
+
 func TestValidateSessionHub(t *testing.T) {
 	if err := validateSessionHub(false, "", nil); err != nil {
 		t.Fatal(err)

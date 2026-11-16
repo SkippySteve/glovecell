@@ -171,6 +171,10 @@ type Config struct {
 	SessionHubEnabled bool
 	SessionHubImage   string
 	SessionHubAgents  []sessionhub.Agent
+	// SessionHubLauncherImage overrides the launcher's image (default: Image,
+	// Glovecell's workspace image). A deployment uses it for its own image
+	// built on the workspace image, for example with Claude Code added.
+	SessionHubLauncherImage string
 }
 
 func (c Config) Validate() error {
@@ -1207,7 +1211,7 @@ func (r *Reconciler) replaceWorkspaceImage(ctx context.Context, w *api.ProjectWo
 			case "clone":
 				container["image"] = r.Config.Image
 			case sessionHubLauncher:
-				container["image"] = r.Config.Image
+				container["image"] = r.Config.sessionHubLauncherImage()
 			case sessionHubContainer:
 				container["image"] = r.Config.SessionHubImage
 			case "workspace":
@@ -1847,7 +1851,7 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 			return e
 		}
 		objects = append(objects, hubSecret)
-		addSessionHub(&spec, r.Config.SessionHubImage, r.Config.Image, spec.Containers[0], env, security)
+		addSessionHub(&spec, r.Config.SessionHubImage, r.Config.sessionHubLauncherImage(), spec.Containers[0], env, security)
 	}
 	r.Config.WorkerScheduling.Apply(&spec)
 	b, e := json.Marshal(spec)

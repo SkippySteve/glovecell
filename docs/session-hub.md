@@ -141,8 +141,23 @@ with the image's Codex.
 No Claude adapter ships in this image. `claude-agent-acp` runs Anthropic's
 Claude Agent SDK and Claude Code, which are under Anthropic's own terms, not
 an open-source licence. Glovecell's images are published, so a deployment
-that wants Claude over ACP adds it to its own private image. Set
-`CLAUDE_CODE_EXECUTABLE` to its brokered `claude` launcher.
+that wants Claude over ACP builds its own launcher image:
+
+1. `FROM` the workspace image at the digest the deployment runs.
+2. Install Claude Code at `/opt/claude/claude`, pinned by checksum, and link
+   `/usr/local/bin/claude` to `apc-provider`. The workspace's provider launcher
+   then runs it brokered: only with the cell's stand-in token
+   (`sk-ant-oat01-apc-cell-…`; it refuses any other token), with no API key or
+   other endpoint, and with updates and sign-in commands refused
+   ([brokered providers](brokered-providers.md)).
+3. Install `@agentclientprotocol/claude-agent-acp` from a lockfile without
+   optional packages, so the SDK's bundled Claude binaries are left out. Add a
+   wrapper that sets `CLAUDE_CODE_EXECUTABLE=/usr/local/bin/claude`.
+4. Set `sessionHub.launcherImage` to that image's digest, and allowlist the
+   wrapper, for example `{id: cell-claude, displayName: Claude, command: /usr/local/bin/claude-acp}`.
+
+The workspace container and the hub keep their own images; only the launcher
+runs the deployment's image.
 
 The controller then adds two containers to that cell's worker, plus one Secret
 (`session-hub`) holding the cell's token, the gateway config and the

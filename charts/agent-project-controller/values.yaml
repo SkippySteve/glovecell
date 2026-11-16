@@ -544,6 +544,10 @@ sessionHub:
   enabled: false
   # Digest-pinned image from the Dockerfile's session-hub target.
   image: ''
+  # Optional digest-pinned image for the launcher (where agents run). Empty
+  # uses workspaceImage. Set it to your own image built FROM the workspace
+  # image, for example one that adds Claude Code (docs/session-hub.md).
+  launcherImage: ''
   # ACP agents the launcher may start: absolute command, no shell. Ids must
   # not reuse a gateway built-in (claude, codex, ...); use e.g. cell-codex.
   # The workspace image ships /usr/local/bin/codex-acp (brokered Codex), e.g.
