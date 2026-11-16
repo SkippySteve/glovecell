@@ -49,10 +49,16 @@ const (
 // only way in is a one-time pairing code minted through the console. The
 // pairing code that `remote-host enable` prints is discarded, never logged.
 func WorkerCommand() []string {
+	return workerCommand("")
+}
+
+// workerCommand is WorkerCommand with prelude (complete lines) run after the
+// environment is set and before the daemon starts.
+func workerCommand(prelude string) []string {
 	return []string{"/bin/sh", "-c", fmt.Sprintf(`set -e
 mkdir -p %[1]s %[2]s
 export HOME=%[2]s AO_DATA_DIR=%[1]s AO_PORT=%[3]d
-AO=%[4]s
+%[6]sAO=%[4]s
 if [ ! -x "$AO" ]; then
   echo "agent-orchestrator missing from workspace image" >&2
   exit 1
@@ -72,7 +78,7 @@ done
 "$AO" remote-host enable >/dev/null
 "$AO" remote-host require-device-credentials on >/dev/null
 echo "agent-orchestrator remote listener ready on :%[5]d"
-wait "$pid"`, DataDir, Home, LoopbackPort, Binary, RemotePort)}
+wait "$pid"`, DataDir, Home, LoopbackPort, Binary, RemotePort, prelude)}
 }
 
 // Env is added to the worker's environment so `kubectl exec` and agent

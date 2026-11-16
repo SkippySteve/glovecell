@@ -253,7 +253,9 @@ CMD ["controller"]
 # fixes available (MCP SDK, body-parser, fast-uri, proxy-addr, qs), so the
 # reviewed lockfile in third_party/agent-orchestrator raises only those; the
 # build fails if AO's patched Claude adapter changes. Drop the lockfile once
-# an AO release ships the fixed versions.
+# an AO release ships the fixed versions. When AO_VERSION moves, also re-check
+# the session hub slots' Chat launch arguments
+# (internal/agentorchestrator/sessionhub.go, config/agent-orchestrator/).
 FROM ${NODE_IMAGE} AS ao-release
 ARG AO_VERSION=0.15.2
 ARG AO_DEB_SHA256=88666d4e58b7536b1bc387158b5cd34e4c1030ff3674a1f010763cdcc3980b0c
@@ -281,4 +283,10 @@ RUN before="$(find node_modules/@agentclientprotocol -type f -exec sha256sum {} 
 # Kept out of the shared workspace image so other cells stay smaller.
 FROM workspace AS ao-workspace
 COPY --from=ao-release /opt/ao /opt/ao
+# Session hub slots (docs/agent-orchestrator.md, "Session hub"): one script
+# per AO Chat harness that can carry a hub agent. Real files, not links, so
+# the script finds its slot from its own directory however AO resolves it.
+# Used only in hub cells: the worker maps slots from the hub allowlist.
+COPY --chmod=0755 config/agent-orchestrator/session-hub-slot.sh /opt/ao/session-hub/droid/droid
+COPY --chmod=0755 config/agent-orchestrator/session-hub-slot.sh /opt/ao/session-hub/dsh/dsh
 RUN /opt/ao/resources/daemon/ao version

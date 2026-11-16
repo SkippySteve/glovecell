@@ -337,11 +337,15 @@ local `orcad` with a stand-in connector):
   open chat, outside any turn. The other app's prompt itself isn't shown,
   because Orca ignores live user messages.
 - **Permission questions from other apps' turns:** Orca answers `cancelled` at
-  once, because nobody in Orca is waiting on that turn. The connector currently
-  sends any answer other than a selected option to the hub as a refusal, so
-  while an Orca chat is open, it refuses those questions before the other app
-  can answer. Fix this in the connector before using Orca together with other
-  apps on one session.
+  once, because nobody in Orca is waiting on that turn. The connector treats
+  `cancelled` as "no answer", so the question stays open for the app whose
+  turn it is.
+
+**Agent Orchestrator** (0.15) has no setting for a custom chat agent. In AO
+hub cells, its built-in Droid and DeepSeek Harness entries open the first and
+second agent of `sessionHub.agents`. AO shows chats started there to the
+other apps, but it lists only the sessions it created itself
+([details and limits](agent-orchestrator.md#session-hub)).
 
 Checked locally, against the gateway, launcher and a fake ACP agent in
 separate containers:

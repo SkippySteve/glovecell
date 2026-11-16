@@ -76,6 +76,7 @@ every device token with it.
 | `agentOrchestrator.domain` + `gateway` | empty | Per-cell Service, HTTPRoute `<workspace>.<domain>` and an ingress policy for Traefik on port 3011 |
 | ConfigMap `ao-host-<uid>` | When the cell is Ready | Operator-readable device address |
 | `POST /api/v1/workspaces/{name}/ao-pairing` | Off without a domain | One-time pairing codes |
+| Session hub slots (`/opt/ao/session-hub`) | Only in AO cells created with `spec.sessionHub.enabled` | Lend AO Chat harnesses to the hub's agents ([Session hub](#session-hub)) |
 
 The image keeps AO's release layout because the daemon finds its bundled tmux
 relative to its own path. AO's chat runtime (`@agentclientprotocol/claude-agent-acp`
@@ -115,6 +116,87 @@ go away, so workspaces of the class are refused and suspended like any
 refused class. Their volumes, and the daemon state on them, stay. Removing
 such a workspace waits until the class is back (docs/orchestrators.md, "Life
 cycle and removal"), so remove AO workspaces before switching off.
+
+## Session hub
+
+In a cell with a [session hub](session-hub.md), AO's Chat view can open the
+hub's agents, so a chat started in AO also appears in the other apps attached
+to the cell (T3 Code, Orca, Herdr).
+
+**In plain words.**
+- **Now:** AO runs chat agents itself, and nothing else can see those chats.
+  AO 0.15 has no setting for adding your own chat agent: its Chat mode only
+  offers a fixed list of built-in harnesses (Claude Code, Codex, Droid,
+  DeepSeek Harness and others), and starts each from the program it finds on
+  `PATH`.
+- **Change:** in an AO cell created with `spec.sessionHub.enabled`, two of
+  those built-in harnesses (*slots*) are lent to the hub's agents, in the
+  order of the installation's `sessionHub.agents`: AO's **Droid** entry opens
+  the first hub agent, **DeepSeek Harness** the second. With
+  `agents: [cell-claude, cell-codex]`, Droid is the hub's Claude.
+- **What you notice:** AO still labels the entries by the slot's name
+  ("Droid"), not the hub agent's. Chats you start there are hub sessions:
+  other apps list them, follow them live and can answer their permission
+  questions. AO cells without a hub don't change.
+- **Undo:** create the cell without `spec.sessionHub`, or switch the
+  installation's `sessionHub.enabled` off.
+
+**Words.** *Harness*: AO's name for an agent program it can run. *Slot*: one
+built-in harness whose program Glovecell replaces in hub cells.
+
+How it works:
+
+- The `ao-workspace` image has one script per slot under
+  `/opt/ao/session-hub/<slot>/` (`config/agent-orchestrator/session-hub-slot.sh`).
+- A hub cell's workspace container gets the hub's allowlist at
+  `/run/session-hub-client/agents.json`. Before the daemon starts, the worker
+  reads the ids from it (only ids matching the hub's id pattern) and gives
+  the slots to the first ones in order. For each, it sets
+  `GLOVECELL_AO_HUB_<SLOT>=<agent id>` in the daemon's own environment and
+  puts the slot's directory first on `PATH`. It also switches off AO's
+  harness update checks and managed installs (`AO_HARNESS_UPDATE_CHECKS=off`,
+  `AO_MANAGED_HARNESS_INSTALLS=off`), because a managed install would take
+  precedence over `PATH` and silently replace the slot. None of this is in
+  the pod spec, so an allowlist change is not drift. It applies when the
+  worker next starts.
+- When AO starts a slot for Chat, the script runs
+  `agent-project-controller session-hub-acp --agent <agent id>` (see
+  [Connecting an app](session-hub.md#connecting-an-app)). Any other use is
+  refused with exit code 64: AO's terminal mode for that harness, version
+  checks and model probes. An unmapped slot exits 127.
+- Without the allowlist file, or with no usable id in it, the daemon starts
+  exactly as in a cell without a hub.
+
+Slots, checked against AO 0.15.2. Their Chat launch has no version check,
+doesn't check the agent's name and writes no files into the repository:
+
+| Slot | AO entry | Hub agent | AO's Chat launch the script accepts |
+| --- | --- | --- | --- |
+| `droid` | Droid | first in `sessionHub.agents` | `droid [--settings FILE] exec --output-format acp-daemon …` |
+| `dsh` | DeepSeek Harness | second | `dsh --profile acp` |
+
+A third or later hub agent has no AO slot. The other ACP harnesses check
+versions (Cursor, Qwen, OMP, Hermes, Kimchi, OpenCode), validate the agent's
+identity (Copilot, Pi, Agy), write files into the project (Kimi) or set
+session modes the connector doesn't offer (Command Code). Claude Code and
+Codex in AO are not ACP programs that can be swapped: AO runs Claude through
+its own bundled adapter and Codex through Codex's app-server protocol. When
+`AO_VERSION` moves, check the slots' launch arguments again.
+
+Limits of AO 0.15.2, from its source (not yet checked in a live cell):
+
+- **No list of hub sessions.** AO's board comes from its own database and
+  never calls ACP `session/list`, so chats started in another app don't
+  appear in AO. Chats started in AO appear everywhere else.
+- **Live updates are partial.** While an AO chat is open, replies to turns
+  started in another app stream in, but as one untitled reply, and the other
+  app's prompt is not shown until AO reloads the history.
+- **Pickers do nothing.** The hub connector offers no models or modes, so
+  AO's model and permission choices for a slot have no effect. Permission
+  questions still reach AO, and the first app to answer wins.
+- The connector reads the cell's hub token from
+  `/run/session-hub-client/token`; without it, starting a slot fails with
+  "hub token unavailable".
 
 ## Trust
 
