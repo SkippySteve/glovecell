@@ -358,11 +358,78 @@ separate containers:
 Known limits:
 - Hub state is an `emptyDir`, so sessions don't survive a worker restart.
 - The launcher uses the workspace's resource profile.
-- Only Orca (OMP slot, above) is wired in a cell; the other apps come next.
+- Each app connects as described in "Connecting an app"; Herdr uses its own
+  client (below).
 - Orca's chats start the agent in `/workspace/repo` (the launcher's
   directory), even when the chat belongs to another worktree.
 - Codex sessions need a live Codex grant, so the adapter is checked locally only
   as far as the ACP handshake; a full session is part of the qualification run.
+
+## Herdr
+
+Herdr has no ACP client: its apps show terminals, and an agent's state
+(idle, working, blocked) is whatever the program in the terminal reports. So
+in a Herdr cell each hub chat runs in its own herdr-core terminal, inside a
+small terminal chat client, and the phone and PC Herdr apps show it like any
+other agent ([Herdr](herdr.md)).
+
+- **`agent-project-controller session-hub-chat`** is that client. It talks
+  AHP to the hub directly, with the same token and loopback rules as the
+  connector, so it sees every app's turns start and end. It prints the chat
+  (history first), streams replies, lists permission questions with numbered
+  answers, and reports its state to herdr-core with OSC 7501 (herdr-core's
+  status escape sequence): `working` while any app's turn runs, `blocked`
+  with the question while one is open, `error` after a failed turn, else
+  `idle`. It reports only inside a herdr-core terminal (`HC_TERMINAL_ID`).
+
+  ```text
+  session-hub-chat --session <ahp-session:/…>   open one chat
+  session-hub-chat --agent cell-codex --new      start a chat
+  session-hub-chat                               pick an agent and a chat
+  session-hub-chat --list                        the hub's chats, as JSON lines
+  ```
+
+  Type a message and press Enter to send it. While a question is open, a
+  number answers it; any app may answer, and the first answer counts. If
+  another app answered first, the question closes here and says how it was
+  answered. `/cancel` stops the running turn, whichever app started it;
+  `/quit` leaves the terminal and the chat carries on in the hub.
+- **`agent-project-controller session-hub-herdr`** runs in the background
+  next to `hc server` in Herdr cells that have a session hub (the worker
+  command starts it). Every few seconds it:
+  - opens a herdr-core terminal running `session-hub-chat --session <id>`
+    for each hub chat that has none, so a chat started in T3 Code, Orca or
+    Agent Orchestrator appears in the Herdr apps. Terminals carry the label
+    `glovecell.hub-session=<id>`; a chat that `session-hub-chat` started
+    labels its own terminal, so it doesn't get a second one. A terminal
+    you close stays closed.
+  - writes one herdr-core template per agent in
+    `/run/session-hub-client/agents.json` (only `id` and `displayName` are
+    read), so `hc run cell-codex "fix the failing test"` starts a hub chat
+    with that first message. It never touches a template it didn't write.
+
+Both need the token at `/run/session-hub-client/token` in the workspace
+container. Outside a session-hub cell neither runs, and `session-hub-chat`
+refuses to start without the token.
+
+Checked locally, against the gateway, the launcher with a fake ACP agent,
+and herdr-core 0.1.19 in separate containers sharing one network namespace:
+- A chat started through the ACP connector (as T3 Code would) got a
+  herdr-core terminal within two polls, showing its history and the open
+  question; herdr-core reported `blocked` with the question as its message.
+- Answering `1` in that terminal reached the agent; the connector's own open
+  question was withdrawn, its prompt returned `end_turn`, and herdr-core
+  showed `idle` with the turn counter raised.
+- `hc run cell-fake "…"` started a new hub chat from the template and sent the
+  first message; no second terminal was opened for it.
+- Two terminals on one chat answering at once: the first answer was used, the
+  other terminal showed it, and its late `2` was not sent as a message.
+
+Not checked yet: how the Herdr apps place these terminals. herdr-core lists
+them and their status; whether the agents sidebar on the phone and PC shows a
+terminal no app window opened needs a live cell.
+
+## Before production use
 
 Before production use, a qualification run in a disposable cell must show
 that a process in the workspace or launcher container can't use the hub to

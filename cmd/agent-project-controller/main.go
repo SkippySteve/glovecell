@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -427,6 +428,40 @@ func run(ctx context.Context) error {
 				return err
 			}
 			return sessionhub.RunConnector(ctx, *hubURL, *tokenFile, *agent, os.Stdin, os.Stdout)
+		case "session-hub-chat":
+			// Terminal chat with the cell's session hub, for Herdr: runs in a
+			// herdr-core terminal and reports its status (docs/session-hub.md).
+			fs := flag.NewFlagSet("session-hub-chat", flag.ContinueOnError)
+			opts := sessionhub.ChatOptions{Report: os.Getenv("HC_TERMINAL_ID") != ""}
+			fs.StringVar(&opts.Agent, "agent", "", "allowlisted hub agent id (default: ask, or the only one)")
+			fs.StringVar(&opts.Session, "session", "", "hub session to open (ahp-session:/…)")
+			fs.BoolVar(&opts.New, "new", false, "start a new chat")
+			fs.BoolVar(&opts.List, "list", false, "print the hub's sessions as JSON lines and exit")
+			fs.StringVar(&opts.Cwd, "cwd", "", "working directory of a new chat")
+			fs.StringVar(&opts.URL, "url", "ws://127.0.0.1:8765/ahp", "session hub AHP endpoint (loopback)")
+			fs.StringVar(&opts.TokenFile, "token-file", "/run/session-hub-client/token", "session hub token")
+			fs.StringVar(&opts.AgentsFile, "agents-file", sessionhub.ClientAgentsFile, "hub agents to offer (id and displayName)")
+			if err := fs.Parse(os.Args[2:]); err != nil {
+				return err
+			}
+			return sessionhub.RunChat(ctx, opts, os.Stdin, os.Stdout)
+		case "session-hub-herdr":
+			// Herdr cells with a session hub: one herdr-core terminal per hub
+			// session, and a template per hub agent (docs/session-hub.md).
+			fs := flag.NewFlagSet("session-hub-herdr", flag.ContinueOnError)
+			hubURL := fs.String("url", "ws://127.0.0.1:8765/ahp", "session hub AHP endpoint (loopback)")
+			tokenFile := fs.String("token-file", "/run/session-hub-client/token", "session hub token")
+			agentsFile := fs.String("agents-file", sessionhub.ClientAgentsFile, "hub agents to write templates for (id and displayName)")
+			templates := fs.String("templates", "", "herdr-core templates directory (default: $HOME/.config/herdr-core/templates)")
+			cwd := fs.String("cwd", "/workspace/repo", "working directory of new terminals and chats")
+			interval := fs.Duration("interval", 5*time.Second, "how often to check the hub")
+			if err := fs.Parse(os.Args[2:]); err != nil {
+				return err
+			}
+			if *templates == "" {
+				*templates = filepath.Join(os.Getenv("HOME"), ".config", "herdr-core", "templates")
+			}
+			return sessionhub.RunHerdrPanes(ctx, *hubURL, *tokenFile, *agentsFile, *templates, *cwd, *interval)
 		case "session-hub-connect":
 			// The hub's provider command: one agent through the launcher.
 			fs := flag.NewFlagSet("session-hub-connect", flag.ContinueOnError)
