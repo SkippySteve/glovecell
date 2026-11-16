@@ -16,7 +16,8 @@ import (
 	"time"
 )
 
-const testToken = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+// 64 identical hex characters: a valid shape, and not a credential to a scanner.
+const testToken = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 func TestValidateAgentsRefuses(t *testing.T) {
 	ok := Agent{ID: "cell-codex", DisplayName: "Codex", Command: "/usr/local/bin/codex-acp"}
