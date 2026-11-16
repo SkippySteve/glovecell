@@ -21,6 +21,10 @@ const (
 	// OrchestratorHerdr is herdr-core in the worker, reached from a hub via
 	// `agent-project-controller herdr-via` (docs/herdr.md). Not the Herdr GUI.
 	OrchestratorHerdr = OrchestratorControllerPrefix + "herdr"
+	// OrchestratorAgentOrchestrator is the Agent Orchestrator (AO) daemon in
+	// the worker, reached by AO's desktop and phone apps through a per-cell
+	// HTTPS host (docs/agent-orchestrator.md).
+	OrchestratorAgentOrchestrator = OrchestratorControllerPrefix + "agent-orchestrator"
 )
 
 // OrchestratorClassAccepted is the condition type the owning controller sets

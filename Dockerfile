@@ -235,3 +235,41 @@ COPY --from=cloudflared-build --chmod=0755 /cloudflared /opt/t3/cloudflared
 USER 1000:1000
 ENTRYPOINT ["/usr/local/bin/agent-project-controller"]
 CMD ["controller"]
+
+# Agent Orchestrator (docs/agent-orchestrator.md): the daemon, its bundled
+# tmux and its Claude chat runtime, taken from the pinned Linux release
+# package and verified against the release asset's SHA-256. The layout under
+# /opt/ao/resources matches the release, because AO finds tmux next to the
+# daemon. AO 0.15.2's chat runtime pins five npm packages with HIGH/CRITICAL
+# fixes available (MCP SDK, body-parser, fast-uri, proxy-addr, qs), so the
+# reviewed lockfile in third_party/agent-orchestrator raises only those; the
+# build fails if AO's patched Claude adapter changes. Drop the lockfile once
+# an AO release ships the fixed versions.
+FROM ${NODE_IMAGE} AS ao-release
+ARG AO_VERSION=0.15.2
+ARG AO_DEB_SHA256=88666d4e58b7536b1bc387158b5cd34e4c1030ff3674a1f010763cdcc3980b0c
+RUN apk add --no-cache curl libarchive-tools \
+    && curl -fsSL "https://github.com/OrchestratorInc/agent-orchestrator/releases/download/v${AO_VERSION}/agent-orchestrator-linux-x64.deb" -o /tmp/ao.deb \
+    && echo "${AO_DEB_SHA256}  /tmp/ao.deb" | sha256sum -c - \
+    && mkdir /tmp/ao && bsdtar -xf /tmp/ao.deb -C /tmp/ao data.tar.zst \
+    && bsdtar -xf /tmp/ao/data.tar.zst -C /tmp/ao \
+       ./usr/lib/agent-orchestrator/resources/daemon \
+       ./usr/lib/agent-orchestrator/resources/tmux \
+       ./usr/lib/agent-orchestrator/resources/acp-runtime \
+    && mkdir /opt/ao && mv /tmp/ao/usr/lib/agent-orchestrator/resources /opt/ao/resources \
+    && rm -rf /tmp/ao /tmp/ao.deb
+COPY third_party/agent-orchestrator/acp-runtime/package.json third_party/agent-orchestrator/acp-runtime/package-lock.json /tmp/acp-fix/
+WORKDIR /opt/ao/resources/acp-runtime
+RUN before="$(find node_modules/@agentclientprotocol -type f -exec sha256sum {} + | sort | sha256sum)" \
+    && cp /tmp/acp-fix/package.json /tmp/acp-fix/package-lock.json . \
+    && npm install --omit=dev --omit=optional --ignore-scripts --no-audit --no-fund \
+    && after="$(find node_modules/@agentclientprotocol -type f -exec sha256sum {} + | sort | sha256sum)" \
+    && test "$before" = "$after" \
+    && npm ls --omit=dev @modelcontextprotocol/sdk body-parser fast-uri proxy-addr qs \
+    && rm -rf /tmp/acp-fix /root/.npm
+
+# A Glovecell worker for OrchestratorClass ao: the workspace image plus AO.
+# Kept out of the shared workspace image so other cells stay smaller.
+FROM workspace AS ao-workspace
+COPY --from=ao-release /opt/ao /opt/ao
+RUN /opt/ao/resources/daemon/ao version

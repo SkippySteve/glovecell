@@ -2,6 +2,7 @@ package controller
 
 import (
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
+	ao "git.cluster.aimingupward.com/steve/agent-project-controller/internal/agentorchestrator"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/herdr"
 )
 
@@ -18,11 +19,14 @@ func (r *Reconciler) usesHerdrCore(w *api.ProjectWorkspace) bool {
 	return w.Spec.OrchestratorClassName == class
 }
 
-// workerCommand selects the long-running workspace process. Herdr and Orca are
-// mutually exclusive per workspace class.
+// workerCommand selects the long-running workspace process. Herdr, Agent
+// Orchestrator and Orca are mutually exclusive per workspace class.
 func (r *Reconciler) workerCommand(w *api.ProjectWorkspace) []string {
 	if r.usesHerdrCore(w) {
 		return r.herdrSpokeCommand()
+	}
+	if r.usesAgentOrchestrator(w) {
+		return ao.WorkerCommand()
 	}
 	return r.orcaSpokeCommand(w)
 }

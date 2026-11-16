@@ -541,6 +541,17 @@ func run(ctx context.Context) error {
 		return errors.New("HERDR_CORE_ENABLED must be true or false")
 	}
 	herdrCore := os.Getenv("HERDR_CORE_ENABLED") == "true"
+	if v := os.Getenv("AGENT_ORCHESTRATOR_ENABLED"); v != "" && v != "true" && v != "false" {
+		return errors.New("AGENT_ORCHESTRATOR_ENABLED must be true or false")
+	}
+	agentOrchestrator := os.Getenv("AGENT_ORCHESTRATOR_ENABLED") == "true"
+	if agentOrchestrator && controller.AgentOrchestratorUnpromoted(os.Getenv("AGENT_ORCHESTRATOR_IMAGE")) {
+		// A deployment may switch AO on before CI has promoted the first
+		// ao-workspace digest (pin placeholder ":unpromoted"). AO stays off,
+		// so workspaces of its class are refused, until a digest arrives.
+		slog.Warn("AGENT_ORCHESTRATOR_ENABLED=true but AGENT_ORCHESTRATOR_IMAGE is the :unpromoted placeholder; Agent Orchestrator stays off until a digest is promoted")
+		agentOrchestrator = false
+	}
 	sessionHub, sessionHubAgents, e := sessionHubFromEnv()
 	if e != nil {
 		return e
@@ -553,7 +564,7 @@ func run(ctx context.Context) error {
 	if e != nil {
 		return e
 	}
-	reconciler := &controller.Reconciler{LAN: lan, Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, GitHost: gitHost, ForgejoOrigin: origin, Owner: owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling, RegistrarNamespace: os.Getenv("REGISTRAR_NAMESPACE"), WorkerExecClusterRole: os.Getenv("WORKER_EXEC_CLUSTER_ROLE"), ProjectAccessClusterRole: os.Getenv("PROJECT_ACCESS_CLUSTER_ROLE"), ControllerServiceAccount: env("CONTROLLER_SERVICE_ACCOUNT", controller.DefaultControllerServiceAccount), OrcaHubSpoke: orcaHubSpoke, OrcaRuntimeImage: os.Getenv("ORCA_RUNTIME_IMAGE"), OrcaOrchestratorClass: env("HUBSPOKE_ORCHESTRATOR_CLASS", "orca"), OrcaSpokePublicDomain: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_DOMAIN")), OrcaSpokeGatewayName: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_GATEWAY_NAME")), OrcaSpokeGatewayNamespace: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_GATEWAY_NAMESPACE")), OrcaSpokeGatewaySection: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_GATEWAY_SECTION")), OrcaHubNamespace: env("HUBSPOKE_HUB_NAMESPACE", "agent-project-control-orca-hub"), HubLogsClusterRole: strings.TrimSpace(os.Getenv("HUBSPOKE_HUB_LOGS_CLUSTER_ROLE")), HubServiceAccount: strings.TrimSpace(os.Getenv("HUBSPOKE_HUB_SERVICE_ACCOUNT")), AuditAssignmentFeed: auditAssignmentFeed, AuditAssignmentFeedConfigMap: strings.TrimSpace(os.Getenv("AUDIT_ASSIGNMENT_FEED_CONFIGMAP")), HerdrCoreEnabled: herdrCore, HerdrOrchestratorClass: env("HERDR_ORCHESTRATOR_CLASS", "herdr"), GloveHubExecClusterRole: strings.TrimSpace(os.Getenv("GLOVE_HUB_EXEC_CLUSTER_ROLE")), GloveHubNamespace: strings.TrimSpace(os.Getenv("GLOVE_HUB_NAMESPACE")), GloveHubServiceAccount: strings.TrimSpace(os.Getenv("GLOVE_HUB_SERVICE_ACCOUNT")), PlatformFloors: floors, BootstrapImageSource: os.Getenv("BOOTSTRAP_IMAGE_SOURCE"), ProxyRuntimeGuard: guard, SessionHubEnabled: sessionHub, SessionHubImage: strings.TrimSpace(os.Getenv("SESSION_HUB_IMAGE")), SessionHubAgents: sessionHubAgents}}
+	reconciler := &controller.Reconciler{LAN: lan, Client: direct, Host: host, Network: networkProvider, Config: controller.Config{Namespace: ns, GitHost: gitHost, ForgejoOrigin: origin, Owner: owner, Image: os.Getenv("WORKSPACE_IMAGE"), ProxyImage: os.Getenv("PROXY_IMAGE"), RuntimeClass: os.Getenv("RUNTIME_CLASS"), StorageClass: os.Getenv("STORAGE_CLASS"), StorageSize: env("STORAGE_SIZE", "10Gi"), WorkerResources: profile("WORKSPACE"), ProxyResources: profile("PROXY"), WorkerScheduling: workerScheduling, ProxyScheduling: proxyScheduling, RegistrarNamespace: os.Getenv("REGISTRAR_NAMESPACE"), WorkerExecClusterRole: os.Getenv("WORKER_EXEC_CLUSTER_ROLE"), ProjectAccessClusterRole: os.Getenv("PROJECT_ACCESS_CLUSTER_ROLE"), ControllerServiceAccount: env("CONTROLLER_SERVICE_ACCOUNT", controller.DefaultControllerServiceAccount), OrcaHubSpoke: orcaHubSpoke, OrcaRuntimeImage: os.Getenv("ORCA_RUNTIME_IMAGE"), OrcaOrchestratorClass: env("HUBSPOKE_ORCHESTRATOR_CLASS", "orca"), OrcaSpokePublicDomain: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_DOMAIN")), OrcaSpokeGatewayName: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_GATEWAY_NAME")), OrcaSpokeGatewayNamespace: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_GATEWAY_NAMESPACE")), OrcaSpokeGatewaySection: strings.TrimSpace(os.Getenv("HUBSPOKE_SPOKE_GATEWAY_SECTION")), OrcaHubNamespace: env("HUBSPOKE_HUB_NAMESPACE", "agent-project-control-orca-hub"), HubLogsClusterRole: strings.TrimSpace(os.Getenv("HUBSPOKE_HUB_LOGS_CLUSTER_ROLE")), HubServiceAccount: strings.TrimSpace(os.Getenv("HUBSPOKE_HUB_SERVICE_ACCOUNT")), AuditAssignmentFeed: auditAssignmentFeed, AuditAssignmentFeedConfigMap: strings.TrimSpace(os.Getenv("AUDIT_ASSIGNMENT_FEED_CONFIGMAP")), HerdrCoreEnabled: herdrCore, HerdrOrchestratorClass: env("HERDR_ORCHESTRATOR_CLASS", "herdr"), GloveHubExecClusterRole: strings.TrimSpace(os.Getenv("GLOVE_HUB_EXEC_CLUSTER_ROLE")), GloveHubNamespace: strings.TrimSpace(os.Getenv("GLOVE_HUB_NAMESPACE")), GloveHubServiceAccount: strings.TrimSpace(os.Getenv("GLOVE_HUB_SERVICE_ACCOUNT")), AgentOrchestratorEnabled: agentOrchestrator, AgentOrchestratorImage: strings.TrimSpace(os.Getenv("AGENT_ORCHESTRATOR_IMAGE")), AgentOrchestratorClass: env("AGENT_ORCHESTRATOR_CLASS", "ao"), AgentOrchestratorDomain: strings.TrimSpace(os.Getenv("AGENT_ORCHESTRATOR_DOMAIN")), AgentOrchestratorGatewayName: strings.TrimSpace(os.Getenv("AGENT_ORCHESTRATOR_GATEWAY_NAME")), AgentOrchestratorGatewayNamespace: strings.TrimSpace(os.Getenv("AGENT_ORCHESTRATOR_GATEWAY_NAMESPACE")), AgentOrchestratorGatewaySection: strings.TrimSpace(os.Getenv("AGENT_ORCHESTRATOR_GATEWAY_SECTION")), PlatformFloors: floors, BootstrapImageSource: os.Getenv("BOOTSTRAP_IMAGE_SOURCE"), ProxyRuntimeGuard: guard, SessionHubEnabled: sessionHub, SessionHubImage: strings.TrimSpace(os.Getenv("SESSION_HUB_IMAGE")), SessionHubAgents: sessionHubAgents}}
 	if orcaHubSpoke && reconciler.Config.OrcaRuntimeImage == "" {
 		return errors.New("HUBSPOKE_ORCA_ENABLED=true requires ORCA_RUNTIME_IMAGE")
 	}
@@ -664,6 +675,9 @@ func run(ctx context.Context) error {
 	if herdrCore {
 		adapters = append(adapters, orchestrator.NewHerdr(direct, ns))
 	}
+	if agentOrchestrator {
+		adapters = append(adapters, orchestrator.NewAgentOrchestrator(direct, ns, reconciler.Config.AgentOrchestratorDomain))
+	}
 	if reconciler.Orchestrators, e = orchestrator.NewRegistry(adapters...); e != nil {
 		return e
 	}
@@ -739,6 +753,13 @@ func run(ctx context.Context) error {
 			HubSpoke:  true,
 			ClassName: env("HUBSPOKE_ORCHESTRATOR_CLASS", "orca"),
 			Container: env("HUBSPOKE_WORKER_CONTAINER", "workspace"),
+		}
+	}
+	if agentOrchestrator && reconciler.Config.AgentOrchestratorDomain != "" {
+		server.AOPairing = &web.AOPairing{
+			Rest:      config,
+			Domain:    reconciler.Config.AgentOrchestratorDomain,
+			ClassName: reconciler.Config.AgentOrchestratorClass,
 		}
 	}
 	if db != nil {
