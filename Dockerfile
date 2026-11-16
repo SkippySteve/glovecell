@@ -100,8 +100,8 @@ RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund --ignore-sc
 RUN npm run build && npm test && npm prune --omit=dev --ignore-scripts
 
 # No npm, npx or corepack in the runtime image: the hub must never fetch an
-# agent at run time. Every built-in agent is off in config/session-hub; the cell
-# wiring supplies its own config with the agents it allows.
+# agent at run time. Every built-in agent is off in config/session-hub; in a
+# cell the controller supplies the config (token and allowlisted agents).
 FROM ${NODE_IMAGE} AS session-hub
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
        /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /opt/yarn* /usr/local/bin/yarn /usr/local/bin/yarnpkg \
@@ -111,6 +111,9 @@ COPY --from=session-hub-build /src/package.json /src/ahp-acp-gateway.default.jso
 COPY --from=session-hub-build /src/dist/src/ /opt/ahp-acp-gateway/dist/src/
 COPY --from=session-hub-build /src/node_modules/ /opt/ahp-acp-gateway/node_modules/
 COPY config/session-hub/gateway.json /etc/session-hub/gateway.json
+# session-hub-connect: each agent the gateway starts is this binary, which asks
+# the cell's launcher container to run the allowlisted agent.
+COPY --from=build /agent-project-controller /usr/local/bin/agent-project-controller
 COPY third_party/licenses/ /usr/share/agent-project-controller/licenses/
 RUN node /opt/ahp-acp-gateway/dist/src/cli.js --version | grep -qx 0.2.2
 USER 1001:1001

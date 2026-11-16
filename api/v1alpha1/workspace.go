@@ -52,6 +52,21 @@ type WorkspaceSpec struct {
 	// it revokes access for this project. The controller needs a GitHub lease
 	// source (GITHUB_LEASE_SECRET).
 	GitHub *GitHubAccess `json:"github,omitempty"`
+	// SessionHub opts the cell into a shared session hub, so several operator
+	// apps can show and drive the same agent chat (docs/session-hub.md). Off
+	// by default, needs the installation's sessionHub.enabled, and fixed at
+	// creation: it adds containers to the worker.
+	SessionHub *SessionHubSpec `json:"sessionHub,omitempty"`
+}
+
+// SessionHubSpec is a workspace's session hub opt-in.
+type SessionHubSpec struct {
+	Enabled bool `json:"enabled,omitempty"`
+}
+
+// SessionHubEnabled reports whether the workspace asked for a session hub.
+func (s WorkspaceSpec) SessionHubEnabled() bool {
+	return s.SessionHub != nil && s.SessionHub.Enabled
 }
 
 // GitHubAccess is a project's GitHub policy. See docs/design/github-brokering.md.

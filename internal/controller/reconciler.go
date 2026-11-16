@@ -32,6 +32,7 @@ import (
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/network"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/orchestrator"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/proxy"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/sessionhub"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -147,6 +148,13 @@ type Config struct {
 	// cell_tokens.go). Turn on only once every cell's proxy runs an image that
 	// understands cellToken: an older proxy refuses the field (fails closed).
 	CellTokens map[string]bool
+
+	// SessionHubEnabled lets workspaces opt into the shared session hub
+	// (spec.sessionHub.enabled, session_hub.go). Off by default. Needs
+	// SessionHubImage and at least one allowlisted agent.
+	SessionHubEnabled bool
+	SessionHubImage   string
+	SessionHubAgents  []sessionhub.Agent
 }
 
 func (c Config) Validate() error {
@@ -171,6 +179,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := validateGloveHub(c.GloveHubExecClusterRole, c.GloveHubNamespace, c.GloveHubServiceAccount, c.HerdrCoreEnabled); err != nil {
+		return err
+	}
+	if err := validateSessionHub(c.SessionHubEnabled, c.SessionHubImage, c.SessionHubAgents); err != nil {
 		return err
 	}
 	if q, e := resource.ParseQuantity(c.StorageSize); e != nil || q.Sign() <= 0 {
@@ -1176,6 +1187,10 @@ func (r *Reconciler) replaceWorkspaceImage(ctx context.Context, w *api.ProjectWo
 			switch name {
 			case "clone":
 				container["image"] = r.Config.Image
+			case sessionHubLauncher:
+				container["image"] = r.orcaSpokeImage(w)
+			case sessionHubContainer:
+				container["image"] = r.Config.SessionHubImage
 			case "workspace":
 				container["image"] = r.orcaSpokeImage(w)
 				// The comparison above ignored only telemetry settings in env,
@@ -1292,7 +1307,7 @@ func normalizeSandboxWorkloadImages(spec map[string]any) {
 				continue
 			}
 			name, _ := container["name"].(string)
-			if name == "clone" || name == "workspace" {
+			if name == "clone" || name == "workspace" || name == sessionHubContainer || name == sessionHubLauncher {
 				container["image"] = "normalized"
 				items[i] = container
 			}
@@ -1790,6 +1805,17 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 	}
 	if policy := r.orcaSpokeIngressPolicy(w); policy != nil {
 		objects = append(objects, policy)
+	}
+	if r.usesSessionHub(w) {
+		if !r.Config.SessionHubEnabled {
+			return errSessionHubOff
+		}
+		hubSecret, e := r.sessionHubSecretFor(ctx, w)
+		if e != nil {
+			return e
+		}
+		objects = append(objects, hubSecret)
+		addSessionHub(&spec, r.Config.SessionHubImage, spec.Containers[0], env, security)
 	}
 	r.Config.WorkerScheduling.Apply(&spec)
 	b, e := json.Marshal(spec)
