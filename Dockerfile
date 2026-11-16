@@ -165,6 +165,15 @@ RUN curl -fsSL https://github.com/pingdotgg/t3code/releases/download/v0.0.45/t3-
     && mkdir /opt/t3 && tar xzf /tmp/t3.tar.gz -C /opt/t3 --strip-components=1 \
     && rm /tmp/t3.tar.gz
 COPY scripts/apc-codex /usr/local/bin/apc-codex
+# ACP adapters for the session hub (docs/session-hub.md), from a committed
+# lockfile (every package checked against its integrity hash). Optional
+# packages are omitted, so codex-acp's bundled Codex binaries never land here:
+# the codex-acp wrapper runs the brokered apc-codex bridge instead.
+COPY config/acp-adapters/package.json config/acp-adapters/package-lock.json /opt/acp-adapters/
+RUN cd /opt/acp-adapters && npm ci --omit=optional --omit=dev --ignore-scripts --no-audit --no-fund \
+    && rm -rf /root/.npm \
+    && test ! -e node_modules/@openai/codex-linux-x64
+COPY --chmod=0755 scripts/apc-codex-acp /usr/local/bin/codex-acp
 # Stock Forgejo client. The wrapper supplies the enrolled Git identity per call.
 RUN curl --http1.1 --retry 3 -fsSL https://codeberg.org/forgejo-contrib/forgejo-cli/releases/download/v0.6.0/forgejo-cli-x86_64-linux.tar.gz -o /tmp/fj.tar.gz \
     && echo 'ea559da5449b6dd7e0dd9f7ea51c906b575696f782edd606b52adcf773602742  /tmp/fj.tar.gz' | sha256sum -c - \

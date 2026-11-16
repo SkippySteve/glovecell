@@ -118,8 +118,31 @@ spec:
 The chart refuses a tag instead of a digest, an empty agent list, a relative
 command and unknown fields. Agent ids may not reuse a gateway built-in
 (`claude`, `codex` and so on), because a built-in override would inherit its
-`npx` launcher. The workspace image ships no ACP adapters yet, so the agents
-listed must exist in the workspace image you run.
+`npx` launcher.
+
+### Agents in the workspace image
+
+The launcher always runs Glovecell's workspace image, whichever orchestrator
+class the cell uses. That image has the brokered provider launchers that work
+inside cells. It also carries these ACP adapters:
+
+| Command | Adapter | How it reaches the model |
+| --- | --- | --- |
+| `/usr/local/bin/codex-acp` | [`@agentclientprotocol/codex-acp`](https://github.com/agentclientprotocol/codex-acp) 2.1.1 (Apache-2.0), from the lockfile in `config/acp-adapters/` | `CODEX_PATH` is the cell's Codex bridge (`apc-codex`). It signs Codex in with the operator's lease from the cell's model grant, refuses any other sign-in, and keeps threads inside the project directory. The wrapper clears `CODEX_API_KEY` and `OPENAI_API_KEY`. The adapter's bundled Codex binaries are optional packages and are not installed. |
+
+So `{id: cell-codex, displayName: Codex, command: /usr/local/bin/codex-acp}`
+works once the workspace has a Codex grant (`spec.providers`, see
+[brokered providers](brokered-providers.md)).
+
+Version note: `codex-acp` 2.1.1 targets Codex 0.159, the Codex the workspace
+image pins. Newer adapters need Codex 0.166 or later, so they move together
+with the image's Codex.
+
+No Claude adapter ships in this image. `claude-agent-acp` runs Anthropic's
+Claude Agent SDK and Claude Code, which are under Anthropic's own terms, not
+an open-source licence. Glovecell's images are published, so a deployment
+that wants Claude over ACP adds it to its own private image. Set
+`CLAUDE_CODE_EXECUTABLE` to its brokered `claude` launcher.
 
 The controller then adds two containers to that cell's worker, plus one Secret
 (`session-hub`) holding the cell's token, the gateway config and the
@@ -156,6 +179,8 @@ Known limits:
 - Hub state is an `emptyDir`, so sessions don't survive a worker restart.
 - The launcher uses the workspace's resource profile.
 - No operator app is connected yet; adapters come next.
+- Codex sessions need a live Codex grant, so the adapter is checked locally only
+  as far as the ACP handshake; a full session is part of the qualification run.
 
 Before production use, a qualification run in a disposable cell must show
 that a process in the workspace or launcher container can't use the hub to

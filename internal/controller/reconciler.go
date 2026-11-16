@@ -1207,7 +1207,7 @@ func (r *Reconciler) replaceWorkspaceImage(ctx context.Context, w *api.ProjectWo
 			case "clone":
 				container["image"] = r.Config.Image
 			case sessionHubLauncher:
-				container["image"] = r.orcaSpokeImage(w)
+				container["image"] = r.Config.Image
 			case sessionHubContainer:
 				container["image"] = r.Config.SessionHubImage
 			case "workspace":
@@ -1847,7 +1847,7 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 			return e
 		}
 		objects = append(objects, hubSecret)
-		addSessionHub(&spec, r.Config.SessionHubImage, spec.Containers[0], env, security)
+		addSessionHub(&spec, r.Config.SessionHubImage, r.Config.Image, spec.Containers[0], env, security)
 	}
 	r.Config.WorkerScheduling.Apply(&spec)
 	b, e := json.Marshal(spec)
