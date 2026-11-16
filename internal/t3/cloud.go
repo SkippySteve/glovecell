@@ -1,6 +1,6 @@
 package t3
 
-// This client uses the stock T3 v0.0.45 environment-link API. Account OAuth
+// This client uses the stock T3 environment-link API (checked against v0.1.9). Account OAuth
 // credentials are consumed only in the trusted controller, never by workers.
 import (
 	"bytes"

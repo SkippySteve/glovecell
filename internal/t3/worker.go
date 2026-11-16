@@ -5,9 +5,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -199,19 +201,12 @@ func serve(instance string, managed bool) error {
 	if err = os.Rename(file.Name(), pidFile); err != nil {
 		return err
 	}
-	settings := map[string]any{"providers": map[string]any{
-		"codex":  map[string]any{"setupMode": "existing", "enabled": true, "binaryPath": "/usr/local/bin/apc-codex", "homePath": "/workspace/.apc/codex"},
-		"cursor": map[string]any{"enabled": true, "binaryPath": "/usr/local/bin/cursor-agent"},
-		"grok":   map[string]any{"enabled": true, "binaryPath": "/usr/local/bin/grok"},
-	}}
-	for _, name := range []string{"claudeAgent", "opencode", "antigravity"} {
-		settings["providers"].(map[string]any)[name] = map[string]any{"enabled": false}
-	}
-	raw, _ := json.Marshal(settings)
+	raw, _ := json.Marshal(serverSettings(hubAgentsFromEnv()))
 	// Overwrite provider configuration on each launch. Device/session state is retained separately.
 	if err := os.WriteFile(Data+"/userdata/settings.json", raw, 0600); err != nil {
 		return err
 	}
+	ensureProject()
 	return syscall.Exec(Binary, []string{Binary, "serve", "--host", "127.0.0.1", "--port", "8788", "--base-dir", Data, "--no-browser", "--auto-bootstrap-project-from-cwd", "/workspace/repo"}, os.Environ())
 }
 
@@ -252,4 +247,76 @@ func parseProcessStartTime(stat string) (string, error) {
 		return "", errors.New("invalid T3 process start time")
 	}
 	return fields[19], nil
+}
+
+// HubAgent is one allowlisted agent of the cell's session hub, as the
+// controller passes it in SESSION_HUB_CLIENT_AGENTS (docs/session-hub.md).
+type HubAgent struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"displayName"`
+}
+
+var hubAgentID = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
+
+// hubAgentsFromEnv reads SESSION_HUB_CLIENT_AGENTS. It is unset outside
+// session-hub cells; a malformed value adds no hub providers.
+func hubAgentsFromEnv() []HubAgent {
+	raw := os.Getenv("SESSION_HUB_CLIENT_AGENTS")
+	if raw == "" {
+		return nil
+	}
+	var agents []HubAgent
+	if json.Unmarshal([]byte(raw), &agents) != nil {
+		return nil
+	}
+	out := []HubAgent{}
+	for _, a := range agents {
+		if hubAgentID.MatchString(a.ID) && len(a.DisplayName) <= 64 {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// serverSettings is T3's settings.json (T3 0.1 providerInstances format),
+// rewritten on every launch. Codex goes through the brokered bridge; Cursor
+// and Grok through their launchers; other built-in drivers stay off. In a
+// session-hub cell each allowlisted hub agent is one more provider: T3 starts
+// the hub connector as an ACP agent, so chats are shared with the cell's other
+// apps and T3 can import chats started elsewhere.
+func serverSettings(hub []HubAgent) map[string]any {
+	instances := map[string]any{
+		"codex":  map[string]any{"driver": "codex", "enabled": true, "config": map[string]any{"setupMode": "existing", "binaryPath": "/usr/local/bin/apc-codex", "homePath": "/workspace/.apc/codex"}},
+		"cursor": map[string]any{"driver": "cursor", "enabled": true, "config": map[string]any{"binaryPath": "/usr/local/bin/cursor-agent"}},
+		"grok":   map[string]any{"driver": "grok", "enabled": true, "config": map[string]any{"binaryPath": "/usr/local/bin/grok"}},
+	}
+	for _, name := range []string{"claudeAgent", "opencode", "antigravity"} {
+		instances[name] = map[string]any{"driver": name, "enabled": false}
+	}
+	for _, a := range hub {
+		name := a.DisplayName
+		if name == "" {
+			name = a.ID
+		}
+		instances["hub-"+a.ID] = map[string]any{"driver": "acpRegistry", "enabled": true, "displayName": name + " (shared)",
+			"config": map[string]any{"source": "local", "commandPath": "/usr/local/bin/agent-project-controller",
+				"commandArgs": []string{"session-hub-acp", "--agent", a.ID}}}
+	}
+	return map[string]any{"providerInstances": instances}
+}
+
+// ensureProject registers /workspace/repo as a T3 project before the server
+// starts. T3 0.1 no longer creates it from --auto-bootstrap-project-from-cwd,
+// so a new cell would otherwise open with no project. `t3 project add` works
+// without a running server; "already exists" on later launches is success.
+// Any other failure is logged and T3 starts anyway.
+func ensureProject() {
+	out, err := exec.Command(Binary, "project", "add", "--base-dir", Data, "/workspace/repo").CombinedOutput()
+	if err != nil && !projectExists(out) {
+		fmt.Fprintf(os.Stderr, "T3 project registration failed: %v\n", err)
+	}
+}
+
+func projectExists(output []byte) bool {
+	return strings.Contains(string(output), "ProjectAlreadyExistsError")
 }
