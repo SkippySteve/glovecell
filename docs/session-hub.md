@@ -191,6 +191,51 @@ allowlist:
   overwritten with an invalid value, it is regenerated. Allowlist changes
   update the Secret without a new token; the hub reads its config at start.
 
+## Trust model: a cell is one trust zone
+
+The session hub shares chats between apps. It is not a security boundary
+inside the cell, and it does not try to be one.
+
+- **Who holds the token.** It is readable in the hub container and in the
+  workspace container, where the apps and their connectors run. The workspace
+  container also runs every agent the apps start themselves, such as an app's
+  own Codex, a terminal agent in a Herdr pane or Orca tab, and shells. Any of
+  them can read the token and do what an app can: read the shared chats, send
+  prompts into them, and answer their permission questions.
+- **The launcher is a speed bump, not a wall.** The hub's own agents run in
+  the launcher container, which does not get the token, so they cannot simply
+  read it. But the launcher and the workspace share the read-write
+  `/workspace` volume, and the workspace container runs files from it: git
+  hooks and `core.fsmonitor`, shell start-up files, and anything an app
+  executes from `$HOME`. An agent that plants such a file can get code run
+  where the token is.
+- **Nothing gains access.** Every process in the cell already shares one
+  user, one volume, the cell's egress proxy and the cell's brokered
+  credentials, so holding the token grants no access that process lacked.
+- **What it does weaken is the approval signal.** Inside a cell, an agent
+  permission prompt answered through the hub is a convenience, not a
+  security control: something else in the same cell may have answered it,
+  and a prompt sent through the hub may not have come from a person. Many
+  apps also auto-approve by default.
+- **The boundary is the cell.** It is enforced by the sandbox runtime, the
+  inspecting egress proxy and network policy, brokered credentials and
+  per-cell tokens.
+
+Consequences for integrations:
+- Nothing that grants hub access may be installed on the shared volume. App
+  shims and configuration that point at the connector live in the image or in
+  read-only mounts, ahead of `$HOME` in `PATH`.
+- Do not rely on hub permission prompts to contain an agent. Use the cell's
+  controls (egress rules, credential grants, repository access) for that.
+
+What qualification checks in a disposable cell:
+- **The launcher cannot read the token.** No such file exists there.
+- **A connection without the token is refused.**
+- **The executed-from-volume paths are listed** in the qualification
+  report: git hooks and `core.fsmonitor`, shell rc files, app configuration
+  under `$HOME`. A reader can then see exactly what "speed bump" means for
+  their apps.
+
 ## Connecting an app
 
 `agent-project-controller session-hub-acp --agent <id>` is what an operator app
