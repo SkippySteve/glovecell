@@ -297,14 +297,24 @@ func (c *Connector) attach(ctx context.Context, id acp.SessionId) ([]ahptypes.Tu
 		return nil, err
 	}
 	var turns []ahptypes.Turn
+	var active *ahptypes.ActiveTurn
 	if state := chatSnap.Snapshot.State.Chat; state != nil {
-		turns = state.Turns
+		turns, active = state.Turns, state.ActiveTurn
+	}
+	if active != nil {
+		// Replay the running turn too, as far as it has got.
+		turns = append(append([]ahptypes.Turn{}, turns...), ahptypes.Turn{Id: active.Id, Message: active.Message, ResponseParts: active.ResponseParts})
 	}
 	s := &hubSession{id: id, chat: chat, sub: sub, asked: map[string]bool{}, ownTurns: map[string]bool{}, pending: map[string]pendingQuestion{}}
 	c.mu.Lock()
 	c.sessions[id] = s
 	c.mu.Unlock()
 	go c.pump(s)
+	// A question that was already open when this app attached is asked too;
+	// its later toolCallReady action never comes.
+	for _, q := range openQuestions(active) {
+		c.ask(s, q)
+	}
 	return turns, nil
 }
 
@@ -439,19 +449,7 @@ func (c *Connector) pump(s *hubSession) {
 		switch act := a.Envelope.Action.Value.(type) {
 		case *ahptypes.ChatToolCallReadyAction:
 			if needsPermission(act) {
-				s.mu.Lock()
-				first := !s.asked[act.ToolCallId]
-				s.asked[act.ToolCallId] = true
-				var qctx context.Context
-				if first {
-					var cancel context.CancelFunc
-					qctx, cancel = context.WithCancel(context.Background())
-					s.pending[act.ToolCallId] = pendingQuestion{turn: act.TurnId, cancel: cancel}
-				}
-				s.mu.Unlock()
-				if first {
-					go c.askPermission(qctx, s, act)
-				}
+				c.ask(s, act)
 			}
 		case *ahptypes.ChatToolCallConfirmedAction:
 			s.settle(act.TurnId, act.ToolCallId)
@@ -615,11 +613,21 @@ func confirmation(a *ahptypes.ChatToolCallReadyAction, outcome acp.RequestPermis
 	}
 	id := string(outcome.Selected.OptionId)
 	for _, o := range a.Options {
-		if o.Id == id {
-			reason := ahptypes.ToolCallConfirmationReasonUserAction
-			return &ahptypes.ChatToolCallConfirmedAction{Type: ahptypes.ActionTypeChatToolCallConfirmed, TurnId: a.TurnId, ToolCallId: a.ToolCallId,
-				Approved: o.Kind == ahptypes.ConfirmationOptionKindApprove, SelectedOptionId: &id, Confirmed: &reason}
+		if o.Id != id {
+			continue
 		}
+		confirm := &ahptypes.ChatToolCallConfirmedAction{Type: ahptypes.ActionTypeChatToolCallConfirmed, TurnId: a.TurnId, ToolCallId: a.ToolCallId, SelectedOptionId: &id}
+		// The hub accepts an approval with a confirmed reason and no denial
+		// reason, and a denial with reason "denied" and no confirmed reason;
+		// anything else is rejected and the question stays open.
+		if o.Kind == ahptypes.ConfirmationOptionKindApprove {
+			confirmed := ahptypes.ToolCallConfirmationReasonUserAction
+			confirm.Approved, confirm.Confirmed = true, &confirmed
+		} else {
+			denied := ahptypes.ToolCallCancellationReasonDenied
+			confirm.Reason = &denied
+		}
+		return confirm
 	}
 	return nil
 }
@@ -643,4 +651,44 @@ func agentText(turnID, text string) acp.SessionUpdate {
 		u.AgentMessageChunk.MessageId = &id
 	}
 	return u
+}
+
+// ask puts a question to the app once per tool call, withdrawable once the
+// hub settles it.
+func (c *Connector) ask(s *hubSession, q *ahptypes.ChatToolCallReadyAction) {
+	s.mu.Lock()
+	first := !s.asked[q.ToolCallId]
+	s.asked[q.ToolCallId] = true
+	var qctx context.Context
+	if first {
+		var cancel context.CancelFunc
+		qctx, cancel = context.WithCancel(context.Background())
+		s.pending[q.ToolCallId] = pendingQuestion{turn: q.TurnId, cancel: cancel}
+	}
+	s.mu.Unlock()
+	if first {
+		go c.askPermission(qctx, s, q)
+	}
+}
+
+// openQuestions lists tool calls of the running turn that wait for a
+// permission answer, in the shape of the action that announced them.
+func openQuestions(active *ahptypes.ActiveTurn) []*ahptypes.ChatToolCallReadyAction {
+	if active == nil {
+		return nil
+	}
+	out := []*ahptypes.ChatToolCallReadyAction{}
+	for _, part := range active.ResponseParts {
+		tc, ok := part.Value.(*ahptypes.ToolCallResponsePart)
+		if !ok {
+			continue
+		}
+		p, ok := tc.ToolCall.Value.(*ahptypes.ToolCallPendingConfirmationState)
+		if !ok || len(p.Options) == 0 {
+			continue
+		}
+		out = append(out, &ahptypes.ChatToolCallReadyAction{Type: ahptypes.ActionTypeChatToolCallReady, TurnId: active.Id, ToolCallId: p.ToolCallId,
+			InvocationMessage: p.InvocationMessage, ConfirmationTitle: p.ConfirmationTitle, Options: p.Options})
+	}
+	return out
 }

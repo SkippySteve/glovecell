@@ -150,13 +150,33 @@ func TestConfirmationOnlyForChosenOptions(t *testing.T) {
 	if c := confirmation(ready, acp.RequestPermissionOutcome{Selected: &acp.RequestPermissionOutcomeSelected{OptionId: "other"}}); c != nil {
 		t.Fatalf("unknown option dispatched %+v", c)
 	}
+	// The hub's rule: approvals carry a confirmed reason and no denial
+	// reason; denials carry reason "denied" and no confirmed reason.
 	allow := confirmation(ready, acp.RequestPermissionOutcome{Selected: &acp.RequestPermissionOutcomeSelected{OptionId: "allow"}})
-	if allow == nil || !allow.Approved || *allow.SelectedOptionId != "allow" || allow.TurnId != "turn" || allow.ToolCallId != "t1" {
+	if allow == nil || !allow.Approved || *allow.SelectedOptionId != "allow" || allow.TurnId != "turn" || allow.ToolCallId != "t1" ||
+		allow.Confirmed == nil || *allow.Confirmed != ahptypes.ToolCallConfirmationReasonUserAction || allow.Reason != nil {
 		t.Fatalf("allow %+v", allow)
 	}
 	deny := confirmation(ready, acp.RequestPermissionOutcome{Selected: &acp.RequestPermissionOutcomeSelected{OptionId: "deny"}})
-	if deny == nil || deny.Approved {
+	if deny == nil || deny.Approved || deny.Confirmed != nil || deny.Reason == nil || *deny.Reason != ahptypes.ToolCallCancellationReasonDenied || *deny.SelectedOptionId != "deny" {
 		t.Fatalf("deny %+v", deny)
+	}
+}
+
+// An app that attaches while a question is open is asked it too.
+func TestOpenQuestions(t *testing.T) {
+	if len(openQuestions(nil)) != 0 {
+		t.Fatal("no active turn, no questions")
+	}
+	options := []ahptypes.ConfirmationOption{{Id: "allow", Kind: ahptypes.ConfirmationOptionKindApprove}}
+	plain := "run ls"
+	active := &ahptypes.ActiveTurn{Id: "turn-1", ResponseParts: []ahptypes.ResponsePart{
+		{Value: &ahptypes.MarkdownResponsePart{Content: "working"}},
+		{Value: &ahptypes.ToolCallResponsePart{ToolCall: ahptypes.ToolCallState{Value: &ahptypes.ToolCallPendingConfirmationState{ToolCallId: "t1", InvocationMessage: ahptypes.StringOrMarkdown{Plain: &plain}, Options: options}}}},
+	}}
+	got := openQuestions(active)
+	if len(got) != 1 || got[0].TurnId != "turn-1" || got[0].ToolCallId != "t1" || len(got[0].Options) != 1 || !needsPermission(got[0]) {
+		t.Fatalf("open questions %+v", got)
 	}
 }
 
