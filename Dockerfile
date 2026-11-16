@@ -83,6 +83,40 @@ USER 1000:1000
 ENTRYPOINT ["/usr/local/bin/agent-project-controller"]
 CMD ["glove-hub-enroll"]
 
+# session-hub (docs/session-hub.md): AHP-ACP Gateway, which lets several
+# operator apps share one live agent session. Built here from a pinned upstream
+# commit (the v0.2.2 release), never from upstream's image or npm tarball. Its
+# dependencies come from upstream's lockfile, and upstream's own tests must pass
+# before the image is assembled.
+FROM ${NODE_IMAGE} AS session-hub-build
+ARG AHP_ACP_GATEWAY_COMMIT=f01c188b3e24e187af0df1190a1285aca15b1bd4
+RUN apk add --no-cache 'git>=2.52.1-r0'
+WORKDIR /src
+RUN git init -q . \
+    && git fetch -q --depth 1 https://github.com/formulahendry/ahp-acp-gateway.git "${AHP_ACP_GATEWAY_COMMIT}" \
+    && git checkout -q FETCH_HEAD \
+    && test "$(git rev-parse HEAD)" = "${AHP_ACP_GATEWAY_COMMIT}"
+RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund --ignore-scripts
+RUN npm run build && npm test && npm prune --omit=dev --ignore-scripts
+
+# No npm, npx or corepack in the runtime image: the hub must never fetch an
+# agent at run time. Every built-in agent is off in config/session-hub; the cell
+# wiring supplies its own config with the agents it allows.
+FROM ${NODE_IMAGE} AS session-hub
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+       /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /opt/yarn* /usr/local/bin/yarn /usr/local/bin/yarnpkg \
+    && addgroup -g 1001 hub && adduser -D -u 1001 -G hub hub \
+    && mkdir -p /var/lib/session-hub && chown 1001:1001 /var/lib/session-hub
+COPY --from=session-hub-build /src/package.json /src/ahp-acp-gateway.default.json /src/LICENSE /opt/ahp-acp-gateway/
+COPY --from=session-hub-build /src/dist/src/ /opt/ahp-acp-gateway/dist/src/
+COPY --from=session-hub-build /src/node_modules/ /opt/ahp-acp-gateway/node_modules/
+COPY config/session-hub/gateway.json /etc/session-hub/gateway.json
+COPY third_party/licenses/ /usr/share/agent-project-controller/licenses/
+RUN node /opt/ahp-acp-gateway/dist/src/cli.js --version | grep -qx 0.2.2
+USER 1001:1001
+ENTRYPOINT ["node", "/opt/ahp-acp-gateway/dist/src/cli.js"]
+CMD ["--config", "/etc/session-hub/gateway.json"]
+
 # GitHub CLI for the workspace, built from the pinned upstream module. The
 # 2.103.3 release binary links golang.org/x/net v0.60.0 (CVE-2026-78661, fixed
 # in v0.62.0), so the image gate fails on it. The source comes through the Go

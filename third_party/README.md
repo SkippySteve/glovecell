@@ -5,3 +5,5 @@ The workspace bundles T3 Code 0.0.45 (MIT), Codex 0.159.0 (Apache-2.0), herdr-co
 Upstream references: https://github.com/pingdotgg/t3code/tree/v0.0.45, https://github.com/openai/codex/tree/rust-v0.159.0 and https://github.com/cli/cli/tree/v2.103.3.
 
 The `voice` image (glovecell-voice) links mautrix-go 0.32.0 and go.mau.fi/util 0.11.0, both under the Mozilla Public License 2.0; the license text is in `licenses/mautrix-go-0.32.0-MPL-2.0.txt` and their unmodified source is at https://github.com/mautrix/go/tree/v0.32.0 and https://github.com/mautrix/go-util/tree/v0.11.0.
+
+The `session-hub` image (docs/session-hub.md) is AHP-ACP Gateway 0.2.2 (MIT), built from upstream commit `f01c188b3e24e187af0df1190a1285aca15b1bd4` at https://github.com/formulahendry/ahp-acp-gateway. Its runtime dependencies are `@agentclientprotocol/sdk` 1.8.0 (Apache-2.0), `@microsoft/agent-host-protocol` 1.0.0 (MIT), `ws` 8.22.0 (MIT) and `zod` 4.6.7 (MIT); their license texts are in `licenses/ahp-acp-gateway/`.
