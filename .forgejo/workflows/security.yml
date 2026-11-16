@@ -65,7 +65,8 @@ jobs:
         # t3-controller: T3 Connect account + cloudflared on the controller
         # (docs/t3-connect.md, docs/clients-choice.md). Proxy stays on runtime.
         # glove-hub: the in-cluster Herdr hub (docs/herdr.md).
-        target: [runtime, workspace, voice, t3-controller, glove-hub]
+        # ao-workspace: workers of OrchestratorClass ao (docs/agent-orchestrator.md).
+        target: [runtime, workspace, voice, t3-controller, glove-hub, ao-workspace]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install pinned Trivy
@@ -203,5 +204,24 @@ jobs:
           CI_PUBLISHER_TOKEN: ${{ secrets.CI_PUBLISHER_TOKEN }}
         run: >-
           python3 /tmp/monorepo/.forgejo/scripts/promote.py --component glovecell-glove-hub
+          --image "$IMAGE" --source-repo "$GITHUB_REPOSITORY" --source-sha "$GITHUB_SHA"
+          --require-status "CI / checks (push)"
+      # ao-workspace (Dockerfile target ao-workspace): Glovecell workers that
+      # run Agent Orchestrator (docs/agent-orchestrator.md).
+      - name: Push the gated ao-workspace image
+        if: matrix.target == 'ao-workspace' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          CI_IMAGE_TOKEN: ${{ secrets.CI_IMAGE_TOKEN }}
+        run: /tmp/monorepo/.forgejo/scripts/push-image.sh "candidate-ao-workspace:${GITHUB_SHA}" git.cluster.aimingupward.com/image-publisher/glovecell-ao-workspace
+      # Off until the monorepo's .forgejo/scripts/promote.py knows the
+      # glovecell-ao-workspace component and its pin; until then promote.py
+      # rejects it and main would go red. Switch on with repository variable
+      # AO_WORKSPACE_PROMOTE=true.
+      - name: Open the ao-workspace promotion PR
+        if: matrix.target == 'ao-workspace' && github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.AO_WORKSPACE_PROMOTE == 'true'
+        env:
+          CI_PUBLISHER_TOKEN: ${{ secrets.CI_PUBLISHER_TOKEN }}
+        run: >-
+          python3 /tmp/monorepo/.forgejo/scripts/promote.py --component glovecell-ao-workspace
           --image "$IMAGE" --source-repo "$GITHUB_REPOSITORY" --source-sha "$GITHUB_SHA"
           --require-status "CI / checks (push)"

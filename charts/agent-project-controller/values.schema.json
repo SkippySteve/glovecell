@@ -670,6 +670,33 @@
             "enabled": {"type": "boolean"},
             "name": {"type": "string", "maxLength": 253, "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"}
           }
+        },
+        "ao": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "name": {"type": "string", "maxLength": 253, "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"}
+          }
+        }
+      }
+    },
+    "agentOrchestrator": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "className": {"type": "string", "maxLength": 253, "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"},
+        "image": {"type": "string"},
+        "domain": {"type": "string", "maxLength": 253},
+        "gateway": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": {"type": "string"},
+            "namespace": {"type": "string"},
+            "sectionName": {"type": "string"}
+          }
         }
       }
     },

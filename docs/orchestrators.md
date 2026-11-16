@@ -1,7 +1,8 @@
 # Orchestrator classes
 
 An agent orchestrator is the tool an operator uses to drive agents in a
-project sandbox: T3, Orca, or a custom command client. The controller connects
+project sandbox: T3, Orca, Herdr, Agent Orchestrator, or a custom command
+client. The controller connects
 orchestrators to sandboxes through **orchestrator classes** and **adapters**,
 the way Gateway API connects Gateways to implementations through a
 GatewayClass and its `controllerName`.
@@ -33,6 +34,7 @@ This is part of decision D12 (Kubernetes-native API).
 | `projects.agentwork.dev/t3` | T3 Connect: starts T3 in the sandbox and links it to the T3 account ([T3 Connect](t3-connect.md)). Phone and PC use the T3 account catalog. | `t3Connect.enabled` + **t3-controller** image |
 | `projects.agentwork.dev/orca` | Hub-and-spoke when `HUBSPOKE_ORCA_ENABLED=true` ([hubspoke.md](hubspoke.md)): `orcad` in each gVisor spoke, hub enrolls for phone relay. Otherwise the legacy control-host registrar (client kind `orca`). Design: [Orca runtime per cell](design/glovecell.md#9-orca-runtime-per-cell). | hubspoke hub + `ORCA_RUNTIME_IMAGE`, or a registrar with Orca |
 | `projects.agentwork.dev/herdr` | herdr-core in the worker; hub `--via` for Android/PC Herdr ([clients-choice.md](clients-choice.md); [herdr.md](herdr.md)). | `herdrCore.enabled` + workspace `hc` |
+| `projects.agentwork.dev/agent-orchestrator` | Agent Orchestrator daemon in the worker; AO desktop and phone apps pair per cell through `https://<workspace>.<domain>` ([agent-orchestrator.md](agent-orchestrator.md)). | `agentOrchestrator.enabled` + `ao-workspace` image |
 | `projects.agentwork.dev/command` | Custom command clients on the registrar (`APC_CLIENT_<KIND>_REGISTER/REVOKE`). | a registrar with the custom kind |
 
 The Helm chart can create one class for each. All are off by default:
@@ -41,6 +43,8 @@ The Helm chart can create one class for each. All are off by default:
 orchestratorClasses:
   t3:      {enabled: false, name: t3}       # requires t3Connect.enabled
   orca:    {enabled: false, name: orca}
+  herdr:   {enabled: false, name: herdr}  # requires herdrCore.enabled
+  ao:      {enabled: false, name: ao}     # requires agentOrchestrator.enabled
   command: {enabled: false, name: command}
 ```
 

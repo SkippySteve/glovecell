@@ -26,6 +26,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
+	ao "git.cluster.aimingupward.com/steve/agent-project-controller/internal/agentorchestrator"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/auditlog"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/forge"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/forgejo"
@@ -130,6 +131,21 @@ type Config struct {
 	GloveHubExecClusterRole string
 	GloveHubNamespace       string
 	GloveHubServiceAccount  string
+
+	// AgentOrchestratorEnabled runs the Agent Orchestrator daemon in workers
+	// whose OrchestratorClassName matches AgentOrchestratorClass (default
+	// "ao"), from AgentOrchestratorImage (digest-pinned, Dockerfile target
+	// ao-workspace). Off by default (docs/agent-orchestrator.md).
+	AgentOrchestratorEnabled bool
+	AgentOrchestratorImage   string
+	AgentOrchestratorClass   string
+	// AgentOrchestratorDomain is the DNS suffix of device-facing cell hosts
+	// (<workspace>.<domain>). Empty publishes nothing: the daemon runs but
+	// no device can reach it. The Gateway listener must be LAN/VPN only.
+	AgentOrchestratorDomain           string
+	AgentOrchestratorGatewayName      string
+	AgentOrchestratorGatewayNamespace string
+	AgentOrchestratorGatewaySection   string
 	// Platform floors (APC #106). Empty is inert; copied into every proxy
 	// policy so approvals and project rules cannot override them.
 	PlatformFloors proxy.PlatformFloors
@@ -171,6 +187,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := validateGloveHub(c.GloveHubExecClusterRole, c.GloveHubNamespace, c.GloveHubServiceAccount, c.HerdrCoreEnabled); err != nil {
+		return err
+	}
+	if err := c.validateAgentOrchestrator(); err != nil {
 		return err
 	}
 	if q, e := resource.ParseQuantity(c.StorageSize); e != nil || q.Sign() <= 0 {
@@ -948,7 +967,7 @@ func (r *Reconciler) apply(ctx context.Context, w *api.ProjectWorkspace, obj cli
 		}
 		// Spoke HTTPRoute and orca-runtime CNP may gain a public dial; patch
 		// their specs. Other Cilium policies stay immutable (drift).
-		if expected.GetKind() == "HTTPRoute" || expected.GetKind() == "CiliumNetworkPolicy" && expected.GetName() == "orca-runtime" {
+		if expected.GetKind() == "HTTPRoute" || expected.GetKind() == "CiliumNetworkPolicy" && (expected.GetName() == "orca-runtime" || expected.GetName() == ao.ServiceName) {
 			if same(got, want) {
 				return nil
 			}
@@ -1177,13 +1196,13 @@ func (r *Reconciler) replaceWorkspaceImage(ctx context.Context, w *api.ProjectWo
 			case "clone":
 				container["image"] = r.Config.Image
 			case "workspace":
-				container["image"] = r.orcaSpokeImage(w)
+				container["image"] = r.workerImage(w)
 				// The comparison above ignored only telemetry settings in env,
 				// so the expected env is safe to take with the new image.
 				if env, ok := wantWorkspace["env"].([]any); ok && hasWantWorkspace {
 					container["env"] = env
 				}
-				if r.usesOrcaSpoke(w) && hasWantWorkspace {
+				if r.usesWorkerRuntime(w) && hasWantWorkspace {
 					if cmd, ok := wantWorkspace["command"].([]any); ok {
 						container["command"] = cmd
 					}
@@ -1763,6 +1782,7 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 	env := []corev1.EnvVar{{Name: "HOME", Value: "/workspace/home"}, {Name: "GIT_ORIGIN", Value: origin}, {Name: "GIT_HOST", Value: u.Host}, {Name: "GIT_REPOSITORY", Value: w.Spec.Repository}, {Name: "GIT_WORK_BRANCH", Value: "agent/" + identity(w)}, {Name: "GIT_TERMINAL_PROMPT", Value: "0"}, {Name: "HTTPS_PROXY", Value: "http://proxy:3128"}, {Name: "https_proxy", Value: "http://proxy:3128"}, {Name: "HTTP_PROXY", Value: "http://proxy:3128"}, {Name: "http_proxy", Value: "http://proxy:3128"}, {Name: "SSL_CERT_FILE", Value: "/workspace/home/ca-bundle.crt"}, {Name: "NODE_EXTRA_CA_CERTS", Value: "/trust/ca.crt"}, {Name: "REQUESTS_CA_BUNDLE", Value: "/workspace/home/ca-bundle.crt"}}
 	env = append(env, githubWorkerEnv(w)...)
 	env = r.orcaSpokeEnv(w, env)
+	env = r.agentOrchestratorEnv(w, env)
 	mounts := []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "identity", MountPath: "/identity", ReadOnly: true}, {Name: "trust", MountPath: "/trust", ReadOnly: true}, {Name: "model", MountPath: "/run/model", ReadOnly: true}, {Name: "scratch", MountPath: "/tmp"}}
 	workerEnv := env
 	if cellTelemetry {
@@ -1770,10 +1790,13 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 	}
 	workerlabels := labels(w)
 	workerlabels["projects.agentwork.dev/role"] = "worker"
-	workerImage := r.orcaSpokeImage(w)
+	workerImage := r.workerImage(w)
 	workerPorts := []corev1.ContainerPort(nil)
 	if r.usesOrcaSpoke(w) {
 		workerPorts = []corev1.ContainerPort{{Name: "orca", ContainerPort: 6768}}
+	}
+	if r.usesAgentOrchestrator(w) {
+		workerPorts = []corev1.ContainerPort{{Name: "ao", ContainerPort: ao.RemotePort}}
 	}
 	spec := corev1.PodSpec{DNSPolicy: corev1.DNSNone, DNSConfig: dns, RuntimeClassName: &r.Config.RuntimeClass, AutomountServiceAccountToken: boolp(false), ServiceAccountName: "worker", TerminationGracePeriodSeconds: int64p(5), SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: boolp(true), RunAsUser: int64p(1000), RunAsGroup: int64p(1000), FSGroup: int64p(1000)}, InitContainers: []corev1.Container{{Name: "clone", Image: r.Config.bootstrapImage(), Args: []string{"bootstrap"}, Env: env, SecurityContext: security, Resources: workerResources, VolumeMounts: mounts}}, Containers: []corev1.Container{{Name: "workspace", Image: workerImage, Command: r.workerCommand(w), Env: workerEnv, WorkingDir: "/workspace/repo", SecurityContext: security, Resources: workerResources, VolumeMounts: mounts, Ports: workerPorts, ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{"test", "-f", "/workspace/.ready"}}}}}}, Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "workspace"}}}, {Name: "identity", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "git-identity", DefaultMode: int32p(0440)}}}, {Name: "trust", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: "trust"}}}}, {Name: "model", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "model-access", Optional: boolp(true), DefaultMode: int32p(0440)}}}, {Name: "scratch", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}}
 	if serviceProxy {
@@ -1789,6 +1812,15 @@ func (r *Reconciler) objects(ctx context.Context, w *api.ProjectWorkspace, s *co
 		objects = append(objects, route)
 	}
 	if policy := r.orcaSpokeIngressPolicy(w); policy != nil {
+		objects = append(objects, policy)
+	}
+	if svc := r.agentOrchestratorService(w); svc != nil {
+		objects = append(objects, svc)
+	}
+	if route := r.agentOrchestratorRoute(w); route != nil {
+		objects = append(objects, route)
+	}
+	if policy := r.agentOrchestratorIngressPolicy(w); policy != nil {
 		objects = append(objects, policy)
 	}
 	r.Config.WorkerScheduling.Apply(&spec)

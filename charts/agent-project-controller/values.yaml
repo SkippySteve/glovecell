@@ -457,6 +457,12 @@ orchestratorClasses:
   herdr:
     enabled: false
     name: herdr
+  # projects.agentwork.dev/agent-orchestrator: the Agent Orchestrator daemon
+  # in the worker (docs/agent-orchestrator.md). Requires
+  # agentOrchestrator.enabled so the controller registers the adapter.
+  ao:
+    enabled: false
+    name: ao
 # herdr-core in Glovecell workers (docs/herdr.md). Off by default. When
 # enabled, workspaces with OrchestratorClass herdr run `hc server` and publish
 # a hub `--via` recipe ConfigMap. Phone and PC reach them through a hub
@@ -464,6 +470,26 @@ orchestratorClasses:
 herdrCore:
   enabled: false
   className: herdr
+# Agent Orchestrator (AO) in Glovecell workers (docs/agent-orchestrator.md).
+# Off by default. When enabled, workspaces with OrchestratorClass ao run from
+# image (Dockerfile target ao-workspace) and start the AO daemon with its
+# remote listener in LAN mode; AO's desktop and phone apps pair per cell with
+# one-time codes from the console. No AO account, AO Cloud or tunnel.
+agentOrchestrator:
+  enabled: false
+  className: ao
+  # Digest-pinned image from the Dockerfile's ao-workspace target.
+  image: ''
+  # DNS suffix of device-facing cell hosts: <workspace>.<domain>. Empty runs
+  # the daemon but publishes nothing. Set it with a Gateway listener that
+  # terminates TLS and is reachable only from the LAN or VPN: the controller
+  # adds an HTTPRoute and a CiliumNetworkPolicy that lets Traefik reach the
+  # worker's AO port.
+  domain: ''
+  gateway:
+    name: ''
+    namespace: ''
+    sectionName: ''
 # glove-hub (docs/herdr.md): the in-cluster Herdr hub. Off by default. On, the
 # chart adds one namespace with one pod: herdr-core as the hub that phone and
 # PC Herdr reach over SSH, and an enroller that adds each Ready workspace of the
