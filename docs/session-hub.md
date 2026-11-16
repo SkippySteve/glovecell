@@ -225,19 +225,41 @@ inside the cell, and it does not try to be one.
   inspecting egress proxy and network policy, brokered credentials and
   per-cell tokens.
 
+Examples of files the workspace container runs or obeys from the shared
+volume, as found while connecting the apps:
+- **Git:** hooks and `core.fsmonitor` or `core.hooksPath` in `.git/config`.
+  The apps run git all the time.
+- **Orca's login shell:** Orca captures its environment with `$SHELL -ilc env`,
+  which sources `~/.profile` from `/workspace/home`. It does this on every
+  agent check and every Orca terminal.
+- **Orca's settings in `/workspace/orca`:** they include the command each agent
+  is started with.
+- **The `omp` shim in `~/.local/bin`:** Orca's hub slot needs it there. Orca
+  resolves agents with the `PATH` from that login shell, and Debian's
+  `/etc/profile` resets it, so a read-only directory put first on `PATH` would
+  not be seen. A planted `omp` would still be found through `~/.local/bin`.
+
 Consequences for integrations:
-- Nothing that grants hub access may be installed on the shared volume. App
-  shims and configuration that point at the connector live in the image or in
-  read-only mounts, ahead of `$HOME` in `PATH`.
-- Do not rely on hub permission prompts to contain an agent. Use the cell's
-  controls (egress rules, credential grants, repository access) for that.
+- **Placement:** put shims and configuration that point at the connector in
+  the image or a read-only mount wherever the app can find them there.
+  Agent Orchestrator's slots are in the image. Where an app only finds agents
+  through `$HOME` (Orca), the shim lives on the volume. That adds nothing
+  beyond the files the app already runs from it.
+- **Containment:** do not rely on hub permission prompts to contain an agent.
+  Use the cell's controls (egress rules, credential grants, repository access)
+  for that.
+- **Possible later hardening:** give the launcher its own `$HOME` and keep the
+  apps' state out of its reach. That would remove the `$HOME` and
+  app-settings routes. The repository and its `.git` stay shared, because
+  sharing them is the point, so a cell remains one trust zone.
 
 What qualification checks in a disposable cell:
 - **The launcher cannot read the token.** No such file exists there.
 - **A connection without the token is refused.**
 - **The executed-from-volume paths are listed** in the qualification
-  report: git hooks and `core.fsmonitor`, shell rc files, app configuration
-  under `$HOME`. A reader can then see exactly what "speed bump" means for
+  report, per app class: git hooks and `core.fsmonitor`, shell start-up files
+  (including the login shell Orca uses to capture its environment), app
+  settings under `/workspace` (such as Orca's), and shims in `~/.local/bin`. A reader can then see exactly what "speed bump" means for
   their apps.
 
 ## Connecting an app
