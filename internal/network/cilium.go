@@ -40,7 +40,11 @@ type Cilium struct {
 	Gateway                                 *Gateway
 	DirectDNS                               bool
 	// Telemetry, when set, opens worker -> proxy pod 4318 (relay intake) and
-	// scraper -> proxy pod 9464 GET /metrics only (decision GT A).
+	// scraper -> proxy pod 9464 (relay metrics). The 9464 rule is L4 only: an
+	// L7 HTTP rule there sends each scrape through Cilium's Envoy proxy, whose
+	// upstream connection to the pod comes from the node, and the pod's
+	// replies can then be refused by host policies on that node. The relay
+	// itself answers only GET /metrics and GET /healthz.
 	Telemetry *Scraper
 }
 
@@ -165,7 +169,7 @@ func (c Cilium) Objects(ns, uid string, hosts []string) []*unstructured.Unstruct
 		pspec := proxy.Object["spec"].(map[string]any)
 		pspec["ingress"] = append(pspec["ingress"].([]any),
 			map[string]any{"fromEndpoints": []any{cell("worker")}, "toPorts": []any{map[string]any{"ports": []any{port(TelemetryIntakePort)}}}},
-			map[string]any{"fromEndpoints": []any{map[string]any{"matchLabels": scraper}}, "toPorts": []any{map[string]any{"ports": []any{port(TelemetryMetricsPort)}, "rules": map[string]any{"http": []any{map[string]any{"method": "GET", "path": "^/metrics$"}}}}}})
+			map[string]any{"fromEndpoints": []any{map[string]any{"matchLabels": scraper}}, "toPorts": []any{map[string]any{"ports": []any{port(TelemetryMetricsPort)}}}})
 	}
 	return []*unstructured.Unstructured{worker, proxy}
 }
