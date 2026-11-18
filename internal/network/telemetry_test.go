@@ -42,7 +42,8 @@ func TestCellTelemetryRulesOnlyWhenSwitchedOn(t *testing.T) {
 	if encoded(on["proxy"]["egress"]) != encoded(off["proxy"]["egress"]) {
 		t.Fatal("cell telemetry gave the proxy pod new egress")
 	}
-	// Proxy ingress: worker on 4318; only the collector on 9464, GET /metrics only.
+	// Proxy ingress: worker on 4318; only the collector on 9464, at L4 with no
+	// L7 rule (an L7 rule routes scrapes through the node's Envoy proxy).
 	var intake, scrape string
 	for _, rule := range on["proxy"]["ingress"].([]any) {
 		e := encoded(rule)
@@ -57,7 +58,7 @@ func TestCellTelemetryRulesOnlyWhenSwitchedOn(t *testing.T) {
 		t.Fatalf("intake rule wrong: %s", intake)
 	}
 	if !strings.Contains(scrape, `"k8s:io.kubernetes.pod.namespace":"openobserve-collector"`) || strings.Contains(scrape, `"role":"worker"`) ||
-		!strings.Contains(scrape, `"method":"GET"`) || !strings.Contains(scrape, `"path":"^/metrics$"`) {
+		strings.Contains(scrape, `"rules"`) || strings.Contains(intake, `"rules"`) {
 		t.Fatalf("scrape rule wrong: %s", scrape)
 	}
 }

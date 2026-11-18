@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -323,5 +324,45 @@ func TestNonTelemetryPolicyDriftStillRefused(t *testing.T) {
 	_ = r.Update(ctx, u)
 	if err := r.ensure(ctx, w); err == nil || !strings.Contains(err.Error(), "network policy drift") {
 		t.Fatalf("non-telemetry policy drift accepted: %v", err)
+	}
+}
+
+// Cells created while the metrics rule carried an L7 HTTP rule are upgraded
+// to the L4-only rule on the next reconcile, without a drift error.
+func TestMetricsRuleWithL7HTTPIsUpgradedToL4(t *testing.T) {
+	ctx := context.Background()
+	r, w, _ := fixture(t)
+	r.Network = provider{network.Cilium{Telemetry: testScraper}}
+	if err := r.ensure(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	u := &unstructured.Unstructured{}
+	u.SetGroupVersionKind(schema.GroupVersionKind{Group: "cilium.io", Version: "v2", Kind: "CiliumNetworkPolicy"})
+	if err := r.Get(ctx, types.NamespacedName{Namespace: namespace(w), Name: "proxy"}, u); err != nil {
+		t.Fatal(err)
+	}
+	ingress, _, _ := unstructured.NestedSlice(u.Object, "spec", "ingress")
+	found := false
+	for _, rule := range ingress {
+		for _, tp := range rule.(map[string]any)["toPorts"].([]any) {
+			m := tp.(map[string]any)
+			if strings.Contains(fmt.Sprint(m["ports"]), "9464") {
+				m["rules"] = map[string]any{"http": []any{map[string]any{"method": "GET", "path": "^/metrics$"}}}
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no metrics rule in the proxy policy")
+	}
+	_ = unstructured.SetNestedSlice(u.Object, ingress, "spec", "ingress")
+	if err := r.Update(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ensure(ctx, w); err != nil {
+		t.Fatalf("old L7 metrics rule reported as drift: %v", err)
+	}
+	if spec := cnpSpec(t, r, namespace(w), "proxy"); strings.Contains(spec, `"http"`) || strings.Contains(spec, `^/metrics$`) || !strings.Contains(spec, `"port":"9464"`) {
+		t.Fatalf("metrics rule not upgraded to L4: %s", spec)
 	}
 }

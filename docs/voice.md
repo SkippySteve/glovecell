@@ -277,8 +277,11 @@ tag refuses to start. The container argument may be `serve` or
   the gate's Forgejo token are Secret files in that namespace only. Errors
   and logs never include tokens.
 - **Network.** Ingress on 8080 (notify only) is allowed from the listed
-  callers. The cluster policy also restricts it to `POST /v1/notify` at L7.
-  Probes and metrics use 8081. Egress is limited to DNS, the database and
+  callers. The service serves only `POST /v1/notify` there, so the cluster
+  policy needs only the port (L4). Avoid a Cilium L7 HTTP rule on these
+  ports: it routes each connection through Envoy, which connects to the pod
+  from the node, and host policies (Cilium's host firewall) then refuse the
+  pod's replies. Probes and metrics use 8081. Egress is limited to DNS, the database and
   the listed destinations.
 - **Logs carry transcripts.** Keep the service's pod logs out of
   agent-readable log stores; the cluster excludes them.
