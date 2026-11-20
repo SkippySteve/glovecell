@@ -304,7 +304,10 @@ most, and extending is a new approval. Lasting needs use dev links.
 *Consequence*: the design, the build-versus-adopt evaluation and the build
 plan are in [port-tunnels.md](port-tunnels.md). The forward command is an
 `operator-cli` component under [in-cluster.md](../in-cluster.md) on those
-terms. Open: forwards without a scan (PT2) and T3's own tunnel in cells (PT3).
+terms. The ingress listener runs as its own container in the gateway pod,
+without the cell CA key or credentials, and approvals reach it live (not
+through the policy file). Open: forwards and scanning (PT2) and T3's own
+tunnel in cells (PT3; its guard is a test, #180).
 
 ## Provider login source (decided in D13)
 
