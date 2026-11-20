@@ -4,6 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="dark light">
+  <!-- UI SDK adds its few behaviour rules as constructed style sheets when this tag
+       has no nonce, so the CSP needs no 'unsafe-inline' for styles. -->
+  <meta property="csp-nonce">
   <title>Sandboxes</title>
   <!-- Sets <html data-theme> before first paint; a file because the CSP allows no inline script. -->
   <script src="/assets/theme-init.js"></script>

@@ -38,6 +38,31 @@ possible. When custom code is still the better choice, say why in the PR under
 "Alternatives considered" (what was evaluated and why it didn't fit). Proposals
 that replace existing custom code with such a project are welcome.
 
+## UI SDK scope in the web console
+
+The console in `web/` is built with OpenUI (`@openuidev/react-ui` components,
+imported one at a time in `web/src/ui.ts`, and OpenUI Lang for generated
+screens). UI SDK (`@ui-sdk/react`) is a pilot for interaction behaviour only.
+This rule overrides the vendored `ui-sdk` skill (`.claude/skills/ui-sdk`),
+including its "Don't hand-roll what we ship":
+
+- **OpenUI first.** Use an OpenUI component wherever OpenUI ships one (button,
+  card, input, tabs, table, tag, callout and the rest). Don't replace an OpenUI
+  component with a UI SDK one, and don't restyle UI SDK parts to stand in for
+  OpenUI.
+- **UI SDK only for behaviour OpenUI doesn't ship:** listbox and combobox
+  (including command lists), dialog and alert dialog, menu, popover, and drag
+  and drop. Put OpenUI components inside UI SDK parts where they fit, like an
+  OpenUI Card inside a UI SDK Dialog.
+- Style UI SDK parts from their `data-*` state attributes and the console's
+  existing CSS tokens; `web/src/layers.css` declares `@layer ui-sdk` first.
+  Under the console CSP UI SDK needs `<meta property="csp-nonce">` (no nonce)
+  in `web/index.html`; `web/src/factory/csp.test.ts` checks it.
+- Pin exact `@ui-sdk/*` versions, and update the vendored skill from the same
+  upstream release (its `NOTICE` says how).
+- Widget tests run in jsdom (`web/src/test/dom.ts`): test keyboard use, focus
+  return, Escape and accessible names.
+
 ## Glovecell runs in the cluster
 
 Steve's rule (2026-11-10), for every component: whatever Glovecell needs to work

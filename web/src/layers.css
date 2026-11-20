@@ -1,0 +1,4 @@
+/* Cascade layers, declared before any other stylesheet. UI SDK adds the little CSS
+ * its behaviours need (keep closed parts hidden, reset popover chrome) in the
+ * ui-sdk layer, so every console style here, unlayered, wins over it. */
+@layer ui-sdk;
