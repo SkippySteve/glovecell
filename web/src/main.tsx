@@ -1,4 +1,4 @@
-import {lazy, StrictMode, Suspense} from 'react';
+import {StrictMode, Suspense} from 'react';
 import {createRoot} from 'react-dom/client';
 import './layers.css';
 import '@openuidev/react-ui/components.css';
@@ -20,10 +20,12 @@ import {useRoute} from './router';
 import {AppShell} from './shell/Shell';
 import {ShellProvider} from './shell/state';
 import {Callout} from './ui';
+import {ChunkBoundary, lazyChunk} from './chunk';
 
-// Reports pull in the OpenUI Lang parser and renderer, so they load on first use.
-const RunList = lazy(() => import('./factory/Reports').then(m => ({default: m.RunList})));
-const RunReport = lazy(() => import('./factory/Reports').then(m => ({default: m.RunReport})));
+// Reports pull in the OpenUI Lang parser and renderer, so they load on first use
+// (lazyChunk: a chunk gone after an upgrade reloads the page once).
+const RunList = lazyChunk(() => import('./factory/Reports').then(m => ({default: m.RunList})));
+const RunReport = lazyChunk(() => import('./factory/Reports').then(m => ({default: m.RunReport})));
 
 function Toasts() {
   const {toasts} = useData();
@@ -42,7 +44,7 @@ function App() {
           : route.view === 'attention' ? <Attention />
           : route.view === 'project' ? <ProjectWorkspace name={route.name} section={route.section} />
           : route.view === 'sandbox' ? <SandboxWorkspace id={route.id} section={route.section} />
-          : route.view === 'runs' || route.view === 'run' ? <Suspense fallback={<p className="empty">Loading…</p>}>{route.view === 'run' ? <RunReport id={route.id} /> : <RunList />}</Suspense>
+          : route.view === 'runs' || route.view === 'run' ? <ChunkBoundary what="reports"><Suspense fallback={<p className="empty">Loading…</p>}>{route.view === 'run' ? <RunReport id={route.id} /> : <RunList />}</Suspense></ChunkBoundary>
           : <Home scope={route.view === 'sandboxes' ? 'sandbox' : route.view === 'projects' ? 'project' : 'all'} />}
       </AppShell>
       <Toasts />
