@@ -19,14 +19,38 @@ it('matches the stylesheet react-lang injects and the hash the server allows', (
 // runtime. With <meta property="csp-nonce"> and no nonce it adds them as constructed
 // style sheets, which style-src does not govern; without the tag it would write <style>
 // elements, which the policy refuses. Nothing it ships may need eval or inline styles.
-it('lets UI SDK run under the console CSP without unsafe-inline or unsafe-eval', () => {
-  const html = readFileSync(join(__dirname, '../../index.html'), 'utf8');
-  expect(html).toMatch(/<meta property="csp-nonce">/);
-  expect(html).not.toMatch(/csp-nonce"[^>]*nonce=/);
-  const server = readFileSync(join(__dirname, '../../../internal/web/server.go'), 'utf8');
-  const policy = server.match(/"Content-Security-Policy", "([^"]+)"/)?.[1] ?? '';
-  expect(policy).toContain("style-src 'self'");
-  expect(policy).not.toMatch(/unsafe-inline|unsafe-eval/);
+const WEB = join(__dirname, '../../../internal/web');
+
+// Every Content-Security-Policy the Go server sets, as the whole Go expression on its line
+// (the console's policy concatenates the spinner hash, so it spans several literals).
+function policies(): {file: string; expr: string}[] {
+  const found: {file: string; expr: string}[] = [];
+  for (const file of readdirSync(WEB).filter(f => f.endsWith('.go') && !f.endsWith('_test.go'))) {
+    for (const line of readFileSync(join(WEB, file), 'utf8').split('\n')) {
+      const m = line.match(/Header(?:\(\))?\.(?:Set|Add)\("Content-Security-Policy",\s*(.+)\)\s*$/);
+      if (m) found.push({file, expr: m[1]});
+    }
+  }
+  return found;
+}
+
+it('keeps every console policy free of unsafe-inline and unsafe-eval', () => {
+  const found = policies();
+  // server.go (the console) and sandbox_control.go (the proxied sandbox-control pages).
+  expect(found.map(p => p.file).sort()).toEqual(expect.arrayContaining(['sandbox_control.go', 'server.go']));
+  for (const {file, expr} of found) {
+    expect(expr, file).toMatch(/style-src 'self'/);
+    expect(expr, file).toMatch(/script-src 'self'/);
+    expect(expr, file).not.toMatch(/unsafe-inline|unsafe-eval|unsafe-hashes|style-src-attr|style-src-elem|'nonce-|\*/);
+  }
+});
+
+it('lets UI SDK add its rules as constructed style sheets, in the source and the built page', () => {
+  for (const page of [join(__dirname, '../../index.html'), join(WEB, 'dist/index.html')]) {
+    const html = readFileSync(page, 'utf8');
+    expect(html, page).toMatch(/<meta property="csp-nonce">/);
+    expect(html, page).not.toMatch(/csp-nonce"[^>]*nonce=/);
+  }
   const files = (dir: string): string[] => readdirSync(dir, {withFileTypes: true}).flatMap(e => e.isDirectory() ? files(join(dir, e.name)) : e.name.endsWith('.js') ? [join(dir, e.name)] : []);
   const shipped = ['core', 'react'].flatMap(p => files(join(__dirname, '../../node_modules/@ui-sdk', p, 'dist')).filter(f => !f.includes('/testing')));
   expect(shipped.length).toBeGreaterThan(100);

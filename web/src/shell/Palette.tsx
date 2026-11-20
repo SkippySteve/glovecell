@@ -2,6 +2,7 @@
 // section. UI SDK's Dialog keeps focus inside and makes the page inert; its
 // Command is the combobox over the results listbox. Entries only navigate.
 // Ranking stays ours (palette.ts): Command gets filter={false} and keeps that order.
+// launcher.tsx loads this module on the first Ctrl-K or openPalette and mounts it open.
 import {Command, CommandInput, CommandItem, CommandList, createCommandController} from '@ui-sdk/react/command';
 import {Dialog, DialogClose, DialogContent, DialogTitle} from '@ui-sdk/react/dialog';
 import {useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent} from 'react';
@@ -10,12 +11,10 @@ import {levelWord, projectAccess, sandboxAccess} from '../access/summary';
 import {useData} from '../data';
 import {existingKind, orcaRuntimeId} from '../orca';
 import {navigate, type Route} from '../router';
-import {buildCommands, isPaletteShortcut, KIND_LABEL, parseRecent, pushRecent, searchCommands, shortcutLabel, type Command as PaletteCommand} from './palette';
+import {OPEN_EVENT} from './launcher';
+import {buildCommands, isPaletteShortcut, KIND_LABEL, parseRecent, pushRecent, searchCommands, type Command as PaletteCommand} from './palette';
 
-const OPEN_EVENT = 'console-palette-open';
 const RECENT_KEY = 'console-palette-recent';
-export const openPalette = () => window.dispatchEvent(new Event(OPEN_EVENT));
-export const paletteShortcut = () => shortcutLabel(typeof navigator === 'undefined' ? '' : navigator.platform || navigator.userAgent);
 
 function readRecent(): string[] {
   try { return parseRecent(localStorage.getItem(RECENT_KEY)); } catch { return []; }
@@ -24,7 +23,8 @@ function saveRecent(id: string) {
   try { localStorage.setItem(RECENT_KEY, JSON.stringify(pushRecent(readRecent(), id))); } catch { /* private mode: no recents */ }
 }
 
-export function CommandPalette({route}: {route: Route}) {
+// openedFrom: where focus was when the launcher got the first request.
+export function CommandPalette({route, openedFrom}: {route: Route; openedFrom?: HTMLElement | null}) {
   const {existing, projects, session} = useData();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -49,8 +49,8 @@ export function CommandPalette({route}: {route: Route}) {
   const byId = useMemo(() => new Map(results.map(c => [c.id, c])), [results]);
   const recentSet = useMemo(() => new Set(recent), [recent]);
 
-  const show = useCallback(() => {
-    opener.current = document.activeElement as HTMLElement | null;
+  const show = useCallback((from: HTMLElement | null = document.activeElement as HTMLElement | null) => {
+    opener.current = from;
     picked.current = false;
     setRecent(readRecent());
     setQuery(''); setOpen(true);
@@ -71,16 +71,20 @@ export function CommandPalette({route}: {route: Route}) {
       e.preventDefault();
       if (isOpen.current) setOpen(false); else show();
     };
+    const onOpen = () => show();
     window.addEventListener('keydown', onKey);
-    window.addEventListener(OPEN_EVENT, show);
-    return () => { window.removeEventListener('keydown', onKey); window.removeEventListener(OPEN_EVENT, show); };
+    window.addEventListener(OPEN_EVENT, onOpen);
+    return () => { window.removeEventListener('keydown', onKey); window.removeEventListener(OPEN_EVENT, onOpen); };
   }, [show]);
+  // Mounted by the launcher's first request: open at once.
+  useEffect(() => { if (openedFrom !== undefined) show(openedFrom); }, [openedFrom, show]);
 
   // Command pages with PageUp/PageDown but leaves Home and End to the caret; the
   // palette also jumps with Ctrl+Home/End, as before. Esc closes at once rather
   // than first clearing the search (Command's default).
   const onKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Escape') { e.preventDefault(); setOpen(false); return; }
+    // Not while an input method is composing: there Escape cancels the composition.
+    if (e.key === 'Escape' && !e.nativeEvent.isComposing && e.keyCode !== 229) { e.preventDefault(); setOpen(false); return; }
     if ((e.key === 'Home' || e.key === 'End') && e.ctrlKey && results.length) {
       e.preventDefault();
       controller.setValue(results[e.key === 'Home' ? 0 : results.length - 1].id);
@@ -90,7 +94,7 @@ export function CommandPalette({route}: {route: Route}) {
   const status = !query.trim() ? 'Type to search pages, sandboxes, projects and sections.' : results.length ? `${results.length} result${results.length === 1 ? '' : 's'}` : 'No matches';
   return (
     <Dialog open={open} onOpenChange={next => setOpen(next)}>
-      <DialogContent className="palette" finalFocus={() => picked.current ? document.querySelector<HTMLElement>('#view') : opener.current}>
+      <DialogContent className="palette" initialFocus=".palette-input" finalFocus={() => picked.current ? document.querySelector<HTMLElement>('#view') : opener.current}>
         <Command className="palette-body" controller={controller} filter={false} loop
           query={query} onQueryChange={next => setQuery(next)}
           onAction={id => choose(byId.get(id))}

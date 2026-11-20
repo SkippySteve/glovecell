@@ -2,7 +2,7 @@
 import {accessibleName, byRole, click, flush, press, render, type} from '../test/dom';
 import {act} from 'react';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
-import {CommandPalette, openPalette} from './Palette';
+import {openPalette, PaletteLauncher} from './launcher';
 
 vi.mock('../data', () => ({
   useData: () => ({
@@ -19,14 +19,19 @@ const options = () => byRole('option');
 const highlighted = () => options().filter(o => o.hasAttribute('data-highlighted'));
 const activeOption = () => document.getElementById(input().getAttribute('aria-activedescendant') ?? '');
 
-async function openFrom(button: HTMLButtonElement) {
-  button.focus();
-  await press('k', {ctrlKey: true}, button);
+// The first request also loads the palette's chunk (launcher.tsx); later ones reuse it.
+async function opened() {
+  for (let i = 0; i < 50 && !dialog(); i++) await flush();
   expect(dialog()).toBeTruthy();
+}
+async function openFrom(button: HTMLButtonElement) {
+  act(() => button.focus());
+  await press('k', {ctrlKey: true}, button);
+  await opened();
 }
 
 function page() {
-  render(<><button id="opener" onClick={openPalette}>Search</button><main id="view" tabIndex={-1} /><CommandPalette route={{view: 'home'} as never} /></>);
+  render(<><button id="opener" onClick={openPalette}>Search</button><main id="view" tabIndex={-1} /><PaletteLauncher route={{view: 'home'} as never} /></>);
   return document.getElementById('opener') as HTMLButtonElement;
 }
 
@@ -34,6 +39,13 @@ beforeEach(() => { location.hash = '#/'; localStorage.clear(); });
 afterEach(() => { location.hash = ''; });
 
 describe('command palette', () => {
+  it('stays unloaded until the first request', async () => {
+    page();
+    await flush();
+    expect(dialog()).toBeUndefined();
+    expect(document.querySelector('[data-slot]')).toBeNull();
+  });
+
   it('is a named modal dialog whose search field is a named combobox over a named listbox', async () => {
     await openFrom(page());
     expect(accessibleName(dialog())).toBe('Go to');
@@ -82,6 +94,27 @@ describe('command palette', () => {
     expect(JSON.parse(localStorage.getItem('console-palette-recent')!)).toContain('section:s:orca-pilot:internet');
   });
 
+  it('puts focus in the search field when a tap opens it, so a phone shows the keyboard', async () => {
+    const opener = page();
+    await click(opener, 'touch');
+    await opened();
+    await press('Escape', {}, input());
+    await click(opener, 'touch');
+    await opened();
+    await flush();
+    expect(document.activeElement).toBe(input());
+  });
+
+  it('lets Escape end an input method composition without closing', async () => {
+    await openFrom(page());
+    await type(input(), 'にほ');
+    await press('Escape', {isComposing: true, keyCode: 229} as KeyboardEventInit);
+    expect(dialog()).toBeTruthy();
+    expect(input().value).toBe('にほ');
+    await press('Escape');
+    expect(dialog()).toBeUndefined();
+  });
+
   it('says when nothing matches', async () => {
     await openFrom(page());
     await type(input(), 'zzzzqqq');
@@ -116,7 +149,7 @@ describe('command palette', () => {
     const opener = page();
     opener.focus();
     await click(opener);
-    expect(dialog()).toBeTruthy();
+    await opened();
     await flush();
     expect(document.activeElement).toBe(input());
     // jsdom does not move focus on Tab by itself; the wraps at either end are the trap.

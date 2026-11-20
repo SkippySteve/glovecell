@@ -8,7 +8,7 @@ import {attentionHref, breadcrumbs, homeHref, hubHref, newSandboxHref, orcaHref,
 import {existingState, projectState} from '../state';
 import {ThemeSwitcher} from '../ThemeSwitcher';
 import {Button} from '../ui';
-import {CommandPalette, openPalette, paletteShortcut} from './Palette';
+import {openPalette, PaletteLauncher, paletteShortcut} from './launcher';
 import {useShell} from './state';
 
 // How many workspaces each sidebar group lists before linking to the full list.
@@ -167,7 +167,7 @@ export function AppShell({route, workspace, children}: {route: Route; workspace:
           {children}
         </main>
       </div>
-      <CommandPalette route={route} />
+      <PaletteLauncher route={route} />
     </>
   );
 }

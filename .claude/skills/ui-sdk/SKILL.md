@@ -11,9 +11,12 @@ ui-sdk is a library of UI behaviors: keyboard navigation, focus, selection, dism
 
 Added for this repository; not part of the upstream skill (see NOTICE). The
 "UI SDK scope" rule in AGENTS.md comes first: OpenUI is the console's component
-library, and UI SDK is only for interaction behaviour OpenUI doesn't ship. Where
+library, and UI SDK is only for interaction behaviour OpenUI doesn't ship
+(listbox, combobox, command list, dialog, menu, popover, drag and drop). Where
 OpenUI covers a component, "Don't hand-roll what we ship" below doesn't apply:
-keep the OpenUI component and don't replace it with a UI SDK one.
+keep the OpenUI component and don't replace it with a UI SDK one. Skip step 3,
+"Make it agent-ready", and its agent test: no `createAgent`, agent tools or
+WebMCP here, and no web components or `web.css`.
 
 ## Read first
 

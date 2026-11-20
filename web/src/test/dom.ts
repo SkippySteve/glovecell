@@ -62,11 +62,11 @@ export async function press(key: string, init: KeyboardEventInit = {}, target: E
   await flush();
 }
 
-export async function click(target: Element) {
+export async function click(target: Element, pointerType: 'mouse' | 'touch' = 'mouse') {
   act(() => {
-    target.dispatchEvent(new PointerEvent('pointerdown', {bubbles: true, cancelable: true, button: 0, pointerType: 'mouse'}));
+    target.dispatchEvent(new PointerEvent('pointerdown', {bubbles: true, cancelable: true, button: 0, pointerType}));
     target.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true, button: 0}));
-    target.dispatchEvent(new PointerEvent('pointerup', {bubbles: true, cancelable: true, button: 0, pointerType: 'mouse'}));
+    target.dispatchEvent(new PointerEvent('pointerup', {bubbles: true, cancelable: true, button: 0, pointerType}));
     target.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, cancelable: true, button: 0}));
     target.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, button: 0}));
   });
