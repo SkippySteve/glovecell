@@ -44,12 +44,7 @@ future changes.
 | Component | Today | Replacement |
 | --- | --- | --- |
 | `register --watch` (desktop registrar) | systemd user unit on Steve's desktop (installed 2026-11-08), running with the operator's **admin** kubeconfig; FUSE-mounts each Ready cell via `kubectl exec` and runs `orca repo add` | In-cluster `hubspoke` already enrolls each Ready cell and its `spec.repositories` with the Orca hub (APC #118/#119). The desktop Orca app connects to the hub as a client, like the phone. Retire the unit once that path works on the desktop (add before remove). APC #132 (extending the registrar) was closed for this reason |
-| `hubspoke` (Orca hub) | `infra/agent-workplace/orca-hub` in the infra repo | Chart hub Deployment (`hubspoke.hub`, already templated off by default) as its own pod; the infra repo only sets values |
+| `hubspoke` (Orca hub) | manifests in the operator's GitOps repository | Chart hub Deployment (`hubspoke.hub`, already templated off by default) as its own pod; the infra repo only sets values |
 | `hub-admin` (console Hub pairing, APC #126) | Same pod as `hubspoke`: started by `hub-entry` only when `HUB_ADMIN_ENABLED=true` | Moves with `hubspoke` into the chart hub Deployment; no separate migration |
-| `provider-broker` | `infra/agent-workplace/provider-broker` | Chart template, own Deployment and ServiceAccount, off by default |
-| `github-broker` | `infra/agent-workplace/github-broker` | Chart template, own Deployment holding the GitHub App credential, off by default |
-
-Related, outside this repository: the desktop's `workplace-otel-agents-forward`
-unit (`kubectl port-forward` to the telemetry intake, also with the admin
-kubeconfig) is the same pattern for the infra's agent telemetry and is tracked in
-the infra repository's priorities.
+| `provider-broker` | manifests in the operator's GitOps repository | Chart template, own Deployment and ServiceAccount, off by default |
+| `github-broker` | manifests in the operator's GitOps repository | Chart template, own Deployment holding the GitHub App credential, off by default |
