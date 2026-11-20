@@ -90,7 +90,7 @@
 .page.workspace-page > .shell-crumbs { padding-top: var(--openui-space-l); margin-bottom: 0; }
 
 /* Command palette */
-.palette { width: min(640px, calc(100vw - 24px)); max-height: min(560px, calc(100vh - 96px)); margin: 12vh auto auto; padding: 0; border: 1px solid var(--shell-border-strong); border-radius: 12px; background: var(--shell-surface-2); color: var(--shell-text); box-shadow: var(--shell-shadow); overflow: hidden; }
+.palette { position: fixed; inset: 0; width: min(640px, calc(100vw - 24px)); height: fit-content; max-height: min(560px, calc(100vh - 96px)); margin: 12vh auto auto; padding: 0; border: 1px solid var(--shell-border-strong); border-radius: 12px; background: var(--shell-surface-2); color: var(--shell-text); box-shadow: var(--shell-shadow); overflow: hidden; }
 .palette::backdrop { background: var(--shell-overlay); }
 .palette-body { display: flex; flex-direction: column; max-height: min(560px, calc(100vh - 96px)); }
 .palette-field { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--shell-border); }
@@ -100,9 +100,9 @@
 .palette-input::placeholder { color: var(--shell-subtle); }
 .palette-close { min-height: 28px; padding: 0 8px; border: 1px solid var(--shell-border); border-radius: 6px; background: var(--shell-surface); color: var(--shell-muted); font: 12px var(--shell-font-mono); cursor: pointer; }
 .palette-close:focus-visible { outline: var(--shell-focus-ring); outline-offset: 2px; }
-.palette-list { list-style: none; margin: 0; padding: 6px; overflow-y: auto; overscroll-behavior: contain; flex: 1 1 auto; }
+.palette-list { margin: 0; padding: 6px; overflow-y: auto; overscroll-behavior: contain; flex: 1 1 auto; }
 .palette-option { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto; align-items: baseline; gap: 4px 12px; padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 14px; }
-.palette-option[aria-selected=true] { background: var(--shell-accent-soft); box-shadow: inset 3px 0 0 var(--shell-accent); }
+.palette-option[data-highlighted] { background: var(--shell-accent-soft); box-shadow: inset 3px 0 0 var(--shell-accent); }
 .palette-title { font-weight: 600; overflow-wrap: anywhere; }
 .palette-in { font-weight: 400; color: var(--shell-muted); }
 .palette-context { color: var(--shell-muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

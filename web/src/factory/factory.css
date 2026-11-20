@@ -27,5 +27,7 @@
 .factory-gate { border-color: var(--openui-border-alert-emphasis); }
 .factory-gate p { margin: 0; }
 .factory-gate-actions { display: flex; flex-wrap: wrap; gap: var(--openui-space-s); }
+.factory-confirm-dialog { position: fixed; inset: 0; width: min(640px, calc(100vw - 24px)); height: fit-content; max-height: calc(100vh - 48px); margin: 12vh auto auto; padding: 0; border: 0; background: none; overflow: auto; }
+.factory-confirm-dialog::backdrop { background: var(--console-overlay, var(--openui-overlay)); }
 .factory-confirm { gap: var(--openui-space-s); border-color: var(--openui-border-accent-emphasis); }
 .factory-confirm .copy-field code { white-space: pre-wrap; overflow-wrap: anywhere; }

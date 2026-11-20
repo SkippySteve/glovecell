@@ -38,6 +38,45 @@ possible. When custom code is still the better choice, say why in the PR under
 "Alternatives considered" (what was evaluated and why it didn't fit). Proposals
 that replace existing custom code with such a project are welcome.
 
+## UI SDK scope in the web console
+
+The console in `web/` is built with OpenUI (`@openuidev/react-ui` components,
+imported one at a time in `web/src/ui.ts`, and OpenUI Lang for generated
+screens). UI SDK (`@ui-sdk/react`) is a pilot for interaction behaviour only.
+This rule overrides the vendored `ui-sdk` skill (`.claude/skills/ui-sdk`) in
+this repository, including its "Don't hand-roll what we ship" and its
+"every path ends agent-ready" steps:
+
+- **OpenUI first.** Use an OpenUI component wherever OpenUI ships one (Button,
+  Input, TextArea, Card, Tabs, Table, Tag, Callout, Select, CheckBoxItem and
+  the rest). Never replace an OpenUI component with a UI SDK one (no UI SDK
+  Button, Input, Select, Switch or Tabs), and don't restyle UI SDK parts to
+  stand in for OpenUI.
+- **UI SDK only for behaviour OpenUI doesn't ship:** listbox and combobox
+  (including command lists), dialog and alert dialog, menu, popover, and drag
+  and drop. Where both libraries have a component:
+  - dialogs use UI SDK `Dialog` or `AlertDialog`, not OpenUI `Modal` (it has
+    no focus trap, no focus return and leaves the page usable);
+  - a plain choice from a list uses OpenUI `Select`; UI SDK `Combobox` or
+    `Command` only when the list is searched or filtered as you type.
+  Put OpenUI components inside UI SDK parts where they fit, like an OpenUI
+  Card and Buttons inside a UI SDK Dialog.
+- **No agent-ready path here.** Don't add `createAgent`, agent tools, WebMCP
+  (`registerTools`, `document.modelContext`) or the skill's agent tests, and
+  don't use UI SDK's web components, `web.css` or the no-build
+  `ui-sdk.dev/web.js` path. The console's tests are the ones below.
+- Style UI SDK parts from their `data-*` state attributes and the console's
+  existing CSS tokens; `web/src/layers.css` declares `@layer ui-sdk` first.
+  Under the console CSP UI SDK needs `<meta property="csp-nonce">` (no nonce)
+  in `web/index.html`; `web/src/factory/csp.test.ts` checks it.
+- Load UI SDK widgets lazily where they aren't on every page (the command
+  palette loads from `web/src/shell/launcher.tsx` on first use).
+- Pin exact `@ui-sdk/*` versions, and update the vendored skill from the same
+  release; `web/src/shell/skill.test.ts` fails when they differ.
+- Widget tests run in jsdom (`web/src/test/dom.ts`): test keyboard use, focus
+  return, Escape and accessible names. `npm test` runs in the image build
+  (`Dockerfile`, console stage).
+
 ## Glovecell runs in the cluster
 
 Steve's rule (2026-11-10), for every component: whatever Glovecell needs to work

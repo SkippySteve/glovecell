@@ -1,5 +1,6 @@
 import {lazy, StrictMode, Suspense} from 'react';
 import {createRoot} from 'react-dom/client';
+import './layers.css';
 import '@openuidev/react-ui/components.css';
 import './theme.css';
 import './base.css';

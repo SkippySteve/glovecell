@@ -1,7 +1,9 @@
 // Factory run reports: a list of collected runs and one projected report per run.
 // The report is OpenUI Lang rendered with reportLibrary; its only action is a gate
-// decision, which is checked against the run record and confirmed here, in console UI.
+// decision, which is checked against the run record and confirmed here, in console UI:
+// a UI SDK modal Dialog (focus trap, Escape, focus back to the gate button) around an OpenUI Card.
 import {Renderer, type ActionEvent} from '@openuidev/react-lang';
+import {Dialog, DialogContent, DialogDescription, DialogTitle} from '@ui-sdk/react/dialog';
 import {useEffect, useMemo, useState} from 'react';
 import {useData} from '../data';
 import {getRun, gateCommand, listRuns, type RunSummary} from './api';
@@ -96,17 +98,21 @@ export function RunReport({id}: {id: string}) {
         </div>
       </div>
       <RunStatusPanel record={record} />
-      {decision ? (
-        <Card variant="sunk" width="full" className="factory-confirm" role="dialog" aria-labelledby="factory-confirm-title">
-          <h2 id="factory-confirm-title">Confirm decision: {decision.option}</h2>
-          <p>{decision.question}</p>
-          <p className="muted">The console cannot reach the Orca runtime yet. Run this command from a machine with cluster access to record the decision:</p>
-          <div className="copy-field"><code>{decision.command}</code>
-            <Button size="small" variant="secondary" onClick={async () => { try { await navigator.clipboard.writeText(decision.command); setCopied(true); } catch { toast('Copy failed; select the command instead.', true); } }}>{copied ? 'Copied' : 'Copy'}</Button>
-          </div>
-          <div className="actions"><Button size="small" variant="tertiary" onClick={() => setDecision(null)}>Close</Button></div>
-        </Card>
-      ) : null}
+      <Dialog open={decision !== null} onOpenChange={next => { if (!next) setDecision(null); }}>
+        <DialogContent className="factory-confirm-dialog">
+          {decision ? (
+            <Card variant="sunk" width="full" className="factory-confirm">
+              <DialogTitle>Confirm decision: {decision.option}</DialogTitle>
+              <DialogDescription>{decision.question}</DialogDescription>
+              <p className="muted">The console cannot reach the Orca runtime yet. Run this command from a machine with cluster access to record the decision:</p>
+              <div className="copy-field"><code>{decision.command}</code>
+                <Button size="small" variant="secondary" onClick={async () => { try { await navigator.clipboard.writeText(decision.command); setCopied(true); } catch { toast('Copy failed; select the command instead.', true); } }}>{copied ? 'Copied' : 'Copy'}</Button>
+              </div>
+              <div className="actions"><Button size="small" variant="tertiary" onClick={() => setDecision(null)}>Close</Button></div>
+            </Card>
+          ) : null}
+        </DialogContent>
+      </Dialog>
       <div className="factory-render"><Renderer response={report} library={reportLibrary} isStreaming={false} onAction={onAction} /></div>
     </div>
   );

@@ -1,0 +1,11 @@
+ui-sdk agent skill
+Copyright 2026 Vercel, Inc. Licensed under the Apache License, Version 2.0 (LICENSE).
+
+Copied from packages/core/skills/ui-sdk in https://github.com/vercel-labs/ui at
+commit f01f1739644ce83a0ba09fafc591d4050a2bbe83 ("chore: version packages (beta)",
+the @ui-sdk/core 0.1.0-beta.13 release; the same files ship in that npm package),
+not installed with `npx skills add`. To update it, copy the folder again from the
+commit of the @ui-sdk/core version web/package.json pins, and change this notice.
+
+Changed here: SKILL.md has one added section, "Scope in this repository", which
+points to the UI SDK scope rule in AGENTS.md. Every other file is unmodified.

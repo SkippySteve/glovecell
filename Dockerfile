@@ -4,13 +4,19 @@ ARG GO_IMAGE=golang:1.27.4-alpine3.23@sha256:146e3b9c7c1e2ec3d3f5348c8a686151a75
 ARG RUNTIME_IMAGE=alpine:3.23@sha256:ff7f0c727dd796aa36787bfcd9a64bf35a6ce72a73451b3359fde849b6703d63
 ARG NODE_IMAGE=node:24.22.2-alpine3.23@sha256:9b69af715c7f9d038150b54ccccbaeffa9064bbc93e2904c29591ca097316af1
 
-# Console UI. Rebuilt from the lockfile so the image never trusts the committed bundle.
+# Console UI. Rebuilt from the lockfile so the image never trusts the committed bundle,
+# then tested against that build. Some tests read files outside web/: the Go server's
+# CSPs and run-record copies (internal/web), the agent report prompt
+# (docs/factory) and the vendored UI SDK skill.
 FROM ${NODE_IMAGE} AS console
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json web/.npmrc ./
 RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
+COPY internal/web/ /src/internal/web/
+COPY docs/factory/ /src/docs/factory/
+COPY .claude/skills/ui-sdk/ /src/.claude/skills/ui-sdk/
 COPY web/ ./
-RUN npm run build
+RUN npm run build && npm test
 
 FROM ${GO_IMAGE} AS build
 ARG VERSION=dev
@@ -31,6 +37,8 @@ RUN apk add --no-cache ca-certificates 'git>=2.52.1-r0' openssh-client \
     && apk upgrade --no-cache openssh-client openssh-client-common openssh-keygen \
     && addgroup -g 1000 agent && adduser -D -u 1000 -G agent agent
 COPY --from=build /agent-project-controller /usr/local/bin/agent-project-controller
+# The console embedded in the binary bundles UI SDK, React and OpenUI (third_party/README.md).
+COPY third_party/licenses/ /usr/share/agent-project-controller/licenses/
 USER 1000:1000
 ENTRYPOINT ["/usr/local/bin/agent-project-controller"]
 CMD ["controller"]
