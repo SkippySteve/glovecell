@@ -5,7 +5,7 @@ misconfigurations:
   # Provider broker sample: the broker must exec into its owner pods to read the
   # offline login. The Role already names exactly those pods (resourceNames);
   # Trivy flags any pods/exec regardless. The real deployment adds admission
-  # policies (infra repo infra/agent-workplace/provider-broker/).
+  # policies (the operator's GitOps repository).
   - id: KSV-0053
     paths:
       - config/samples/provider-broker.yaml

@@ -120,6 +120,38 @@ func TestComponentsRunInTheCluster(t *testing.T) {
 	t.Logf("remaining exceptions: %v", exceptions)
 }
 
+// This repository is public (AGENTS.md): an exception says where a component
+// runs in generic words, never as a deployment's repository or path.
+var deploymentReference = regexp.MustCompile(`[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+`)
+
+func exceptionLocationProblem(where string) string {
+	if m := deploymentReference.FindString(where); m != "" {
+		return "names a repository or path (" + m + "); describe the place generically, such as \"the operator's GitOps repository\""
+	}
+	return ""
+}
+
+func TestExceptionsNameNoDeploymentRepository(t *testing.T) {
+	for name, c := range loadComponents(t) {
+		if c.Where == "" {
+			continue
+		}
+		if problem := exceptionLocationProblem(c.Where); problem != "" {
+			t.Errorf("%s: where %s", name, problem)
+		}
+	}
+	for where, ok := range map[string]bool{
+		"the operator's GitOps repository (provider-broker manifests outside this chart)": true,
+		"operator desktop: systemd user unit, runs with the operator's admin kubeconfig":  true,
+		"owner/infra infra/agent-workplace/provider-broker":                               false,
+		"manifests under apps/hub in the deployment":                                      false,
+	} {
+		if got := exceptionLocationProblem(where) == ""; got != ok {
+			t.Errorf("exceptionLocationProblem(%q) passes = %v, want %v", where, got, ok)
+		}
+	}
+}
+
 // Files allowed to mention desktop services: they document existing
 // exceptions or this rule. Remove a file once its exception is retired.
 var desktopServiceDocs = map[string]bool{
