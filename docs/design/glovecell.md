@@ -388,6 +388,10 @@ card. A change to the directory's dependencies or files requires a new
 approval. Ingress to the sandbox pod is allowed only from the gateway, and
 only for approved ports.
 
+Previews, dev links and operator port forwards for every client app, with
+approval cards, expiries and the build plan, are designed in
+[port-tunnels.md](port-tunnels.md) (D16).
+
 ### 4.8 Audit of each request
 
 One metadata record per decision: time, cell, request ID, scheme, host, port,

@@ -279,6 +279,36 @@ is phase 2. Details: [voice.md](voice.md).
 - Voice is never identity on its own. The verified device is the identity, and
   the spoken code ties the decision to the change that was summarised.
 
+## D16 — Previews and port forwards through the cell gateway (2026-11-20)
+
+One Glovecell feature serves every client app (Orca, Herdr, T3, Agent
+Orchestrator, a plain browser), instead of each client tunnelling on its own:
+
+- **Preview URLs** per cell and port, through the gateway's ingress listener
+  (D14), behind the console's OIDC sign-in, the dev-link scan (D13 item 8) and
+  an approval card.
+- A **foreground forward command** (`glovecell forward <cell> <port>`) that
+  carries raw TCP, such as a database port, to the operator's own machine
+  with the operator's own identity, only while the command runs.
+
+The maintainer's rule for both, in his words: "Generally I don't want things
+forwarded long term, but for testing or previews that's fine as long as it's
+made clear to me when asking for approval." So every approval card states the
+cell and port, what listens there, who asked, where it will be reachable and
+when it ends; previews and forwards default to 1 hour and stop at 8 hours at
+most, and extending is a new approval. Lasting needs use dev links.
+
+*Why*: one audited path, the one D14 already reserved; a client's own tunnel
+(T3 0.1.11's preview tunnel, for example) bypasses approvals and audit.
+
+*Consequence*: the design, the build-versus-adopt evaluation and the build
+plan are in [port-tunnels.md](port-tunnels.md). The forward command is an
+`operator-cli` component under [in-cluster.md](../in-cluster.md) on those
+terms. The ingress listener runs as its own container in the gateway pod,
+without the cell CA key or credentials, and approvals reach it live (not
+through the policy file). Open: forwards and scanning (PT2) and T3's own
+tunnel in cells (PT3; its guard is a test, #180).
+
 ## Provider login source (decided in D13)
 
 Central refresher with broker injection for all provider tokens (D13 item 1),

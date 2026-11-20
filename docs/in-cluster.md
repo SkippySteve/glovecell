@@ -26,6 +26,28 @@ future changes.
    pod the controller creates), `operator-cli` (one-shot, nothing depends on it
    running). The `cluster-exception` and `desktop-exception` lists may only shrink.
 
+## Short-lived previews and forwards
+
+Decided 2026-11-20: "Generally I don't want things forwarded long term, but for
+testing or previews that's fine as long as it's made clear to me when asking
+for approval." A foreground forward command (`glovecell forward <cell> <port>`,
+[design](design/port-tunnels.md)) counts as a one-shot `operator-cli` command
+when all of these hold:
+
+- it reaches the cell through the cell gateway with the operator's own console
+  sign-in, never a kubeconfig or a Glovecell service credential;
+- each run needs an approval that states the cell and port, what listens
+  there, who asked, where it will be reachable and when it ends;
+- it ends at that expiry (1 hour by default, 8 hours at most) even if still
+  running, when the operator stops it, or when the terminal closes; extending
+  is a new approval;
+- it installs nothing, starts no other or background process and stores no
+  ticket, key, token or configuration on the machine.
+
+A lasting need goes through a dev link, not a longer forward. How the check
+below will encode this (a required `lifetime` on every operator CLI entry
+and a foreground list that may only shrink) is in the design, section 5.5.
+
 ## The check
 
 `internal/installation/incluster_test.go` (runs in `go test ./...`):
