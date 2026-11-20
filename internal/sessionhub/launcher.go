@@ -47,6 +47,9 @@ type Launcher struct {
 
 	mu      sync.Mutex
 	running map[int]*exec.Cmd
+	// beforeReply, when set by a test, runs after the agent has started and
+	// before the launcher writes its reply.
+	beforeReply func()
 }
 
 // Serve listens on the socket until ctx ends, then kills every agent.
@@ -134,11 +137,20 @@ func (l *Launcher) handle(conn *net.UnixConn) {
 	}
 	cmd := exec.Command(agent.Command, agent.Args...)
 	cmd.Dir = l.Dir
-	cmd.Stdout = conn
+	// The agent's output goes into a pipe, not straight to the connection:
+	// an agent that prints at once must not get ahead of the reply line. The
+	// reply is only decided once Start has succeeded, so output waits in the
+	// pipe until the reply is out (see the copy below).
 	cmd.Stderr = os.Stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
+		_ = answer(conn, reply{Error: "cannot start agent"})
+		return
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		stdin.Close()
 		_ = answer(conn, reply{Error: "cannot start agent"})
 		return
 	}
@@ -158,6 +170,9 @@ func (l *Launcher) handle(conn *net.UnixConn) {
 	l.running[pid] = cmd
 	l.mu.Unlock()
 	log.Printf("session hub: started %s (pid %d)", agent.ID, pid)
+	if l.beforeReply != nil {
+		l.beforeReply()
+	}
 	if err := answer(conn, reply{OK: true}); err != nil {
 		kill(pid)
 	}
@@ -173,6 +188,11 @@ func (l *Launcher) handle(conn *net.UnixConn) {
 			kill(pid)
 		}
 	}()
+	// Only now, after the reply, does the agent's output reach the client.
+	// When the client stops reading, close the pipe so the agent gets EPIPE
+	// instead of blocking on a full pipe; Wait needs every read finished.
+	_, _ = io.Copy(conn, stdout)
+	stdout.Close()
 	err = cmd.Wait()
 	close(done)
 	l.mu.Lock()

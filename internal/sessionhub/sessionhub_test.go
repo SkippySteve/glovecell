@@ -216,6 +216,45 @@ func TestLauncherBoundsSessions(t *testing.T) {
 	}
 }
 
+// An agent that prints at once must not get ahead of the launcher's reply:
+// the client would read the agent's output as the reply and fail. The hook
+// holds the reply until the agent has printed, which is the ordering that
+// made TestLauncherBoundsSessions flaky.
+func TestLauncherReplyPrecedesAgentOutput(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "printed")
+	early := Agent{ID: "early", DisplayName: "Early", Command: "/bin/sh",
+		Args: []string{"-c", `echo early; : > "$0"; exec cat`, marker}}
+	l, _ := startLauncher(t, []Agent{early}, 2)
+	l.beforeReply = func() {
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := os.Stat(marker); err == nil {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		// Room for output that went straight to the connection to arrive.
+		time.Sleep(100 * time.Millisecond)
+	}
+	var out bytes.Buffer
+	if err := Connect(l.Socket, "early", strings.NewReader("later\n"), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != "early\nlater\n" {
+		t.Fatalf("relayed %q", out.String())
+	}
+}
+
+// A start failure is still reported as the reply, never as an ok.
+func TestLauncherReportsStartFailure(t *testing.T) {
+	missing := Agent{ID: "missing", DisplayName: "Missing", Command: "/nonexistent/agent"}
+	l, _ := startLauncher(t, []Agent{missing}, 2)
+	err := Connect(l.Socket, "missing", strings.NewReader(""), io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "failed to start") {
+		t.Fatalf("missing agent: %v", err)
+	}
+}
+
 // An allowlist change in the cell's Secret applies to the next connection.
 func TestLauncherRereadsAllowlist(t *testing.T) {
 	l, file := startLauncher(t, []Agent{{ID: "echo", DisplayName: "Echo", Command: "/bin/cat"}}, 2)
