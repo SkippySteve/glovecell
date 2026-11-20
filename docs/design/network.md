@@ -354,6 +354,10 @@ sequenceDiagram
   I->>S: HTTP or WebSocket to port P
 ```
 
+Preview URLs per cell and port, and `glovecell forward` for raw TCP (a
+database port to the operator's own machine), are designed in
+[port-tunnels.md](port-tunnels.md).
+
 ### 5.8 LAN device
 
 ```mermaid
@@ -388,6 +392,7 @@ sequenceDiagram
 1. **Ingress listener in the gateway pod.** Move the preview, dev-link and
    session routes onto it, and tighten the sandbox network policy to "from
    the gateway only".
+   Previews and forwards on it: [port-tunnels.md](port-tunnels.md) section 8.
 2. **Cell tools MCP endpoint**, with orca-pilot's commands moved onto it.
 3. **WebSocket support in the egress proxy** (D13 item 3).
 4. **Files channel** through the ingress.
