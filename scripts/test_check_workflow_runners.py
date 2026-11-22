@@ -41,6 +41,13 @@ class WorkflowRunners(unittest.TestCase):
         self.assertEqual(cwr.check_targets('    TARGETS: a b\n', bake), [])
         self.assertEqual(len(cwr.check_targets('    TARGETS: a\n', bake)), 1)
 
+    def test_every_target_has_a_build_step(self):
+        bake = 'group "rest" {\n  targets = ["b", "c"]\n}\ngroup "default" {\n  targets = ["a", "b", "c"]\n}\n'
+        ok = '    TARGETS: a b c\n        run: docker buildx bake --progress plain a\n        run: docker buildx bake --progress plain rest\n'
+        self.assertEqual(cwr.check_targets(ok, bake), [])
+        missing = '    TARGETS: a b c\n        run: docker buildx bake --progress plain rest\n'
+        self.assertEqual(len(cwr.check_targets(missing, bake)), 1)
+
     def test_this_repository(self):
         # The real workflows and docker-bake.hcl: CI fails if a publishing job moves.
         self.assertEqual(cwr.main(), 0)

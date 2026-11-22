@@ -57,8 +57,8 @@ def check_workflow(path, text):
     return errors
 
 
-def bake_targets(text):
-    m = re.search(r'group\s+"default"\s*\{[^}]*targets\s*=\s*\[([^\]]*)\]', text, re.S)
+def bake_targets(text, group='default'):
+    m = re.search(r'group\s+"' + re.escape(group) + r'"\s*\{[^}]*targets\s*=\s*\[([^\]]*)\]', text, re.S)
     return set(re.findall(r'"([\w.-]+)"', m.group(1))) if m else set()
 
 
@@ -67,9 +67,17 @@ def check_targets(workflow_text, bake_text):
     if not m:
         return []
     listed, baked = set(m.group(1).split()), bake_targets(bake_text)
+    errors = []
     if listed != baked:
-        return [f'security.yml TARGETS {sorted(listed)} differs from docker-bake.hcl default group {sorted(baked)}']
-    return []
+        errors.append(f'security.yml TARGETS {sorted(listed)} differs from docker-bake.hcl default group {sorted(baked)}')
+    # Every target the gate expects must be built by one of the bake steps.
+    built = set()
+    for m in re.finditer(r'docker buildx bake [^\n]*?(\S+)\s*$', workflow_text, re.M):
+        name = m.group(1)
+        built |= bake_targets(bake_text, name) or {name}
+    if 'docker buildx bake' in workflow_text and built and listed - built:
+        errors.append(f'security.yml builds no bake step for {sorted(listed - built)}')
+    return errors
 
 
 def main():

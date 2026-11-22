@@ -6,6 +6,13 @@ variable "SOURCE_REVISION" { default = "dev" }
 variable "VERSION" { default = "0.1.0-alpha.1" }
 variable "SOURCE_URL" { default = "" }
 
+# CI builds in this order (.forgejo/workflows/security.yml): the two targets
+# whose stages run test suites first, one at a time, so timing-sensitive tests
+# are not starved of CPU; then the rest in parallel on the stages already built.
+group "parallel" {
+  targets = ["workspace", "voice", "t3-controller", "glove-hub", "ao-workspace"]
+}
+
 group "default" {
   targets = ["runtime", "workspace", "voice", "t3-controller", "glove-hub", "session-hub", "ao-workspace"]
 }

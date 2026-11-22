@@ -79,11 +79,25 @@ jobs:
           mkdir -p "$HOME/.local/bin" reports
           tar -xzf /tmp/trivy.tgz -C "$HOME/.local/bin" trivy
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - name: Build every target (shared stages once, the rest in parallel)
+      # Stages with test suites (the console in runtime, the gateway in
+      # session-hub) build one at a time first: run beside six other builds on
+      # one pod, their timing tests failed (csp.test.ts past 5 s). The other
+      # five then build in parallel on the stages already in this daemon.
+      - name: Build runtime (controller and console, with their tests)
         env:
           SOURCE_REVISION: ${{ github.sha }}
           SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
-        run: docker buildx bake --progress plain
+        run: docker buildx bake --progress plain runtime
+      - name: Build session-hub (gateway, with its tests)
+        env:
+          SOURCE_REVISION: ${{ github.sha }}
+          SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: docker buildx bake --progress plain session-hub
+      - name: Build the other targets in parallel
+        env:
+          SOURCE_REVISION: ${{ github.sha }}
+          SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: docker buildx bake --progress plain parallel
       - name: Record image findings and SBOMs
         if: always()
         run: |
