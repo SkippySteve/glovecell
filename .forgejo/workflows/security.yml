@@ -1,5 +1,6 @@
-# Security gates from the factory CI.md (templates/forgejo/security.yml), with one image
-# job per Dockerfile target.
+# Security gates from the factory CI.md (templates/forgejo/security.yml). One image job
+# builds every Dockerfile target in one BuildKit graph (docker-bake.hcl), then gates,
+# pushes and promotes each.
 name: security
 on:
   push:
@@ -54,20 +55,20 @@ jobs:
           path: reports/
           if-no-files-found: warn
   image:
-    runs-on: ubuntu-latest
+    # publish-isolated: one fresh runner pod per job with an empty Docker daemon, so
+    # nothing a branch job leaves behind (a cache layer, a container holding the
+    # Docker socket) can reach a build that is promoted on the strength of the ID
+    # token below. Pull request runs use it too: one job definition.
+    # scripts/check-workflow-runners.py fails CI if this changes.
+    runs-on: publish-isolated
     # promote.py asks Forgejo for an Actions ID token per pushed image; it proves
     # the digest came from this workflow on main, which is what lets the
-    # monorepo's promote-merger merge the promotion without Steve.
+    # reference deployment's promote-merger merge the promotion without Steve.
     enable-openid-connect: true
-    strategy:
-      fail-fast: false
-      matrix:
-        # t3-controller: T3 Connect account + cloudflared on the controller
-        # (docs/t3-connect.md, docs/clients-choice.md). Proxy stays on runtime.
-        # glove-hub: the in-cluster Herdr hub (docs/herdr.md).
-        # ao-workspace: workers of OrchestratorClass ao (docs/agent-orchestrator.md).
-        # session-hub: shared agent sessions, AHP-ACP Gateway (docs/session-hub.md).
-        target: [runtime, workspace, voice, t3-controller, glove-hub, session-hub, ao-workspace]
+    env:
+      # Every Dockerfile target CI builds, gates and (on main) pushes. Must match
+      # the default group in docker-bake.hcl (check-workflow-runners.py checks it).
+      TARGETS: runtime workspace voice t3-controller glove-hub session-hub ao-workspace
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install pinned Trivy
@@ -78,34 +79,44 @@ jobs:
           mkdir -p "$HOME/.local/bin" reports
           tar -xzf /tmp/trivy.tgz -C "$HOME/.local/bin" trivy
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - name: Build candidate
-        run: |
-          docker build --target "${{ matrix.target }}" \
-            --build-arg VERSION=0.1.0-alpha.1 --build-arg SOURCE_REVISION="${GITHUB_SHA}" \
-            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
-            --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
-            --tag "candidate-${{ matrix.target }}:${GITHUB_SHA}" .
-      - name: Record image findings and SBOM
+      - name: Build every target (shared stages once, the rest in parallel)
+        env:
+          SOURCE_REVISION: ${{ github.sha }}
+          SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: docker buildx bake --progress plain
+      - name: Record image findings and SBOMs
         if: always()
         run: |
-          trivy image --format json --output reports/trivy-image.json "candidate-${{ matrix.target }}:${GITHUB_SHA}"
-          trivy image --format cyclonedx --output reports/sbom-image.cdx.json "candidate-${{ matrix.target }}:${GITHUB_SHA}"
+          for t in $TARGETS; do
+            docker image inspect "candidate-$t:${GITHUB_SHA}" >/dev/null 2>&1 || continue
+            mkdir -p "reports/$t"
+            trivy image --format json --output "reports/$t/trivy-image.json" "candidate-$t:${GITHUB_SHA}"
+            trivy image --format cyclonedx --output "reports/$t/sbom-image.cdx.json" "candidate-$t:${GITHUB_SHA}"
+          done
       - name: Gate image findings
-        run: trivy image $GATE "candidate-${{ matrix.target }}:${GITHUB_SHA}"
+        # Every target is gated before any is pushed; one failing target fails the job
+        # and nothing is promoted (the matrix let the others through).
+        run: |
+          failed=""
+          for t in $TARGETS; do
+            echo "::group::gate $t"
+            trivy image $GATE "candidate-$t:${GITHUB_SHA}" || failed="$failed $t"
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then echo "gate failed for:$failed" >&2; exit 1; fi
       - uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
         if: always()
         with:
-          name: security-reports-image-${{ matrix.target }}
+          name: security-reports-images
           path: reports/
           if-no-files-found: warn
       # Promotion: only from main, only after the gate and the CI checks.
-      # The steps come from the monorepo so both repos promote the same way:
-      # push by digest as image-publisher, then add the pin to the one rolling
-      # promotion PR for this repository (promote/glovecell).
-      # Both matrix legs (runtime: controller and proxy; workspace) land in the
-      # same PR and the same commit, so one Deployment rollout moves all three.
-      # promote-merger in the monorepo merges it when promote-guard passes
-      # (docs/one-merge-delivery.md there); Flux applies it from main.
+      # The steps come from the reference deployment so both repos promote the
+      # same way: push by digest as image-publisher, then add the pin to the one
+      # rolling promotion PR for this repository (promote/glovecell).
+      # promote-merger there merges it when promote-guard passes; Flux applies it.
+      # push-image.sh writes IMAGE=<repository>@<digest> to GITHUB_ENV, so each
+      # push and its promotions are separate steps.
       - name: Fetch the promotion scripts
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
@@ -113,12 +124,12 @@ jobs:
         run: |
           git -c "http.extraHeader=Authorization: token ${CI_PUBLISHER_TOKEN}" clone --quiet --depth 1 https://git.cluster.aimingupward.com/steve/opnsense-kubernetes-bgp.git /tmp/monorepo
       - name: Push the gated runtime image
-        if: matrix.target == 'runtime' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           CI_IMAGE_TOKEN: ${{ secrets.CI_IMAGE_TOKEN }}
         run: /tmp/monorepo/.forgejo/scripts/push-image.sh "candidate-runtime:${GITHUB_SHA}" git.cluster.aimingupward.com/image-publisher/agent-project-controller
       - name: Open the promotion PR
-        if: matrix.target == 'runtime' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           CI_PUBLISHER_TOKEN: ${{ secrets.CI_PUBLISHER_TOKEN }}
         run: >-
@@ -126,7 +137,7 @@ jobs:
           --image "$IMAGE" --source-repo "$GITHUB_REPOSITORY" --source-sha "$GITHUB_SHA"
           --require-status "CI / checks (push)"
       - name: Open the proxy promotion PR
-        if: matrix.target == 'runtime' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           CI_PUBLISHER_TOKEN: ${{ secrets.CI_PUBLISHER_TOKEN }}
         run: >-
@@ -134,7 +145,7 @@ jobs:
           --image "$IMAGE" --source-repo "$GITHUB_REPOSITORY" --source-sha "$GITHUB_SHA"
           --require-status "CI / checks (push)"
       - name: Open the download helper promotion PR
-        if: matrix.target == 'runtime' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           CI_PUBLISHER_TOKEN: ${{ secrets.CI_PUBLISHER_TOKEN }}
         run: >-
@@ -142,12 +153,12 @@ jobs:
           --image "$IMAGE" --source-repo "$GITHUB_REPOSITORY" --source-sha "$GITHUB_SHA"
           --require-status "CI / checks (push)"
       - name: Push the gated workspace image
-        if: matrix.target == 'workspace' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           CI_IMAGE_TOKEN: ${{ secrets.CI_IMAGE_TOKEN }}
         run: /tmp/monorepo/.forgejo/scripts/push-image.sh "candidate-workspace:${GITHUB_SHA}" git.cluster.aimingupward.com/image-publisher/agent-project-workspace
       - name: Open the workspace promotion PR
-        if: matrix.target == 'workspace' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           CI_PUBLISHER_TOKEN: ${{ secrets.CI_PUBLISHER_TOKEN }}
         run: >-
@@ -157,12 +168,12 @@ jobs:
       # glovecell-voice (Dockerfile target voice): promote/glovecell-voice moves
       # the pin in infra/agent-workplace/glovecell-voice/deployment.yaml.
       - name: Push the gated voice image
-        if: matrix.target == 'voice' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           CI_IMAGE_TOKEN: ${{ secrets.CI_IMAGE_TOKEN }}
         run: /tmp/monorepo/.forgejo/scripts/push-image.sh "candidate-voice:${GITHUB_SHA}" git.cluster.aimingupward.com/image-publisher/glovecell-voice
       - name: Open the voice promotion PR
-        if: matrix.target == 'voice' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           CI_PUBLISHER_TOKEN: ${{ secrets.CI_PUBLISHER_TOKEN }}
         run: >-
@@ -173,7 +184,7 @@ jobs:
       # cloudflared. Promote pin stays inert until Steve points the live
       # Deployment at it and sets T3_CONNECT_ENABLED=true (docs/clients-choice.md).
       - name: Push the gated t3-controller image
-        if: matrix.target == 't3-controller' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           CI_IMAGE_TOKEN: ${{ secrets.CI_IMAGE_TOKEN }}
         run: /tmp/monorepo/.forgejo/scripts/push-image.sh "candidate-t3-controller:${GITHUB_SHA}" git.cluster.aimingupward.com/image-publisher/agent-project-t3-controller
@@ -182,7 +193,7 @@ jobs:
       # then promote.py rejects the unknown component and main would go red.
       # Switch on with repository variable T3_CONTROLLER_PROMOTE=true.
       - name: Open the t3-controller promotion PR
-        if: matrix.target == 't3-controller' && github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.T3_CONTROLLER_PROMOTE == 'true'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.T3_CONTROLLER_PROMOTE == 'true'
         env:
           CI_PUBLISHER_TOKEN: ${{ secrets.CI_PUBLISHER_TOKEN }}
         run: >-
@@ -191,7 +202,7 @@ jobs:
           --require-status "CI / checks (push)"
       # glove-hub (Dockerfile target glove-hub): the in-cluster Herdr hub.
       - name: Push the gated glove-hub image
-        if: matrix.target == 'glove-hub' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           CI_IMAGE_TOKEN: ${{ secrets.CI_IMAGE_TOKEN }}
         run: /tmp/monorepo/.forgejo/scripts/push-image.sh "candidate-glove-hub:${GITHUB_SHA}" git.cluster.aimingupward.com/image-publisher/glovecell-glove-hub
@@ -200,7 +211,7 @@ jobs:
       # rejects it and main would go red. Switch on with repository variable
       # GLOVE_HUB_PROMOTE=true.
       - name: Open the glove-hub promotion PR
-        if: matrix.target == 'glove-hub' && github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.GLOVE_HUB_PROMOTE == 'true'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.GLOVE_HUB_PROMOTE == 'true'
         env:
           CI_PUBLISHER_TOKEN: ${{ secrets.CI_PUBLISHER_TOKEN }}
         run: >-
@@ -210,7 +221,7 @@ jobs:
       # ao-workspace (Dockerfile target ao-workspace): Glovecell workers that
       # run Agent Orchestrator (docs/agent-orchestrator.md).
       - name: Push the gated ao-workspace image
-        if: matrix.target == 'ao-workspace' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           CI_IMAGE_TOKEN: ${{ secrets.CI_IMAGE_TOKEN }}
         run: /tmp/monorepo/.forgejo/scripts/push-image.sh "candidate-ao-workspace:${GITHUB_SHA}" git.cluster.aimingupward.com/image-publisher/glovecell-ao-workspace
@@ -219,7 +230,7 @@ jobs:
       # rejects it and main would go red. Switch on with repository variable
       # AO_WORKSPACE_PROMOTE=true.
       - name: Open the ao-workspace promotion PR
-        if: matrix.target == 'ao-workspace' && github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.AO_WORKSPACE_PROMOTE == 'true'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.AO_WORKSPACE_PROMOTE == 'true'
         env:
           CI_PUBLISHER_TOKEN: ${{ secrets.CI_PUBLISHER_TOKEN }}
         run: >-
@@ -230,7 +241,7 @@ jobs:
       # its pinned commit. No cell runs it until sessionHub.enabled exists and is
       # switched on (docs/session-hub.md).
       - name: Push the gated session-hub image
-        if: matrix.target == 'session-hub' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           CI_IMAGE_TOKEN: ${{ secrets.CI_IMAGE_TOKEN }}
         run: /tmp/monorepo/.forgejo/scripts/push-image.sh "candidate-session-hub:${GITHUB_SHA}" git.cluster.aimingupward.com/image-publisher/glovecell-session-hub
@@ -239,7 +250,7 @@ jobs:
       # rejects it and main would go red. Switch on with repository variable
       # SESSION_HUB_PROMOTE=true.
       - name: Open the session-hub promotion PR
-        if: matrix.target == 'session-hub' && github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.SESSION_HUB_PROMOTE == 'true'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.SESSION_HUB_PROMOTE == 'true'
         env:
           CI_PUBLISHER_TOKEN: ${{ secrets.CI_PUBLISHER_TOKEN }}
         run: >-
