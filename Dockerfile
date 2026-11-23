@@ -18,12 +18,15 @@ COPY .claude/skills/ui-sdk/ /src/.claude/skills/ui-sdk/
 COPY web/ ./
 RUN npm run build && npm test
 
+# Go module downloads retry up to three times, 15 s apart: the image job runs on
+# one fresh runner pod, and a single TLS handshake timeout to the module proxy
+# used to fail the whole build.
 FROM ${GO_IMAGE} AS build
 ARG VERSION=dev
 ARG SOURCE_REVISION=unknown
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN --mount=type=cache,target=/go/pkg/mod go mod download
+RUN --mount=type=cache,target=/go/pkg/mod for i in 1 2 3; do go mod download && break; test "$i" -lt 3 || exit 1; echo "Go module download failed, retry $i of 2 in 15 s" >&2; sleep 15; done
 COPY api/ api/
 COPY cmd/ cmd/
 COPY internal/ internal/
@@ -51,7 +54,7 @@ ARG VERSION=dev
 ARG SOURCE_REVISION=unknown
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN --mount=type=cache,target=/go/pkg/mod go mod download
+RUN --mount=type=cache,target=/go/pkg/mod for i in 1 2 3; do go mod download && break; test "$i" -lt 3 || exit 1; echo "Go module download failed, retry $i of 2 in 15 s" >&2; sleep 15; done
 COPY api/ api/
 COPY cmd/ cmd/
 COPY internal/ internal/
@@ -136,10 +139,10 @@ CMD ["--config", "/etc/session-hub/gateway.json"]
 # release tarball with its SHA-256 once a gh release ships x/net >= v0.62.0.
 FROM ${GO_IMAGE} AS gh-build
 ARG GH_VERSION=2.103.3
-RUN dir="$(go mod download -json "github.com/cli/cli/v2@v${GH_VERSION}" | sed -n 's/^[[:space:]]*"Dir": "\(.*\)",$/\1/p')" \
+RUN for i in 1 2 3; do dir="$(go mod download -json "github.com/cli/cli/v2@v${GH_VERSION}" | sed -n 's/^[[:space:]]*"Dir": "\(.*\)",$/\1/p')"; test -z "$dir" || break; test "$i" -lt 3 || exit 1; echo "Go module download failed, retry $i of 2 in 15 s" >&2; sleep 15; done \
     && test -n "$dir" && cp -R "$dir" /src && chmod -R u+w /src
 WORKDIR /src
-RUN go get golang.org/x/net@v0.62.0 \
+RUN for i in 1 2 3; do go get golang.org/x/net@v0.62.0 && go mod download && break; test "$i" -lt 3 || exit 1; echo "Go module download failed, retry $i of 2 in 15 s" >&2; sleep 15; done \
     && CGO_ENABLED=0 go build -trimpath \
        -ldflags "-X github.com/cli/cli/v2/internal/build.Version=${GH_VERSION}" -o /gh ./cmd/gh \
     && /gh --version | grep -q "${GH_VERSION}"
@@ -235,7 +238,7 @@ RUN apk add --no-cache git \
     && git clone --depth 1 --branch "${CLOUDFLARED_VERSION}" https://github.com/cloudflare/cloudflared /src \
     && test "$(git -C /src rev-parse HEAD)" = "${UPSTREAM_REV}"
 WORKDIR /src
-RUN go get golang.org/x/net@v0.62.0 \
+RUN for i in 1 2 3; do go get golang.org/x/net@v0.62.0 && go mod download && break; test "$i" -lt 3 || exit 1; echo "Go module download failed, retry $i of 2 in 15 s" >&2; sleep 15; done \
     && CGO_ENABLED=0 GOFIPS140=off go build -trimpath \
        -ldflags "-X main.Version=${CLOUDFLARED_VERSION}" -o /cloudflared ./cmd/cloudflared
 

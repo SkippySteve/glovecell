@@ -20,8 +20,14 @@ const highlighted = () => options().filter(o => o.hasAttribute('data-highlighted
 const activeOption = () => document.getElementById(input().getAttribute('aria-activedescendant') ?? '');
 
 // The first request also loads the palette's chunk (launcher.tsx); later ones reuse it.
+// Wait on the dialog itself, not a fixed number of turns: on a busy CI pod the
+// chunk can take longer to load than 50 flushes.
 async function opened() {
-  for (let i = 0; i < 50 && !dialog(); i++) await flush();
+  const deadline = Date.now() + 20_000;
+  while (!dialog() && Date.now() < deadline) {
+    await flush();
+    if (!dialog()) await act(() => new Promise(resolve => setTimeout(resolve, 10)));
+  }
   expect(dialog()).toBeTruthy();
 }
 async function openFrom(button: HTMLButtonElement) {
