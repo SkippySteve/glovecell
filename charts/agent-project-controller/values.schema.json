@@ -754,6 +754,25 @@
         }
       }
     },
+    "notifications": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "ntfy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "url": {"type": "string", "pattern": "^(|https://[^/?#@ ]+(/[^?#]*)?|http://[^/?#@: ]+\\.svc(\\.cluster\\.local)?(:[0-9]+)?/?)$"},
+            "topic": {"type": "string", "pattern": "^[A-Za-z0-9_-]{0,64}$"},
+            "existingSecret": {"type": "string"},
+            "tokenKey": {"type": "string", "minLength": 1}
+          }
+        },
+        "consoleURL": {"type": "string", "pattern": "^(|https://[^?#@ ]+)$"},
+        "maxPerHour": {"type": "integer", "minimum": 1, "maximum": 1000}
+      }
+    },
     "sessionHub": {
       "type": "object",
       "additionalProperties": false,
