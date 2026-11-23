@@ -309,6 +309,29 @@ without the cell CA key or credentials, and approvals reach it live (not
 through the policy file). Open: forwards and scanning (PT2) and T3's own
 tunnel in cells (PT3; its guard is a test, #180).
 
+## D17 — Agents request new repositories; the operator approves (2026-11-22)
+
+An agent in a cell can ask for a new repository with
+`glovecell request repository <name> --template <template>`. The operator gets
+a phone notification (ntfy), reads an approval card in the console and
+approves or denies it there. On approval a provisioner pod, with its own
+narrow Forgejo token, creates the repository from a template repository in one
+configured organization, whose Actions secrets and teams every new repository
+inherits, sets branch protection and gives the requesting cell task-branch
+write. Clients that are not cells get the same request through the console's
+**New repository** button, made by the operator on their behalf.
+
+*Why*: a new repository used to need several hand steps (CI secrets, bot
+collaborators, protection, a rerun); the organization's own features remove
+them, and the approval keeps a human in the loop for every new repository.
+
+*Consequence*: the design, the build-versus-adopt evaluation and the build
+plan are in [repository-requests.md](repository-requests.md). The first cell
+tool on the gateway's local endpoint (network.md 7, step 2) is this request.
+A notifier for every kind of pending request comes first. Deploying from a new
+repository stays outside Glovecell. Open: RQ1 (a second repository owner),
+RQ2 (who approves), RQ3 (never public).
+
 ## Provider login source (decided in D13)
 
 Central refresher with broker injection for all provider tokens (D13 item 1),
