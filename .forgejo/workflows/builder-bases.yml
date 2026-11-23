@@ -1,0 +1,58 @@
+# Builder bases (scripts/builder-bases.py): the gh and cloudflared binaries,
+# built once on main and pushed by digest, so the image job does not compile
+# them on every run. This workflow only builds and pushes a base whose pin in
+# ci/builder-bases.json is missing or out of date, then prints the command
+# that records the new pin; that pin is a reviewed pull request. Until it
+# merges, the image job compiles the stage from source as before.
+name: builder-bases
+on:
+  push:
+    branches: [main]
+    paths: [Dockerfile, ci/builder-bases.json, scripts/builder-bases.py, .forgejo/workflows/builder-bases.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: builder-bases
+  cancel-in-progress: false
+jobs:
+  bases:
+    # A fresh runner pod with an empty Docker daemon, like the image job: a
+    # base ends up inside published images, so nothing a branch job left in a
+    # shared daemon may reach it (#313). The pool is for publishing jobs only,
+    # which scripts/check-workflow-runners.py recognises by the ID token flag.
+    runs-on: publish-isolated
+    enable-openid-connect: true
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Which bases are missing or out of date
+        id: stale
+        run: |
+          set -eu
+          names=$(python3 scripts/builder-bases.py stale | tr '\n' ' ' | sed 's/ *$//')
+          echo "names=$names" >> "$GITHUB_OUTPUT"
+          echo "To build: ${names:-none}"
+      - name: Fetch the push script
+        if: steps.stale.outputs.names != '' && github.ref == 'refs/heads/main'
+        env:
+          CI_PUBLISHER_TOKEN: ${{ secrets.CI_PUBLISHER_TOKEN }}
+        run: |
+          git -c "http.extraHeader=Authorization: token ${CI_PUBLISHER_TOKEN}" clone --quiet --depth 1 https://git.cluster.aimingupward.com/steve/opnsense-kubernetes-bgp.git /tmp/monorepo
+      - name: Build and push the bases
+        if: steps.stale.outputs.names != '' && github.ref == 'refs/heads/main'
+        env:
+          CI_IMAGE_TOKEN: ${{ secrets.CI_IMAGE_TOKEN }}
+          NAMES: ${{ steps.stale.outputs.names }}
+        run: |
+          set -eu
+          for name in $NAMES; do
+            docker buildx build --progress plain --target "$name" \
+              --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+              --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+              -t "candidate-builder-$name:${GITHUB_SHA}" --load .
+            /tmp/monorepo/.forgejo/scripts/push-image.sh "candidate-builder-$name:${GITHUB_SHA}" \
+              "git.cluster.aimingupward.com/image-publisher/glovecell-builder-$name"
+            image=$(sed -n 's/^IMAGE=//p' "$GITHUB_ENV" | tail -n 1)
+            echo "Record the pin in a pull request: python3 scripts/builder-bases.py pin $name $image"
+            echo "- \`python3 scripts/builder-bases.py pin $name $image\`" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+          done

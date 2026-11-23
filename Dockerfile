@@ -147,6 +147,12 @@ RUN for i in 1 2 3; do go get golang.org/x/net@v0.62.0 && go mod download && bre
        -ldflags "-X github.com/cli/cli/v2/internal/build.Version=${GH_VERSION}" -o /gh ./cmd/gh \
     && /gh --version | grep -q "${GH_VERSION}"
 
+# The gh binary alone. CI swaps this stage for a prebuilt builder base
+# (ci/builder-bases.json, scripts/builder-bases.py) when its pin matches the
+# stages above; every other build compiles it here.
+FROM scratch AS gh
+COPY --from=gh-build /gh /gh
+
 # Optional coding environment. The controller and proxy can use the smaller runtime target.
 FROM ${GO_IMAGE} AS toolchain
 FROM ${WORKSPACE_IMAGE} AS workspace
@@ -193,7 +199,7 @@ RUN curl --http1.1 --retry 3 -fsSL https://codeberg.org/forgejo-contrib/forgejo-
 COPY scripts/apc-fj.py /usr/local/bin/fj
 # Official GitHub CLI for brokered GitHub projects. It runs with a placeholder GH_TOKEN
 # that the project proxy replaces (docs/design/github-brokering.md).
-COPY --from=gh-build --chmod=0755 /gh /usr/local/bin/gh
+COPY --from=gh --chmod=0755 /gh /usr/local/bin/gh
 # Stock subscription clients, pinned independently of the application runtimes.
 RUN curl -fsSL https://x.ai/cli/grok-1.0.46-linux-x86_64.zst -o /tmp/grok.zst \
     && echo '3d6fff352acd5658758f9b7b627313468e779c86fb259273df40eda5bac9d713  /tmp/grok.zst' | sha256sum -c - \
@@ -242,6 +248,10 @@ RUN for i in 1 2 3; do go get golang.org/x/net@v0.62.0 && go mod download && bre
     && CGO_ENABLED=0 GOFIPS140=off go build -trimpath \
        -ldflags "-X main.Version=${CLOUDFLARED_VERSION}" -o /cloudflared ./cmd/cloudflared
 
+# The cloudflared binary alone; a builder base in CI, like the gh stage.
+FROM scratch AS cloudflared
+COPY --from=cloudflared-build /cloudflared /cloudflared
+
 # Trusted T3 Connect registrar. Project T3 servers and agent CLIs stay in workers.
 FROM ${WORKSPACE_IMAGE} AS t3-controller
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
@@ -251,7 +261,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 COPY --from=build /agent-project-controller /usr/local/bin/agent-project-controller
 COPY --from=workspace /opt/t3 /opt/t3
 COPY third_party/licenses/ /usr/share/agent-project-controller/licenses/
-COPY --from=cloudflared-build --chmod=0755 /cloudflared /opt/t3/cloudflared
+COPY --from=cloudflared --chmod=0755 /cloudflared /opt/t3/cloudflared
 USER 1000:1000
 ENTRYPOINT ["/usr/local/bin/agent-project-controller"]
 CMD ["controller"]
