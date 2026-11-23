@@ -92,7 +92,14 @@ func TestGatewayConfig(t *testing.T) {
 	}
 }
 
+// startLauncher uses a 200 ms grace, so the tests that kill an agent after its
+// client goes finish quickly.
 func startLauncher(t *testing.T, agents []Agent, max int) (*Launcher, string) {
+	t.Helper()
+	return startLauncherGrace(t, agents, max, 200*time.Millisecond)
+}
+
+func startLauncherGrace(t *testing.T, agents []Agent, max int, grace time.Duration) (*Launcher, string) {
 	t.Helper()
 	dir := t.TempDir()
 	raw, _ := json.Marshal(agents)
@@ -100,7 +107,7 @@ func startLauncher(t *testing.T, agents []Agent, max int) (*Launcher, string) {
 	if err := os.WriteFile(file, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	l := &Launcher{Socket: filepath.Join(dir, "l.sock"), AgentsFile: file, MaxSessions: max, Grace: 200 * time.Millisecond}
+	l := &Launcher{Socket: filepath.Join(dir, "l.sock"), AgentsFile: file, MaxSessions: max, Grace: grace}
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)
 	go func() { errc <- l.Serve(ctx) }()
@@ -121,7 +128,11 @@ func startLauncher(t *testing.T, agents []Agent, max int) (*Launcher, string) {
 }
 
 func TestLauncherRelaysAllowedAgent(t *testing.T) {
-	l, _ := startLauncher(t, []Agent{{ID: "echo", DisplayName: "Echo", Command: "/bin/cat"}}, 2)
+	// The client closes stdin right after its line, which starts the grace
+	// period; cat must still get to echo the line. With 200 ms, a CPU-starved
+	// CI pod sometimes killed cat first and the test saw no output. The grace
+	// period's own behaviour is TestLauncherKillsAgentWhenClientGoes.
+	l, _ := startLauncherGrace(t, []Agent{{ID: "echo", DisplayName: "Echo", Command: "/bin/cat"}}, 2, 30*time.Second)
 	info, err := os.Stat(l.Socket)
 	if err != nil || info.Mode().Perm() != 0o660 {
 		t.Fatalf("socket mode %v, %v", info.Mode().Perm(), err)
