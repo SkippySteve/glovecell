@@ -329,8 +329,9 @@ them, and the approval keeps a human in the loop for every new repository.
 plan are in [repository-requests.md](repository-requests.md). The first cell
 tool on the gateway's local endpoint (network.md 7, step 2) is this request.
 A notifier for every kind of pending request comes first. Deploying from a new
-repository stays outside Glovecell. Open: RQ1 (a second repository owner),
-RQ2 (who approves), RQ3 (never public).
+repository stays outside Glovecell. Decided with it (repository-requests.md
+section 11): a list of repository owners (RQ1 A), the existing approver group
+(RQ2 A), and new repositories always private (RQ3 A).
 
 ## Provider login source (decided in D13)
 

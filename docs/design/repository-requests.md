@@ -1,6 +1,6 @@
 # Design: agents request new repositories
 
-**Status:** proposed design, 2026-11-22. Docs only; nothing here is built yet.
+**Status:** design, 2026-11-22; questions RQ1–RQ3 decided (section 11). Docs only; nothing here is built yet.
 Decision record: [D17](decisions.md#d17--agents-request-new-repositories-the-operator-approves-2026-11-22).
 
 **Related:** [glovecell.md 4.6](glovecell.md#46-blocked-reports) (blocked
@@ -261,14 +261,18 @@ recovery for steps 3 and 4).
 5. Deployment repository (outside this repository): values, the provisioner's
    Secret and its credential inventory entry, network policy, switch-on.
 
-## 11. Open questions
+## 11. Decided questions
 
-- **RQ1. Cells on repositories of a second owner.** The installation has one
-  configured repository owner today. **A (recommended):** allow a list of
-  owners (`forgejo.owners`), with the forge agent's checks applied per owner.
-  **B:** make the organization the only owner and move existing repositories
-  into it.
-- **RQ2. Who approves.** **A (recommended):** the existing approver group.
-  **B:** a separate group for repository requests.
-- **RQ3. Public repositories.** **A (recommended):** never; always private,
-  and making one public stays a manual operator action.
+The maintainer chose these on 2026-11-22:
+
+- **RQ1 A. Cells on repositories of more than one owner.** The installation
+  accepts a list of owners (`forgejo.owners`), with the forge agent's checks
+  applied per owner, so a cell can work on a repository the provisioner
+  created in the organization. (Rejected: one owner, with existing
+  repositories moved into it.)
+- **RQ2 A. Who approves:** the existing approver group. (Rejected: a separate
+  group.)
+- **RQ3 A. Never public.** New repositories are always private; making one
+  public stays a manual operator action outside Glovecell.
+
+Build order is unchanged (section 10); RQ1 lands with step 3.
