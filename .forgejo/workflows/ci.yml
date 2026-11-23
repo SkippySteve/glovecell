@@ -2,8 +2,11 @@
 # security.yml. Forgejo ignores .github/workflows while this directory exists.
 name: CI
 on:
+  # Branch pushes are tested through their pull request; a push trigger on
+  # feat/** and fix/** too ran every PR's tests twice on the shared runners.
+  # main keeps its push run: promotion requires "CI / checks (push)".
   push:
-    branches: [main, 'feat/**', 'fix/**']
+    branches: [main]
   pull_request:
   workflow_dispatch:
 permissions:
