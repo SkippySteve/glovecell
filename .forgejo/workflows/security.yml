@@ -79,6 +79,20 @@ jobs:
           mkdir -p "$HOME/.local/bin" reports
           tar -xzf /tmp/trivy.tgz -C "$HOME/.local/bin" trivy
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      # Prebuilt gh and cloudflared stages (scripts/builder-bases.py): a pin
+      # is used only while it matches the Dockerfile and the registry still has
+      # its digest; otherwise that stage compiles from source as before.
+      - name: Use prebuilt builder bases
+        env:
+          CI_IMAGE_TOKEN: ${{ secrets.CI_IMAGE_TOKEN }}
+        run: |
+          set -eu
+          bases=$(python3 scripts/builder-bases.py bake-env --verify)
+          if [ -n "$bases" ]; then
+            printf %s "$CI_IMAGE_TOKEN" | docker login git.cluster.aimingupward.com -u image-publisher --password-stdin >/dev/null
+            printf '%s\n' "$bases" >> "$GITHUB_ENV"
+          fi
+          echo "Builder bases: ${bases:-none, every stage builds from source}"
       # Stages with test suites (the console in runtime, the gateway in
       # session-hub) build one at a time first: run beside six other builds on
       # one pod, their timing tests failed (csp.test.ts past 5 s). The other

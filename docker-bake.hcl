@@ -5,6 +5,11 @@
 variable "SOURCE_REVISION" { default = "dev" }
 variable "VERSION" { default = "0.1.0-alpha.1" }
 variable "SOURCE_URL" { default = "" }
+# Prebuilt stages (scripts/builder-bases.py): CI sets these to
+# docker-image://<registry>/<path>@sha256:... for pins that match the
+# Dockerfile; empty (every other build) compiles the stage from source.
+variable "BUILDER_BASE_GH" { default = "" }
+variable "BUILDER_BASE_CLOUDFLARED" { default = "" }
 
 # CI builds in this order (.forgejo/workflows/security.yml): the two targets
 # whose stages run test suites first, one at a time, so timing-sensitive tests
@@ -30,6 +35,7 @@ target "_common" {
   }
   # Load into the daemon's image store: the gate scans and push-image.sh pushes from there.
   output = ["type=docker"]
+  contexts = { for name, image in { gh = BUILDER_BASE_GH, cloudflared = BUILDER_BASE_CLOUDFLARED } : name => image if image != "" }
 }
 
 target "runtime" {
