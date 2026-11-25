@@ -19,6 +19,7 @@ import (
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/auditlog"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/forgejo"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/notify"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/registration"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -82,6 +83,9 @@ type Server struct {
 	// Hub mints phone pairing offers and lists/revokes hub devices when the
 	// private hub-admin mTLS endpoint is configured. Nil hides the page.
 	Hub *Hub
+	// Notifier pings the operator's phone when a request enters pending
+	// (docs/notifications.md). Nil sends nothing.
+	Notifier *notify.Notifier
 }
 
 // Reference is the reference list as the console shows it.

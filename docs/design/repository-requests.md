@@ -194,6 +194,8 @@ preview), configured once:
   (`glovecell_notifications_failed_total`); the request is still shown in the
   console.
 
+Built as described in [notifications.md](../notifications.md).
+
 ## 7. Configuration
 
 ```yaml

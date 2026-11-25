@@ -18,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	api "git.cluster.aimingupward.com/steve/agent-project-controller/api/v1alpha1"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/notify"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/store"
 )
 
@@ -209,6 +210,12 @@ func (s *Server) createRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if created {
+		// Only observed fields go into the notification, never body.Reason.
+		if t := req.Target; t.Package != nil {
+			s.Notifier.Pending(r.Context(), notify.Package(obj.Name, req.ID, t.Package.Ecosystem, t.Package.Name, t.Package.Version, t.Host))
+		} else {
+			s.Notifier.Pending(r.Context(), notify.Web(obj.Name, req.ID, t.Method, t.Scheme, t.Host, t.Port))
+		}
 		w.WriteHeader(http.StatusCreated)
 	}
 	writeJSON(w, req)

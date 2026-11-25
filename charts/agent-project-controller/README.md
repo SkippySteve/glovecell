@@ -27,6 +27,10 @@ backend). Pairing offers use `publicAddress` only
 
 `providerBroker.enabled: true` with `providerBroker.providers: [grok, cursor]` (either or both) installs the provider broker and one offline credential owner pod in their own namespace (`<release namespace>-providers`), and points the controller at the broker's leases. Projects still opt in per provider in the console. Sign each provider in once from the console (any sandbox, **Credentials**, **Connect**, then approve in your browser), or copy a login you already have with `agent-project-controller provider import grok`. Requires `NETWORK_PROVIDER=cilium` and `admissionPolicies.enabled`. Details: [brokered providers](../../docs/brokered-providers.md#deployment).
 
+## Pending-request notifications (optional)
+
+Off by default. `notifications.enabled: true` with `notifications.ntfy.url`, `notifications.ntfy.topic` and `notifications.ntfy.existingSecret` (a Secret you create, holding an ntfy token that may publish to the topic under `tokenKey`) makes the controller send one push notification when a request starts waiting for approval. The text names only what Glovecell observed, never an agent's words, and links to the console, where approval happens. Allow the controller's egress to the ntfy server if your network policy restricts it. Details: [notifications](../../docs/notifications.md).
+
 ## Telemetry (optional)
 
 Off by default. `telemetry.enabled: true` plus your collector's OTLP address (`telemetry.otlp.endpoint`), an optional auth Secret, the collector's namespace and pod labels, and three switches: per-sandbox counters (`cells`), Prometheus Operator PodMonitors and the Grafana dashboard. The chart sets every component's settings and network rules. Recipes for the OpenTelemetry Collector, Grafana Alloy and OpenObserve: [installation](../../docs/installation.md#telemetry).

@@ -145,3 +145,33 @@ func TestDatabaseConfigurationFailsClosed(t *testing.T) {
 		}
 	}
 }
+
+func TestNotifierConfigurationFailsClosed(t *testing.T) {
+	token := filepath.Join(t.TempDir(), "token")
+	os.WriteFile(token, []byte("tk_publisher\n"), 0o600)
+	for _, c := range []struct {
+		url, topic, file, max string
+		ok, on                bool
+	}{
+		{"", "", "", "", true, false},
+		{"", "approvals", "", "", false, false},
+		{"", "", token, "", false, false},
+		{"https://ntfy.example.com", "", token, "", false, false},
+		{"https://ntfy.example.com", "approvals", "", "", false, false},
+		{"https://ntfy.example.com", "approvals", filepath.Join(t.TempDir(), "missing"), "", false, false},
+		{"http://ntfy.example.com", "approvals", token, "", false, false},
+		{"https://ntfy.example.com", "approvals", token, "many", false, false},
+		{"https://ntfy.example.com", "approvals", token, "", true, true},
+		{"https://ntfy.example.com", "approvals", token, "5", true, true},
+	} {
+		t.Setenv("PUBLIC_ORIGIN", "https://projects.example.com")
+		t.Setenv("NOTIFY_NTFY_URL", c.url)
+		t.Setenv("NOTIFY_NTFY_TOPIC", c.topic)
+		t.Setenv("NOTIFY_NTFY_TOKEN_FILE", c.file)
+		t.Setenv("NOTIFY_MAX_PER_HOUR", c.max)
+		n, err := notifierFromEnv()
+		if (err == nil) != c.ok || (n != nil) != c.on {
+			t.Fatalf("%+v: notifier %v, error %v", c, n != nil, err)
+		}
+	}
+}
