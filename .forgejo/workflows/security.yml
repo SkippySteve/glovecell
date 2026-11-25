@@ -12,6 +12,13 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+# A newer commit cancels the older run of the same event and ref: three merges
+# in a row build main once, from the newest commit, not three times; a new push
+# to a pull request stops its superseded build. The event is in the group so
+# the nightly run and a merge do not cancel each other.
+concurrency:
+  group: security-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 env:
   TRIVY_VERSION: 0.76.0
   TRIVY_SHA256: e24b1c51293c1b15e4ba8d45bbc7891ba053f90278ec2698f3562c993e145fe7
@@ -71,7 +78,28 @@ jobs:
       TARGETS: runtime workspace voice t3-controller glove-hub session-hub ao-workspace
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      # A pull request that changes nothing the images are built from (docs,
+      # root Markdown, the chart) passes without building: the job still
+      # reports, so the required check is not left waiting. Main, tags, the
+      # nightly run and manual runs always build (scripts/image-inputs-changed.py).
+      - name: Decide whether this run builds images
+        id: inputs
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -eu
+          if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
+            build=true
+          else
+            git fetch --quiet origin "$BASE_REF"
+            build=$(git diff --name-only "origin/$BASE_REF...HEAD" | python3 scripts/image-inputs-changed.py)
+          fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          [ "$build" = true ] || echo "No image input changed: images are not built for this pull request."
       - name: Install pinned Trivy
+        if: steps.inputs.outputs.build == 'true'
         run: |
           set -eu
           curl -fsSLo /tmp/trivy.tgz "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
@@ -98,22 +126,25 @@ jobs:
       # one pod, their timing tests failed (csp.test.ts past 5 s). The other
       # five then build in parallel on the stages already in this daemon.
       - name: Build runtime (controller and console, with their tests)
+        if: steps.inputs.outputs.build == 'true'
         env:
           SOURCE_REVISION: ${{ github.sha }}
           SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
         run: docker buildx bake --progress plain runtime
       - name: Build session-hub (gateway, with its tests)
+        if: steps.inputs.outputs.build == 'true'
         env:
           SOURCE_REVISION: ${{ github.sha }}
           SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
         run: docker buildx bake --progress plain session-hub
       - name: Build the other targets in parallel
+        if: steps.inputs.outputs.build == 'true'
         env:
           SOURCE_REVISION: ${{ github.sha }}
           SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
         run: docker buildx bake --progress plain parallel
       - name: Record image findings and SBOMs
-        if: always()
+        if: always() && steps.inputs.outputs.build == 'true'
         run: |
           for t in $TARGETS; do
             docker image inspect "candidate-$t:${GITHUB_SHA}" >/dev/null 2>&1 || continue
@@ -122,6 +153,7 @@ jobs:
             trivy image --format cyclonedx --output "reports/$t/sbom-image.cdx.json" "candidate-$t:${GITHUB_SHA}"
           done
       - name: Gate image findings
+        if: steps.inputs.outputs.build == 'true'
         # Every target is gated before any is pushed; one failing target fails the job
         # and nothing is promoted (the matrix let the others through).
         run: |
@@ -133,7 +165,7 @@ jobs:
           done
           if [ -n "$failed" ]; then echo "gate failed for:$failed" >&2; exit 1; fi
       - uses: https://data.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e # v4
-        if: always()
+        if: always() && steps.inputs.outputs.build == 'true'
         with:
           name: security-reports-images
           path: reports/
