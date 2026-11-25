@@ -327,6 +327,25 @@ func (f *fakePods) Delete(_ context.Context, p string) error {
 	return nil
 }
 
+// waitDeleted reports whether the login pod was deleted within five seconds.
+// The sign-in reports "done" before its deferred cleanup deletes the pod, so
+// a test must wait for the deletion and read it under the lock.
+func (f *fakePods) waitDeleted() bool {
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		f.mu.Lock()
+		n := len(f.deleted)
+		f.mu.Unlock()
+		if n > 0 {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // Output captured from grok 1.0.77 and cursor-agent (codes replaced).
 const grokOutput = "\nTo sign in, open this URL in your browser:\n\n  https://accounts.x.ai/oauth2/device?user_code=ABCD-1234\n\nConfirm this code in your browser:\n\n  ABCD-1234\n\n\x1b[90mOnly continue with a code you requested. Don't share it with anyone.\x1b[0m\n\nWaiting for authorization...\n"
 const cursorOutput = "Starting login process...\nAuthenticating with Cursor...\nWaiting for browser authentication...\nOpen a browser and navigate to this link: https://cursor.com/loginDeepControl?challenge=c&uuid=u&mode=login&redirectTarget=cli\n"
@@ -376,7 +395,7 @@ func TestConsoleSignIn(t *testing.T) {
 	if owner.files["grok"]["https://auth.x.ai::client"].(map[string]any)["key"] != "console" {
 		t.Fatal("login not installed")
 	}
-	if len(pods.deleted) == 0 {
+	if !pods.waitDeleted() {
 		t.Fatal("login pod kept")
 	}
 }
@@ -395,7 +414,7 @@ func TestConsoleSignInCancelAndFailure(t *testing.T) {
 	if s := waitState(t, l, "cursor", "canceled"); s.URL != "" {
 		t.Fatalf("link kept after cancel: %+v", s)
 	}
-	if len(pods.deleted) == 0 {
+	if !pods.waitDeleted() {
 		t.Fatal("pod kept after cancel")
 	}
 	// The CLI exits without a login file: failed, nothing installed.
