@@ -50,7 +50,7 @@ func TestPendingRequestNotifiesWithoutAgentText(t *testing.T) {
 			t.Fatalf("request %d: %d %s", i, rec.Code, rec.Body.String())
 		}
 	}
-	if rec := f.do("bearer", "POST", "/api/v1/workspaces/project-b/access-requests", `{"scheme":"https","host":"api.example.com","method":"POST","path":"/v1/secret-path","reason":"please"}`); rec.Code != http.StatusCreated {
+	if rec := f.do("bearer", "POST", "/api/v1/workspaces/project-b/access-requests", `{"scheme":"https","host":"api.example.com","method":"POST","path":"/v1/private-path","reason":"please"}`); rec.Code != http.StatusCreated {
 		t.Fatalf("web request: %d %s", rec.Code, rec.Body.String())
 	}
 	deadline := time.Now().Add(5 * time.Second)
@@ -64,7 +64,7 @@ func TestPendingRequestNotifiesWithoutAgentText(t *testing.T) {
 		t.Fatalf("got %d notifications, want 2: %v", len(bodies), bodies)
 	}
 	all := strings.Join(bodies, "\n")
-	for _, bad := range []string{"ignore previous", "URGENT", "phish", "please", "secret-path", "left-pad-1.3.0.tgz", "tk_publisher"} {
+	for _, bad := range []string{"ignore previous", "URGENT", "phish", "please", "private-path", "left-pad-1.3.0.tgz", "tk_publisher"} {
 		if strings.Contains(all, bad) {
 			t.Fatalf("%q reached the notification: %s", bad, all)
 		}

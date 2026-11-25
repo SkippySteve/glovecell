@@ -41,3 +41,8 @@ ebfb18834f731b888690e801979f7fcab5915a64:internal/providerbroker/enroll_test.go:
 # a valid 64-hex shape, not a credential), introduced by APC #165. Replaced by
 # 64 identical characters at HEAD.
 7897bb1bccb533666cde6cedee47d4d7487bd925:internal/sessionhub/sessionhub_test.go:generic-api-key:19
+
+# False positive: a test path ("/v1/secret-path") next to the stand-in token
+# name in the notifier tests, not a credential. Renamed to "private-path" at
+# HEAD.
+fe2217575710b37e99a6a6cb453568607b00a66c:internal/web/notify_test.go:generic-api-key:67
