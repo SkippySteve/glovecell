@@ -402,3 +402,60 @@ func TestChartAccessLevelCopiesMatchSource(t *testing.T) {
 		}
 	}
 }
+
+// Pending-request notifications are off by default; on, they need a URL, a
+// topic and the operator's token Secret, and mount only the token key.
+func TestHelmNotifications(t *testing.T) {
+	if os.Getenv("APC_HELM_TEST") != "true" {
+		t.Skip("set APC_HELM_TEST=true with Helm installed")
+	}
+	config := map[string]any{"FORGEJO_ORIGIN": "https://git.example.com", "FORGEJO_OWNER": "operator", "PUBLIC_ORIGIN": "https://projects.example.com", "OIDC_ISSUER": "https://identity.example.com/realm", "OIDC_CLIENT_ID": "projects"}
+	values := map[string]any{"controllerImage": "registry.example.com/controller@sha256:" + strings.Repeat("a", 64), "workspaceImage": "registry.example.com/workspace@sha256:" + strings.Repeat("b", 64), "config": config}
+	path := filepath.Join(t.TempDir(), "values.json")
+	render := func() ([]byte, error) {
+		b, _ := json.Marshal(values)
+		if err := os.WriteFile(path, b, 0600); err != nil {
+			t.Fatal(err)
+		}
+		return exec.Command("helm", "template", "qualification", "../../charts/agent-project-controller", "-n", "test-control", "-f", path).CombinedOutput()
+	}
+	output, err := render()
+	if err != nil {
+		t.Fatalf("render: %v: %s", err, output)
+	}
+	if bytes.Contains(output, []byte("NOTIFY_")) || bytes.Contains(output, []byte("ntfy-token")) {
+		t.Fatal("notifications rendered by default")
+	}
+	ntfy := map[string]any{"url": "https://ntfy.example.com", "topic": "glovecell-approvals"}
+	values["notifications"] = map[string]any{"enabled": true, "ntfy": ntfy}
+	if output, err = render(); err == nil {
+		t.Fatal("notifications enabled without the token Secret", string(output))
+	}
+	ntfy["existingSecret"] = "glovecell-ntfy"
+	if output, err = render(); err != nil {
+		t.Fatalf("render: %v: %s", err, output)
+	}
+	for _, want := range []string{"name: NOTIFY_NTFY_URL\n              value: \"https://ntfy.example.com\"", "name: NOTIFY_NTFY_TOPIC\n              value: \"glovecell-approvals\"", "value: /var/run/apc/ntfy/token", "NOTIFY_MAX_PER_HOUR\n              value: \"20\"", "secretName: \"glovecell-ntfy\"", "- key: \"token\"\n                path: token"} {
+		if !bytes.Contains(output, []byte(want)) {
+			t.Fatalf("missing %q in %s", want, output)
+		}
+	}
+	if bytes.Contains(output, []byte("NOTIFY_CONSOLE_URL")) {
+		t.Fatal("console URL set without a value; it defaults to PUBLIC_ORIGIN")
+	}
+	for _, bad := range []struct{ name, url, topic string }{
+		{"plain http outside the cluster", "http://ntfy.example.com", "glovecell-approvals"},
+		{"credentials in the URL", "https://user:pass@ntfy.example.com", "glovecell-approvals"},
+		{"topic with a path", "https://ntfy.example.com", "a/b"},
+		{"no topic", "https://ntfy.example.com", ""},
+	} {
+		ntfy["url"], ntfy["topic"] = bad.url, bad.topic
+		if output, err = render(); err == nil {
+			t.Fatalf("%s accepted", bad.name)
+		}
+	}
+	ntfy["url"], ntfy["topic"] = "http://ntfy.ntfy.svc.cluster.local", "glovecell-approvals"
+	if output, err = render(); err != nil {
+		t.Fatalf("in-cluster ntfy refused: %v: %s", err, output)
+	}
+}

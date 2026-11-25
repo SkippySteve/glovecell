@@ -135,6 +135,26 @@ accessGrants:
     internet: 8h
     lan: 24h
     package: 720h
+# Phone notification for every new pending request (docs/notifications.md):
+# the controller posts one short message to an ntfy topic when a request
+# starts waiting for approval. The text names only what Glovecell observed
+# (kind, cell, requested access, duration, console link), never an agent's
+# words; approval stays in the console. Off by default. The controller needs
+# egress to the ntfy server when your network policy restricts it.
+notifications:
+  enabled: false
+  ntfy:
+    # Base URL, https://ntfy.example.com (http only for an in-cluster Service).
+    url: ''
+    topic: ''
+    # Secret in the release namespace holding an ntfy access token that may
+    # publish to the topic, created by the operator.
+    existingSecret: ''
+    tokenKey: token
+  # Link target in the notification; defaults to config.PUBLIC_ORIGIN.
+  consoleURL: ''
+  # At most this many per hour; the rest arrive as one summary line.
+  maxPerHour: 20
 config:
   # Runtime failure quarantine and exec readiness, off until disposable qualification.
   PROXY_RUNTIME_GUARD_ENABLED: 'false'

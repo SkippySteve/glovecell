@@ -31,6 +31,7 @@ import (
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/hubadmin"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/hubspoke"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/network"
+	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/notify"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/orchestrator"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/preflight"
 	"git.cluster.aimingupward.com/steve/agent-project-controller/internal/projects"
@@ -207,6 +208,33 @@ func handoffsFromEnv() (*web.Handoffs, error) {
 		return nil, e
 	}
 	return h, nil
+}
+
+// notifierFromEnv configures the optional pending-request notifier
+// (docs/notifications.md). Off unless NOTIFY_NTFY_URL is set; a partial
+// setting fails startup instead of silently sending nothing.
+func notifierFromEnv() (*notify.Notifier, error) {
+	keys := []string{"NOTIFY_NTFY_TOPIC", "NOTIFY_NTFY_TOKEN_FILE", "NOTIFY_CONSOLE_URL", "NOTIFY_MAX_PER_HOUR"}
+	if os.Getenv("NOTIFY_NTFY_URL") == "" {
+		for _, k := range keys {
+			if os.Getenv(k) != "" {
+				return nil, errors.New(k + " requires NOTIFY_NTFY_URL")
+			}
+		}
+		return nil, nil
+	}
+	cfg := notify.Config{URL: os.Getenv("NOTIFY_NTFY_URL"), Topic: os.Getenv("NOTIFY_NTFY_TOPIC"), TokenFile: os.Getenv("NOTIFY_NTFY_TOKEN_FILE"), ConsoleURL: env("NOTIFY_CONSOLE_URL", os.Getenv("PUBLIC_ORIGIN"))}
+	if v := os.Getenv("NOTIFY_MAX_PER_HOUR"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, errors.New("NOTIFY_MAX_PER_HOUR must be a whole number")
+		}
+		cfg.MaxPerHour = n
+	}
+	if _, err := os.Stat(cfg.TokenFile); cfg.TokenFile != "" && err != nil {
+		return nil, errors.New("NOTIFY_NTFY_TOKEN_FILE is not readable")
+	}
+	return notify.New(cfg, nil)
 }
 
 // lanFromEnv reads the optional home-LAN grant setting. Grants need a network
@@ -849,6 +877,11 @@ func run(ctx context.Context) error {
 	if server.Handoffs, e = handoffsFromEnv(); e != nil {
 		return e
 	}
+	// Optional phone notification for every new pending request.
+	if server.Notifier, e = notifierFromEnv(); e != nil {
+		return e
+	}
+	go server.Notifier.Run(ctx)
 	if os.Getenv("OIDC_ISSUER") != "" {
 		clientSecret, err := secret("OIDC_CLIENT_SECRET_FILE")
 		if err != nil {

@@ -123,6 +123,21 @@ spec:
             - name: API_SECRET_FILE
               value: /control-secrets/api-secret
 {{- end }}
+{{- if .Values.notifications.enabled }}
+            # Pending-request notifications (docs/notifications.md).
+            - name: NOTIFY_NTFY_URL
+              value: {{ required "notifications.ntfy.url is required" .Values.notifications.ntfy.url | quote }}
+            - name: NOTIFY_NTFY_TOPIC
+              value: {{ required "notifications.ntfy.topic is required" .Values.notifications.ntfy.topic | quote }}
+            - name: NOTIFY_NTFY_TOKEN_FILE
+              value: /var/run/apc/ntfy/token
+{{- with .Values.notifications.consoleURL }}
+            - name: NOTIFY_CONSOLE_URL
+              value: {{ . | quote }}
+{{- end }}
+            - name: NOTIFY_MAX_PER_HOUR
+              value: {{ .Values.notifications.maxPerHour | toString | quote }}
+{{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -179,6 +194,11 @@ spec:
 {{- if .Values.referenceRules.configMap }}
             - name: reference-rules
               mountPath: /reference-rules
+              readOnly: true
+{{- end }}
+{{- if .Values.notifications.enabled }}
+            - name: ntfy-token
+              mountPath: /var/run/apc/ntfy
               readOnly: true
 {{- end }}
       volumes:
@@ -263,6 +283,16 @@ spec:
           configMap:
             name: {{ .Values.referenceRules.configMap | quote }}
             defaultMode: 0444
+{{- end }}
+{{- if .Values.notifications.enabled }}
+        # Only the publisher token key.
+        - name: ntfy-token
+          secret:
+            secretName: {{ required "notifications.ntfy.existingSecret is required" .Values.notifications.ntfy.existingSecret | quote }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.notifications.ntfy.tokenKey | quote }}
+                path: token
 {{- end }}
 ---
 apiVersion: v1
